@@ -1,0 +1,183 @@
+// Package hhapi is the ONLY place that talks HTTP to hh.ru.
+// Endpoint URLs come from config (overridable); nothing else in the codebase
+// may hardcode hh.ru URLs. Contracts below are consumed by feature packages.
+package hhapi
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"time"
+)
+
+// Typed errors map to anti-bot/session states; callers branch on these.
+var (
+	ErrRateLimited = errors.New("hhapi: 429 rate limited")
+	ErrCaptcha     = errors.New("hhapi: captcha challenge")
+	ErrLoggedOut   = errors.New("hhapi: session expired")
+	ErrForbidden   = errors.New("hhapi: 403")
+	ErrValidation  = errors.New("hhapi: 400/422 validation")
+	ErrNotFound    = errors.New("hhapi: not found")
+	ErrUpstream    = errors.New("hhapi: 5xx")
+	ErrNetwork     = errors.New("hhapi: network")
+)
+
+type User struct {
+	ID       int64  `json:"id"`
+	Email    string `json:"email"`
+	FullName string `json:"full_name"`
+}
+
+type Resume struct {
+	HHID       string          `json:"hh_id"` // resume hash
+	Title      string          `json:"title"`
+	Status     string          `json:"status"`
+	Percent    int             `json:"percent"`
+	Searchable bool            `json:"searchable"`
+	UpdatedAt  time.Time       `json:"updated_at"`
+	Raw        json.RawMessage `json:"raw,omitempty"`
+}
+
+type Salary struct {
+	From     int    `json:"from,omitempty"`
+	To       int    `json:"to,omitempty"`
+	Currency string `json:"currency,omitempty"`
+	Gross    bool   `json:"gross,omitempty"`
+}
+
+type Vacancy struct {
+	ID             int64           `json:"id"`
+	Name           string          `json:"name"`
+	EmployerID     int64           `json:"employer_id"`
+	EmployerName   string          `json:"employer_name"`
+	Area           string          `json:"area"`
+	Salary         *Salary         `json:"salary,omitempty"`
+	PublishedAt    time.Time       `json:"published_at"`
+	Description    string          `json:"description,omitempty"`
+	AlternateURL   string          `json:"alternate_url,omitempty"`
+	EmployerOnline bool            `json:"employer_online,omitempty"` // manager activity (SSR)
+	AcceptTemp     bool            `json:"accept_temp,omitempty"`
+	HasTests       bool            `json:"has_tests,omitempty"`
+	Raw            json.RawMessage `json:"raw,omitempty"`
+}
+
+type VacancyPage struct {
+	Items []Vacancy `json:"items"`
+	Page  int       `json:"page"`
+	Pages int       `json:"pages"`
+	Found int       `json:"found"`
+}
+
+type Employer struct {
+	ID      int64           `json:"id"`
+	Name    string          `json:"name"`
+	SiteURL string          `json:"site_url,omitempty"`
+	Raw     json.RawMessage `json:"raw,omitempty"`
+}
+
+// EmployerRating carries both all-time and recent-window scores (filter WF2-F4).
+type EmployerRating struct {
+	EmployerID   int64     `json:"employer_id"`
+	ScoreAll     float64   `json:"score_all"`
+	ScoreRecent  float64   `json:"score_recent"` // within recent window (e.g. last3Months)
+	ReviewsCount int       `json:"reviews_count"`
+	RecommendPct int       `json:"recommend_percent"`
+	FetchedAt    time.Time `json:"fetched_at"`
+}
+
+type ApplyMeta struct {
+	HasTests              bool     `json:"has_tests"`
+	LetterRequired        bool     `json:"letter_required"`
+	ResumeInconsistencies []string `json:"resume_inconsistencies,omitempty"`
+	AcceptAutoResponse    bool     `json:"accept_auto_response,omitempty"`
+	ChatWritePossibility  string   `json:"chat_write_possibility,omitempty"`
+}
+
+type ApplyRequest struct {
+	VacancyID  int64
+	ResumeHash string
+	Letter     string
+}
+
+type NegotiationRef struct {
+	ID      string `json:"id"`
+	Vacancy int64  `json:"vacancy"`
+	State   string `json:"state"`
+}
+
+type Negotiation struct {
+	ID           string    `json:"id"`
+	VacancyID    int64     `json:"vacancy_id"`
+	VacancyName  string    `json:"vacancy_name"`
+	EmployerID   int64     `json:"employer_id"`
+	EmployerName string    `json:"employer_name"`
+	State        string    `json:"state"` // e.g. "refused" => WF7 trigger
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type Chat struct {
+	ID            string    `json:"id"` // chatik chat id
+	TopicID       string    `json:"topic_id,omitempty"`
+	VacancyID     int64     `json:"vacancy_id,omitempty"`
+	EmployerName  string    `json:"employer_name,omitempty"`
+	LastMessageAt time.Time `json:"last_message_at,omitempty"`
+	Unread        int       `json:"unread,omitempty"`
+}
+
+type ChatMessage struct {
+	ID        string    `json:"id"`
+	Author    string    `json:"author,omitempty"`
+	Direction string    `json:"direction"` // in | out
+	Text      string    `json:"text"`
+	SentAt    time.Time `json:"sent_at,omitempty"`
+}
+
+type Contact struct {
+	Type  string `json:"type"` // phone | email | telegram | name | url
+	Value string `json:"value"`
+}
+
+// SearchQuery mirrors hh vacancy-search filters (native server-side filter F1).
+type SearchQuery struct {
+	Text            string
+	Areas           []string
+	Experience      []string
+	Schedule        []string
+	Employment      []string
+	Industries      []string
+	SalaryFrom      int
+	Currency        string
+	LabelNoAgencies bool
+	SearchMode      string // exact | normal | wide
+	PeriodDays      int
+	Page            int
+	PerPage         int
+}
+
+// HHAPI is the full site contract consumed by features.
+type HHAPI interface {
+	BootstrapSession(ctx context.Context) error // light authed GET: xsrf + liveness
+	Me(ctx context.Context) (*User, error)
+	ListResumes(ctx context.Context) ([]Resume, error)
+	TouchResume(ctx context.Context, resumeHash string) error
+	SuitableVacancies(ctx context.Context, resumeHash string, page int) (VacancyPage, error)
+	SearchVacancies(ctx context.Context, q SearchQuery) (VacancyPage, error)
+	VacancyCard(ctx context.Context, id int64) (*Vacancy, error)
+	EmployerCard(ctx context.Context, id int64) (*Employer, error)
+	EmployerRating(ctx context.Context, id int64) (*EmployerRating, error)
+	ApplyPopup(ctx context.Context, vacancyID int64) (*ApplyMeta, error)
+	Apply(ctx context.Context, req ApplyRequest) (NegotiationRef, error)
+	Negotiations(ctx context.Context, page int) ([]Negotiation, error)
+	ListChats(ctx context.Context, page int) ([]Chat, error)
+	ChatHistory(ctx context.Context, chatID string) ([]ChatMessage, error)
+	SendMessage(ctx context.Context, chatID, idempotencyKey, text string) error
+	LeaveChat(ctx context.Context, chatID string) error
+	EmployerContacts(ctx context.Context, employerID int64) ([]Contact, error)
+}
+
+// Implementation notes for the hhapi implementer:
+//   - constructor signature: NewClient(cfg config.Account, endpoints config.APIEndpoints,
+//     dialer proxy.Dialer, log *slog.Logger) (*Client, error)
+//   - import internal/proxy for the dialer (no import cycle: proxy never imports hhapi)
+//   - every method above maps 1:1 to documented web endpoints; full URLs come
+//     from config.APIEndpoints (+ overrides), never hardcoded beyond defaults.
