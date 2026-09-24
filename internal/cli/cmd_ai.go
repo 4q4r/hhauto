@@ -308,7 +308,7 @@ func newVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print the version",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			outFor(cmd).printf("hhauto %s (%s)\n", buildVersion, buildCommit)
+			outFor(cmd).printf("hhauto %s (%s, %s)\n", buildVersion, buildCommit, buildDate)
 			return nil
 		},
 	}
