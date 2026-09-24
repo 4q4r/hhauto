@@ -199,6 +199,7 @@ TOML, по умолчанию `~/.config/hhauto/hhauto.toml` (переопред
 | `hhauto onboarding` | интерактивный мастер первого запуска |
 | `hhauto account add\|list\|check\|remove` | аккаунты: `add --id --proxy --cookies-file`, `check` — живая проверка сессии, `remove --yes` |
 | `hhauto run [--once] [--profile ID] [--feature X] [--account ID] [--dry-run]` | движок до прерывания; `--once` — разово обработать текущие задачи |
+| `hhauto stop` | аварийный стоп: пишет `<data_dir>/STOP`, работающий движок останавливается аккуратно |
 | `hhauto status [--account ID]` | состояния аккаунтов, счётчики дня, ревью, ближайшие расписания |
 | `hhauto funnel [--days N]` | воронка: просмотрено → прошло фильтры → отклики → пропуски |
 | `hhauto vacancies search --profile ID [--limit N]` | превью каскада без отклика (никогда не откликается) |
@@ -209,6 +210,7 @@ TOML, по умолчанию `~/.config/hhauto/hhauto.toml` (переопред
 | `hhauto review list\|show\|resolve\|ignore` | очередь ручного разбора (`resolve --note`) |
 | `hhauto profile edit` | profile.md в `$EDITOR` |
 | `hhauto ai status\|eval [--task]` | расход токенов/USD за день; золотая регрессия промптов |
+| `hhauto ai compare <expA> <expB> [--days N]` | сравнение двух экспериментов (`prompt_ver`/`model`) по ai_decisions: needs-human, уверенность, латентность, стоимость |
 | `hhauto config validate\|template` | проверка конфига; полный комментированный шаблон |
 | `hhauto doctor` | диагностика: конфиг, диск, куки, прокси, сессии, капча, Chrome, ИИ |
 | `hhauto backup` | бэкап SQLite (`VACUUM INTO`), хранит 7 копий |
@@ -317,6 +319,9 @@ hhauto не маскируется под человека — он ведёт �
 - **Headless-формы** — требуют локальный Chrome в `PATH`; по умолчанию внешние
   тесты решаются только до черновика (`draft_only`). Анти-бот сайтов-форм —
   главная неизвестная: часть форм не решится.
+- **Импорт аккаунта из браузера** (`account add --browser chrome`) — отложен
+  (R13): сессия импортируется из `--cookies-file` (Netscape cookies.txt или
+  JSON-экспорт); прямой выгрузкой cookies из профиля Chrome v1 не делает.
 - **WebSocket-push** — фича зарезервирована в конфиге (`websocket_push`),
   в v1 используется поллинг; на роадмапе.
 - **Мобильный API** hh (Android-эмуляция) не реализован в v1 — задокументирован

@@ -269,6 +269,10 @@ UA и заголовки, `rps` и `concurrency` — локальные лими
 (дефолт 200 — официальный потолок hh), `captcha_chain`, опциональный
 `profile_file` (override глобального profile.md).
 
+> Примечание (R13): импорт сессии — через `hhauto account add --cookies-file`
+> (Netscape cookies.txt или JSON-экспорт). Прямая выгрузка cookies из профиля
+> браузера (`--browser chrome`) в v1 не реализована — отложена.
+
 ### `[ai]`
 Бюджеты (`daily_budget_tokens`, `daily_budget_usd`, 0 = безлимит) и политика
 `on_budget_exceed = "needs_human_only" | "hard_stop"`. Провайдеры — три
