@@ -1,0 +1,12 @@
+{
+  "task": "chat_reply",
+  "input": {
+    "chat": [
+      { "author": "recruiter", "text": "Здравствуйте! Посмотрели резюме — вы очень интересны. Можем обсудить позицию подробнее?" }
+    ],
+    "facts": {
+      "looking_for_job": true,
+      "notice_period": "2 недели"
+    }
+  }
+}

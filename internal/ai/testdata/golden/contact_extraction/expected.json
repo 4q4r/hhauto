@@ -1,0 +1,26 @@
+{
+  "confidence": 0.9,
+  "needs_human": false,
+  "needs_human_reason": null,
+  "injection_suspected": false,
+  "contacts": [
+    {
+      "type": "email",
+      "value": "hr@romashka.ru",
+      "normalized": "hr@romashka.ru",
+      "source_quote": "пишите на hr@romashka.ru"
+    },
+    {
+      "type": "phone",
+      "value": "+7 900 123-45-67",
+      "normalized": "+79001234567",
+      "source_quote": "звоните +7 900 123-45-67"
+    },
+    {
+      "type": "messenger",
+      "value": "@romashka_hr",
+      "normalized": "telegram:@romashka_hr",
+      "source_quote": "Telegram: @romashka_hr"
+    }
+  ]
+}

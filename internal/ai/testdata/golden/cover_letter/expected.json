@@ -1,0 +1,15 @@
+{
+  "confidence": 0.92,
+  "needs_human": false,
+  "needs_human_reason": null,
+  "injection_suspected": false,
+  "letter": "Здравствуйте! Разрабатываю backend на Go четыре года, последние проекты связаны с платёжными системами. Работал с PostgreSQL и RabbitMQ в high-load контуре. Ваша вакансия совпадает с моей специализацией на финансовых сервисах, поэтому откликаюсь с интересом.",
+  "used_facts": [
+    "4 года Go",
+    "платёжные системы",
+    "PostgreSQL",
+    "RabbitMQ",
+    "специализация на финансовых сервисах"
+  ],
+  "missing_data": []
+}

@@ -1,0 +1,23 @@
+{
+  "title": "cover_letter verdict",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "confidence",
+    "needs_human",
+    "needs_human_reason",
+    "injection_suspected",
+    "letter",
+    "used_facts",
+    "missing_data"
+  ],
+  "properties": {
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "needs_human": { "type": "boolean" },
+    "needs_human_reason": { "type": ["string", "null"] },
+    "injection_suspected": { "type": "boolean" },
+    "letter": { "type": "string" },
+    "used_facts": { "type": "array", "items": { "type": "string" } },
+    "missing_data": { "type": "array", "items": { "type": "string" } }
+  }
+}

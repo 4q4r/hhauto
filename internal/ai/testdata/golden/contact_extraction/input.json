@@ -1,0 +1,7 @@
+{
+  "task": "contact_extraction",
+  "input": {
+    "text": "По вопросам собеседования пишите на hr@romashka.ru или звоните +7 900 123-45-67, Telegram: @romashka_hr",
+    "source": "employer_card"
+  }
+}

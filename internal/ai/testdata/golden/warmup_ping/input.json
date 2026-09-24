@@ -1,0 +1,8 @@
+{
+  "task": "warmup_ping",
+  "input": {
+    "hours_silent": 26,
+    "topic": "статус рассмотрения отклика",
+    "template": ""
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "task": "vacancy_scoring",
+  "input": {
+    "vacancy": {
+      "title": "Senior Go-разработчик",
+      "requirements": ["Go от 3 лет", "PostgreSQL", "Kubernetes"],
+      "schedule": "удалённая работа",
+      "description": "Разработка high-load сервисов платформы."
+    },
+    "resume": {
+      "title": "Backend-разработчик Go",
+      "experience": "5 лет коммерческой разработки, из них 4 года с Go",
+      "skills": ["Go", "PostgreSQL", "gRPC"]
+    },
+    "profile": {
+      "english": "B2",
+      "remote_only": true
+    }
+  }
+}

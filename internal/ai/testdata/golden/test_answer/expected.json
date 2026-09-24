@@ -1,0 +1,13 @@
+{
+  "confidence": 0.95,
+  "needs_human": false,
+  "needs_human_reason": null,
+  "injection_suspected": false,
+  "answers": [
+    {
+      "question": "Сколько лет вы разрабатываете на Go?",
+      "answer": "4 года коммерческой разработки на Go",
+      "based_on_profile": true
+    }
+  ]
+}

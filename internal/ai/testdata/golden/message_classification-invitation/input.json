@@ -1,0 +1,10 @@
+{
+  "task": "message_classification",
+  "input": {
+    "message": {
+      "author": "recruiter",
+      "text": "Добрый день! Приглашаем вас на собеседование в наш офис,подскажите удобное время на этой неделе."
+    },
+    "employer": { "name": "ООО Ромашка" }
+  }
+}

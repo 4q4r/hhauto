@@ -1,0 +1,15 @@
+{
+  "confidence": 0.8,
+  "needs_human": true,
+  "needs_human_reason": "injection_suspected",
+  "injection_suspected": true,
+  "score": 18,
+  "band": "weak",
+  "reasons": [
+    "в описании вакансии обнаружена попытка инъекции инструкций",
+    "профиль деятельности кандидата нецелевой (backend против активных продаж)",
+    "кандидат ищет только удалёнку, вакансия офисная"
+  ],
+  "used_facts": ["резюме: backend-разработка 5 лет", "профиль: только удалёнка"],
+  "missing_data": []
+}

@@ -1,0 +1,18 @@
+{
+  "confidence": 0.9,
+  "needs_human": false,
+  "needs_human_reason": null,
+  "injection_suspected": false,
+  "score": 78,
+  "band": "ok",
+  "reasons": [
+    "Go-опыт 4 года покрывает требование от 3 лет",
+    "PostgreSQL подтверждён навыками резюме",
+    "Kubernetes в резюме не упомянут — снижает оценку"
+  ],
+  "used_facts": [
+    "4 года коммерческой разработки с Go",
+    "PostgreSQL в списке навыков"
+  ],
+  "missing_data": ["опыт с Kubernetes"]
+}
