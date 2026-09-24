@@ -6,6 +6,7 @@ package cli
 // top level, so appending is structurally safe).
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -133,13 +134,8 @@ func newAccountAddCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("%v", err)
 			}
-			if _, exists := cfg.Accounts[id]; exists {
-				return exitErr("аккаунт %q уже есть в конфиге", id)
-			}
-			if proxyRef != "" {
-				if _, ok := cfg.Proxy[proxyRef]; !ok {
-					return exitErr("proxy_ref %q не найден в [proxy.*]", proxyRef)
-				}
+			if err := validateNewAccount(cfg, id, proxyRef); err != nil {
+				return err
 			}
 			if err := appendAccountToTOML(flags.configPath, id, "", proxyRef, ""); err != nil {
 				return exitErr("%v", err)
@@ -147,23 +143,11 @@ func newAccountAddCmd() *cobra.Command {
 
 			var imported int
 			if cookiesFile != "" {
-				raw, rerr := os.ReadFile(cookiesFile)
-				if rerr != nil {
-					return exitErr("cookies file: %v", rerr)
+				var ierr error
+				imported, ierr = importCookiesFile(cmd.Context(), cfg, id, cookiesFile)
+				if ierr != nil {
+					return ierr
 				}
-				cks, perr := parseCookiesInput(string(raw))
-				if perr != nil {
-					return exitErr("%v", perr)
-				}
-				ctx := cmd.Context()
-				ckStore, serr := resolveCookieStore(cfg)
-				if serr != nil {
-					return exitErr("cookie store: %v", serr)
-				}
-				if serr := ckStore.Save(ctx, id, cks); serr != nil {
-					return exitErr("cookie save: %v", serr)
-				}
-				imported = len(cks)
 			}
 			o := outFor(cmd)
 			o.printf("Аккаунт %s добавлен", id)
@@ -179,6 +163,41 @@ func newAccountAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&proxyRef, "proxy", "", "proxy reference from [proxy.*]")
 	cmd.Flags().StringVar(&cookiesFile, "cookies-file", "", "Netscape cookies.txt or JSON export to import")
 	return cmd
+}
+
+// validateNewAccount rejects malformed ids, ids already present in the
+// config and proxy refs not defined in [proxy.*].
+func validateNewAccount(cfg *config.Config, id, proxyRef string) error {
+	if _, exists := cfg.Accounts[id]; exists {
+		return exitErr("аккаунт %q уже есть в конфиге", id)
+	}
+	if proxyRef != "" {
+		if _, ok := cfg.Proxy[proxyRef]; !ok {
+			return exitErr("proxy_ref %q не найден в [proxy.*]", proxyRef)
+		}
+	}
+	return nil
+}
+
+// importCookiesFile parses the cookies export and saves it to the account
+// cookie store; returns the number of imported cookies.
+func importCookiesFile(ctx context.Context, cfg *config.Config, id, cookiesFile string) (int, error) {
+	raw, err := os.ReadFile(cookiesFile)
+	if err != nil {
+		return 0, exitErr("cookies file: %v", err)
+	}
+	cks, err := parseCookiesInput(string(raw))
+	if err != nil {
+		return 0, exitErr("%v", err)
+	}
+	ckStore, err := resolveCookieStore(cfg)
+	if err != nil {
+		return 0, exitErr("cookie store: %v", err)
+	}
+	if err := ckStore.Save(ctx, id, cks); err != nil {
+		return 0, exitErr("cookie save: %v", err)
+	}
+	return len(cks), nil
 }
 
 func newAccountListCmd() *cobra.Command {

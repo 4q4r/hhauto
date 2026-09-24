@@ -433,7 +433,19 @@ func runDoctor(ctx context.Context, o out) error {
 	add("version", "OK", buildVersion+" ("+buildCommit+")")
 	add("config", "OK", flags.configPath)
 
-	// Disk/paths.
+	checkStorage(cfg, add)
+	checkCookieStore(cfg, add)
+	checkNetwork(ctx, cfg, add)
+	checkSessions(ctx, cfg, add)
+	checkCaptchas(ctx, cfg, add)
+	checkChrome(cfg, add)
+	checkAI(ctx, cfg, add)
+
+	return reportDoctor(o, checks)
+}
+
+// checkStorage verifies the data dir and the storage file location.
+func checkStorage(cfg *config.Config, add func(name, status, detail string)) {
 	dataDir := cfg.General.DataDir
 	if err := probeWritable(dataDir); err != nil {
 		add("data_dir", "FAIL", dataDir+": "+err.Error())
@@ -445,15 +457,20 @@ func runDoctor(ctx context.Context, o out) error {
 	} else {
 		add("storage", "OK", cfg.Storage.Path)
 	}
+}
 
-	// Cookie store backend.
+// checkCookieStore verifies the cookie store backend opens.
+func checkCookieStore(cfg *config.Config, add func(name, status, detail string)) {
 	if ckStore, cerr := openCookieStore(cfg); cerr != nil {
 		add("cookies", "FAIL", cerr.Error())
 	} else {
 		add("cookies", "OK", "backend: "+ckStore.Backend())
 	}
+}
 
-	// Direct egress IP first (baseline for the proxy comparison).
+// checkNetwork checks direct egress first (the baseline for the proxy
+// comparison), then every configured proxy.
+func checkNetwork(ctx context.Context, cfg *config.Config, add func(name, status, detail string)) {
 	directIP, directErr := egressIP(ctx, nil)
 	if directErr != nil {
 		add("network", "WARN", "прямой egress недоступен: "+directErr.Error())
@@ -477,8 +494,10 @@ func runDoctor(ctx context.Context, o out) error {
 			add("proxy:"+ref, "OK", fmt.Sprintf("%s:%d → egress %s", p.Host, p.Port, ip))
 		}
 	}
+}
 
-	// Sessions.
+// checkSessions probes bootstrap+me for every configured account.
+func checkSessions(ctx context.Context, cfg *config.Config, add func(name, status, detail string)) {
 	if len(cfg.Accounts) == 0 {
 		add("sessions", "WARN", "аккаунтов нет")
 	}
@@ -489,21 +508,25 @@ func runDoctor(ctx context.Context, o out) error {
 			add("session:"+id, "OK", "bootstrap+me")
 		}
 	}
+}
 
-	// Captcha balances.
+// checkCaptchas checks captcha provider balances.
+func checkCaptchas(ctx context.Context, cfg *config.Config, add func(name, status, detail string)) {
 	if len(cfg.Captcha) == 0 {
 		add("captcha", "OK", "провайдеры не настроены (капча-ветки выключены)")
 	}
 	for _, id := range sortedCaptchaIDs(cfg) {
-		bal, err := captchaBalance(ctx, cfg.Captcha[id])
-		if err != nil {
-			add("captcha:"+id, "FAIL", err.Error())
+		balance, cerr := captchaBalance(ctx, cfg.Captcha[id])
+		if cerr != nil {
+			add("captcha:"+id, "FAIL", cerr.Error())
 		} else {
-			add("captcha:"+id, "OK", fmt.Sprintf("баланс: %.2f", bal))
+			add("captcha:"+id, "OK", fmt.Sprintf("баланс: %.2f", balance))
 		}
 	}
+}
 
-	// Chrome for headless forms.
+// checkChrome verifies Chrome availability (only required for headless forms).
+func checkChrome(cfg *config.Config, add func(name, status, detail string)) {
 	chrome, cerr := findChrome()
 	if cfg.Forms.Mode == "headless" && cerr != nil {
 		add("chrome", "FAIL", "forms.mode=headless, но Chrome не найден в PATH")
@@ -512,8 +535,10 @@ func runDoctor(ctx context.Context, o out) error {
 	} else {
 		add("chrome", "OK", chrome)
 	}
+}
 
-	// AI providers.
+// checkAI probes configured AI providers.
+func checkAI(ctx context.Context, cfg *config.Config, add func(name, status, detail string)) {
 	if len(cfg.AI.Tasks) == 0 {
 		add("ai", "OK", "задачи ИИ не настроены")
 	}
@@ -522,8 +547,6 @@ func runDoctor(ctx context.Context, o out) error {
 		status, detail := probeAIProvider(ctx, p)
 		add("ai:"+id, status, detail)
 	}
-
-	return reportDoctor(o, checks)
 }
 
 func reportDoctor(o out, checks []doctorCheck) error {

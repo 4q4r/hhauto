@@ -105,33 +105,10 @@ func runOnboarding(ctx context.Context, o out) error {
 	if len(cfg.Accounts) > 0 && !t.confirm("Аккаунты уже настроены. Добавить ещё один?", false) {
 		return nil
 	}
-	id := t.line("ID аккаунта (латиницей, например main): ")
-	if id == "" {
-		return exitErr("пустой id аккаунта")
+	id, err := createAccountInteractive(t, o, cfg)
+	if err != nil {
+		return err
 	}
-	if !validAccountID(id) {
-		return exitErr("id %q: допустимы латинские буквы, цифры, '.', '_', '-'", id)
-	}
-	if _, exists := cfg.Accounts[id]; exists {
-		return exitErr("аккаунт %q уже есть в конфиге", id)
-	}
-	display := t.line("Отображаемое имя (Enter = " + id + "): ")
-	proxyRef := t.line("proxy_ref (Enter = напрямую; доступные: " + proxyList(cfg) + "): ")
-	if proxyRef != "" {
-		if _, ok := cfg.Proxy[proxyRef]; !ok {
-			return exitErr("proxy_ref %q не найден в [proxy.*]", proxyRef)
-		}
-	}
-	ua := t.line("User-Agent (Enter = реалистичный Chrome по умолчанию): ")
-	if ua == "" {
-		ua = defaultUA()
-	}
-
-	// Persist the account into the TOML file.
-	if err := appendAccountToTOML(flags.configPath, id, display, proxyRef, ua); err != nil {
-		return exitErr("config update: %v", err)
-	}
-	o.printf("Аккаунт %s добавлен в %s\n", id, flags.configPath)
 
 	// Reload with the new account.
 	cfg, err = LoadConfigOnly(flags.configPath)
@@ -147,52 +124,22 @@ func runOnboarding(ctx context.Context, o out) error {
 	// 3. Cookies (hidden input).
 	o.println("Вставьте куки hh.ru одной строкой: \"name=value; name2=value2\", JSON или содержимое cookies.txt (ввод скрыт):")
 	raw := t.hidden("> ")
-	if raw != "" {
-		cks, perr := parseCookiesInput(raw)
-		if perr != nil {
-			return exitErr("%v", perr)
-		}
-		if serr := ckStore.Save(ctx, id, cks); serr != nil {
-			return exitErr("cookie save: %v", serr)
-		}
-		o.printf("Сохранено кук: %d (backend: %s)\n", len(cks), ckStore.Backend())
-	} else {
-		o.println("Куки пропущены — добавьте позже: hhauto account add --id " + id + " --cookies-file cookies.txt")
+	if err := saveCookiesInteractive(ctx, o, ckStore, id, raw); err != nil {
+		return err
 	}
 
 	// 4. Session check + resume list (write-through to the store).
 	if raw != "" {
-		dbPath := cfg.Storage.Path
-		if dbPath == "" {
-			dbPath = filepath.Join(cfg.General.DataDir, "hhauto.db")
-		}
-		db, derr := store.Open(ctx, dbPath, store.Options{BusyTimeoutMS: cfg.Storage.BusyTimeoutMS})
-		if derr != nil {
-			return exitErr("store: %v", derr)
-		}
-		checkErr := checkAccountSession(ctx, cfg, db, ckStore, id, o)
-		_ = db.Close()
-		if checkErr != nil {
-			o.errf("Проверка сессии не прошла: %v (перелогиньтесь и повторите: hhauto account check %s)", checkErr, id)
+		if err := checkSessionOnboarding(ctx, cfg, ckStore, id, o); err != nil {
+			return err
 		}
 	}
 
 	// 5. profile.md Q&A.
 	if t.confirm("Заполнить profile.md (6 вопросов для ИИ-фактов)?", true) {
-		questions := profile.SuggestOnboardingQuestions()
-		answers := make([]string, len(questions))
-		o.println("Отвечайте строкой на каждый вопрос (Enter — пропустить):")
-		for i, q := range questions {
-			answers[i] = t.line(q + "\n  → ")
+		if err := fillProfileInteractive(t, o, cfg, id); err != nil {
+			return err
 		}
-		path := profilePathFor(cfg, id)
-		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-			return exitErr("profile dir: %v", err)
-		}
-		if err := os.WriteFile(path, []byte(renderProfileMD(questions, answers)), 0o600); err != nil {
-			return exitErr("profile.md write: %v", err)
-		}
-		o.println("Профиль сохранён:", path)
 	}
 
 	o.println("\nДальнейшие шаги:")
@@ -201,6 +148,95 @@ func runOnboarding(ctx context.Context, o out) error {
 	o.println("  3. hhauto doctor                   — сеть, прокси, капча, ИИ")
 	o.println("  4. hhauto run --once --dry-run     — прогон без мутаций")
 	o.println("  5. hhauto run                      — боевой режим (Ctrl-C / STOP-файл для остановки)")
+	return nil
+}
+
+// createAccountInteractive prompts for the new account fields, validates
+// them against the config and appends the account to the TOML file.
+func createAccountInteractive(t *interactive, o out, cfg *config.Config) (string, error) {
+	id := t.line("ID аккаунта (латиницей, например main): ")
+	if id == "" {
+		return "", exitErr("пустой id аккаунта")
+	}
+	if !validAccountID(id) {
+		return "", exitErr("id %q: допустимы латинские буквы, цифры, '.', '_', '-'", id)
+	}
+	if _, exists := cfg.Accounts[id]; exists {
+		return "", exitErr("аккаунт %q уже есть в конфиге", id)
+	}
+	display := t.line("Отображаемое имя (Enter = " + id + "): ")
+	proxyRef := t.line("proxy_ref (Enter = напрямую; доступные: " + proxyList(cfg) + "): ")
+	if proxyRef != "" {
+		if _, ok := cfg.Proxy[proxyRef]; !ok {
+			return "", exitErr("proxy_ref %q не найден в [proxy.*]", proxyRef)
+		}
+	}
+	ua := t.line("User-Agent (Enter = реалистичный Chrome по умолчанию): ")
+	if ua == "" {
+		ua = defaultUA()
+	}
+
+	// Persist the account into the TOML file.
+	if err := appendAccountToTOML(flags.configPath, id, display, proxyRef, ua); err != nil {
+		return "", exitErr("config update: %v", err)
+	}
+	o.printf("Аккаунт %s добавлен в %s\n", id, flags.configPath)
+	return id, nil
+}
+
+// saveCookiesInteractive parses the pasted cookie string and saves it to the
+// account store; empty input just prints the skip hint.
+func saveCookiesInteractive(ctx context.Context, o out, ckStore cookies.Store, id, raw string) error {
+	if raw == "" {
+		o.println("Куки пропущены — добавьте позже: hhauto account add --id " + id + " --cookies-file cookies.txt")
+		return nil
+	}
+	cks, err := parseCookiesInput(raw)
+	if err != nil {
+		return exitErr("%v", err)
+	}
+	if err := ckStore.Save(ctx, id, cks); err != nil {
+		return exitErr("cookie save: %v", err)
+	}
+	o.printf("Сохранено кук: %d (backend: %s)\n", len(cks), ckStore.Backend())
+	return nil
+}
+
+// checkSessionOnboarding opens the store, runs bootstrap+me for the new
+// account and prints the outcome; a failed check is advisory, not fatal.
+func checkSessionOnboarding(ctx context.Context, cfg *config.Config, ckStore cookies.Store, id string, o out) error {
+	dbPath := cfg.Storage.Path
+	if dbPath == "" {
+		dbPath = filepath.Join(cfg.General.DataDir, "hhauto.db")
+	}
+	db, err := store.Open(ctx, dbPath, store.Options{BusyTimeoutMS: cfg.Storage.BusyTimeoutMS})
+	if err != nil {
+		return exitErr("store: %v", err)
+	}
+	checkErr := checkAccountSession(ctx, cfg, db, ckStore, id, o)
+	_ = db.Close()
+	if checkErr != nil {
+		o.errf("Проверка сессии не прошла: %v (перелогиньтесь и повторите: hhauto account check %s)", checkErr, id)
+	}
+	return nil
+}
+
+// fillProfileInteractive asks the onboarding questions and writes profile.md.
+func fillProfileInteractive(t *interactive, o out, cfg *config.Config, id string) error {
+	questions := profile.SuggestOnboardingQuestions()
+	answers := make([]string, len(questions))
+	o.println("Отвечайте строкой на каждый вопрос (Enter — пропустить):")
+	for i, q := range questions {
+		answers[i] = t.line(q + "\n  → ")
+	}
+	path := profilePathFor(cfg, id)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return exitErr("profile dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(renderProfileMD(questions, answers)), 0o600); err != nil {
+		return exitErr("profile.md write: %v", err)
+	}
+	o.println("Профиль сохранён:", path)
 	return nil
 }
 

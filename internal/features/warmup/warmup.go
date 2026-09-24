@@ -139,26 +139,13 @@ func (f *Feature) processChat(ctx context.Context, api hhapi.HHAPI, accountID st
 	}
 
 	// Stage due? LadderHours[stage-1] hours after the last outgoing message.
-	if chat.LastOutgoingAt == nil || chat.LastOutgoingAt.IsZero() {
-		return nil
-	}
-	stage := ladder + 1
-	due := *chat.LastOutgoingAt
-	if delay, ok := ladderDelay(f.Cfg.Warmup.LadderHours, ladder); ok {
-		due = due.Add(delay)
-	} else {
-		due = due.Add(24 * time.Hour)
-	}
-	if now.Before(due) {
+	stage, due := f.stageDue(chat, ladder, now)
+	if !due {
 		return nil
 	}
 
 	// Human-hours gates: active window and weekend.
-	if !kit11.InActiveWindow(now.Local(), f.Cfg.Warmup.ActiveHours) {
-		return nil
-	}
-	respectWeekend := f.Cfg.Warmup.RespectWeekend == nil || *f.Cfg.Warmup.RespectWeekend
-	if respectWeekend && kit11.IsWeekend(now.Local()) {
+	if !f.humanHoursOK(now) {
 		return nil
 	}
 
@@ -193,14 +180,8 @@ func (f *Feature) processChat(ctx context.Context, api hhapi.HHAPI, accountID st
 	// One ping_queue row per chat (UNIQUE chat_id+attempts): a ledger entry,
 	// not the ladder driver. Already present → the chat was pinged before.
 	// Scheduled only on the real-send path so a dry-run leaves no row.
-	if _, scheduled, err := f.DB.PingQueueSchedule(ctx, accountID, chat.ID, now, 1); err != nil {
-		return fmt.Errorf("warmup: schedule ping: %w", err)
-	} else if !scheduled && ladder == 0 {
-		// A row exists but the ladder says stage 1: a previous run already
-		// scheduled/sent a ping that this ladder lost track of — do not
-		// double-ping, repair the ladder instead.
-		_ = f.DB.IntentsMarkAbandoned(ctx, intentID)
-		return nil
+	if err := f.schedulePingQueue(ctx, accountID, chat, ladder, now, intentID); err != nil {
+		return err
 	}
 
 	// Pacer before the ping mutation (wave-3 review #4).
@@ -212,29 +193,66 @@ func (f *Feature) processChat(ctx context.Context, api hhapi.HHAPI, accountID st
 	}
 
 	sendErr := api.SendMessage(ctx, chat.ChatikChatID, intentID, text)
+	if err := f.handlePingSendErr(ctx, api, accountID, chat, intentID, stage, text, now, log, sendErr); err != nil {
+		return err
+	}
+	return nil
+}
+
+// stageDue computes the next ladder stage and whether its ping is due now
+// (LadderHours[stage-1] after the last outgoing message; 24h fallback).
+func (f *Feature) stageDue(chat store.Chat, ladder int, now time.Time) (int, bool) {
+	if chat.LastOutgoingAt == nil || chat.LastOutgoingAt.IsZero() {
+		return 0, false
+	}
+	stage := ladder + 1
+	due := *chat.LastOutgoingAt
+	if delay, ok := ladderDelay(f.Cfg.Warmup.LadderHours, ladder); ok {
+		due = due.Add(delay)
+	} else {
+		due = due.Add(24 * time.Hour)
+	}
+	return stage, !now.Before(due)
+}
+
+// humanHoursOK reports whether now fits the active window and the weekend
+// rule (respect_weekend defaults to true).
+func (f *Feature) humanHoursOK(now time.Time) bool {
+	if !kit11.InActiveWindow(now.Local(), f.Cfg.Warmup.ActiveHours) {
+		return false
+	}
+	respectWeekend := f.Cfg.Warmup.RespectWeekend == nil || *f.Cfg.Warmup.RespectWeekend
+	if respectWeekend && kit11.IsWeekend(now.Local()) {
+		return false
+	}
+	return true
+}
+
+// schedulePingQueue arms the one ping_queue row per chat (UNIQUE
+// chat_id+attempts): a ledger entry, not the ladder driver. Scheduled only
+// on the real-send path so a dry-run leaves no row.
+func (f *Feature) schedulePingQueue(ctx context.Context, accountID string, chat store.Chat, ladder int, now time.Time, intentID string) error {
+	if _, scheduled, err := f.DB.PingQueueSchedule(ctx, accountID, chat.ID, now, 1); err != nil {
+		return fmt.Errorf("warmup: schedule ping: %w", err)
+	} else if !scheduled && ladder == 0 {
+		// A row exists but the ladder says stage 1: a previous run already
+		// scheduled/sent a ping that this ladder lost track of — do not
+		// double-ping, repair the ladder instead.
+		_ = f.DB.IntentsMarkAbandoned(ctx, intentID)
+		return nil
+	}
+	return nil
+}
+
+// handlePingSendErr classifies a failed ping send: ambiguous outcomes
+// reconcile by reading the chat, transient failures abort the scan (the
+// scheduler retries later), rejections write the review item.
+func (f *Feature) handlePingSendErr(ctx context.Context, api hhapi.HHAPI, accountID string, chat store.Chat, intentID string, stage int, text string, now time.Time, log *slog.Logger, sendErr error) error {
 	if sendErr == nil {
 		return f.completePing(ctx, accountID, chat, intentID, stage, text, now, log)
 	}
 	if kit11.IsAmbiguous(sendErr) {
-		// Outcome unknown — RECONCILE by reading state, never blind repeat.
-		sent, rerr := pingDelivered(ctx, api, chat.ChatikChatID, text)
-		if rerr != nil {
-			// Cannot reconcile: leave the intent pending (blocks any repeat)
-			// and surface for a human.
-			if rerr2 := f.review(ctx, accountID, "warmup_send_ambiguous", chat.ChatikChatID,
-				"warmup: ping outcome unknown and chat unreadable — check manually"); rerr2 != nil {
-				return rerr2
-			}
-			return sendErr
-		}
-		if sent {
-			return f.completePing(ctx, accountID, chat, intentID, stage, text, now, log)
-		}
-		if err := f.DB.IntentsMarkFailed(ctx, intentID); err != nil {
-			return err
-		}
-		return f.review(ctx, accountID, "warmup_send_ambiguous", chat.ChatikChatID,
-			"warmup: ping send outcome unknown, not delivered — will not repeat automatically")
+		return f.reconcileAmbiguousPing(ctx, api, accountID, chat, intentID, stage, text, now, log, sendErr)
 	}
 	if kit11.IsTransient(sendErr) {
 		if err := f.DB.IntentsMarkFailed(ctx, intentID); err != nil {
@@ -498,3 +516,34 @@ func mustJSON(v any) string {
 
 // Compile-time conformance with the feature-module contract.
 var _ features.Feature = (*Feature)(nil)
+
+// reconcileAmbiguousPing resolves an ambiguous ping send by reading the chat
+// history: delivered → complete the ping; unreadable → surface for a human
+// with the intent left pending (it blocks any repeat); undelivered → fail
+// the intent and record the review item.
+func (f *Feature) reconcileAmbiguousPing(ctx context.Context, api hhapi.HHAPI, accountID string, chat store.Chat, intentID string, stage int, text string, now time.Time, log *slog.Logger, sendErr error) error {
+	sent, rerr := pingDelivered(ctx, api, chat.ChatikChatID, text)
+	if rerr != nil {
+		// Cannot reconcile: leave the intent pending (blocks any repeat)
+		// and surface for a human.
+		return f.reviewUnreadableChat(ctx, accountID, chat.ChatikChatID, sendErr)
+	}
+	if sent {
+		return f.completePing(ctx, accountID, chat, intentID, stage, text, now, log)
+	}
+	if err := f.DB.IntentsMarkFailed(ctx, intentID); err != nil {
+		return err
+	}
+	return f.review(ctx, accountID, "warmup_send_ambiguous", chat.ChatikChatID,
+		"warmup: ping send outcome unknown, not delivered — will not repeat automatically")
+}
+
+// reviewUnreadableChat reports an unreconcilable send: the review write
+// fails first (it takes precedence), otherwise the send error is surfaced.
+func (f *Feature) reviewUnreadableChat(ctx context.Context, accountID, chatikID string, sendErr error) error {
+	if rerr2 := f.review(ctx, accountID, "warmup_send_ambiguous", chatikID,
+		"warmup: ping outcome unknown and chat unreadable — check manually"); rerr2 != nil {
+		return rerr2
+	}
+	return sendErr
+}

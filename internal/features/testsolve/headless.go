@@ -340,6 +340,53 @@ func planFillOps(fields []extractedField, answers []AnswerEntry) (ops []fillOp, 
 
 // Fill implements Filler. See the file head comment for the full contract.
 func (h *HeadlessFiller) Fill(ctx context.Context, req FillRequest) (FillResult, error) {
+	runCtx, cancel, err := h.newBrowser(ctx, req)
+	if err != nil {
+		return FillResult{}, err
+	}
+	defer cancel()
+
+	finalURL, err := h.navigate(runCtx, req.URL)
+	if err != nil {
+		return FillResult{}, err
+	}
+	page, err := h.extractPage(runCtx)
+	if err != nil {
+		return FillResult{}, err
+	}
+
+	answers, unsure, err := h.answerAll(runCtx, req, page.form())
+	if err != nil {
+		return FillResult{}, err // transient: AI outage → engine requeue
+	}
+	unfilled, err := h.fillFields(runCtx, page.Fields, answers)
+	if err != nil {
+		return FillResult{}, err
+	}
+	unsure = unsure || unfilled > 0
+	dom, err := h.domSnapshot(runCtx)
+	if err != nil {
+		return FillResult{}, err
+	}
+
+	res := FillResult{
+		URL:      finalURL,
+		DOM:      dom,
+		Answers:  answers,
+		Unsure:   unsure,
+		Unfilled: unfilled,
+	}
+	if err := h.maybeSubmit(runCtx, req, &res); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+// newBrowser prepares a throwaway-profile chromedp run context: finds
+// Chrome, wires the optional no-auth proxy, arms the page timeout. The
+// returned cancel stops the browser and removes the profile dir (the run
+// context's own cancel must be called first by the caller).
+func (h *HeadlessFiller) newBrowser(ctx context.Context, req FillRequest) (context.Context, func(), error) {
 	// 1. Chrome discovery fails fast, before any directory or process work.
 	lookup := h.Chrome
 	if lookup == nil {
@@ -347,13 +394,13 @@ func (h *HeadlessFiller) Fill(ctx context.Context, req FillRequest) (FillResult,
 	}
 	chromePath, err := lookup()
 	if err != nil {
-		return FillResult{}, err
+		return nil, nil, err
 	}
 
 	// 2. Proxy: no-auth flag only (typed refusal otherwise).
 	server, err := proxyServerFor(h.Cfg, req.AccountID)
 	if err != nil {
-		return FillResult{}, err
+		return nil, nil, err
 	}
 
 	// 3. Throwaway profile under the OS temp dir; removed after the browser
@@ -361,7 +408,7 @@ func (h *HeadlessFiller) Fill(ctx context.Context, req FillRequest) (FillResult,
 	// NEVER seeded with hh cookies — see the file-head invariant.
 	dir, err := os.MkdirTemp("", "hhauto-forms-")
 	if err != nil {
-		return FillResult{}, fmt.Errorf("testsolve: temp profile: %w", err)
+		return nil, nil, fmt.Errorf("testsolve: temp profile: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
@@ -373,105 +420,116 @@ func (h *HeadlessFiller) Fill(ctx context.Context, req FillRequest) (FillResult,
 		opts = append(opts, chromedp.ProxyServer(server))
 	}
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, opts...)
-	defer cancelAlloc()
 	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
-	defer cancelBrowser()
 
 	timeout := time.Duration(h.Cfg.Forms.PageTimeoutSec) * time.Second
 	if timeout <= 0 {
 		timeout = defaultPageTimeout
 	}
 	runCtx, cancelRun := context.WithTimeout(browserCtx, timeout)
-	defer cancelRun()
 
-	// 4. Navigate (allocator starts on the first Run).
+	cancel := func() {
+		cancelRun()
+		cancelBrowser()
+		cancelAlloc()
+		_ = os.RemoveAll(dir)
+	}
+	return runCtx, cancel, nil
+}
+
+// navigate opens the form URL and enforces the allow-list on the final
+// URL after redirects (same refusal as the draft fetcher's CheckRedirect).
+func (h *HeadlessFiller) navigate(ctx context.Context, reqURL string) (string, error) {
+	// Allocator starts on the first Run.
 	var finalURL string
-	if err := chromedp.Run(runCtx,
-		chromedp.Navigate(req.URL),
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(reqURL),
 		chromedp.Location(&finalURL),
 	); err != nil {
-		return FillResult{}, fmt.Errorf("testsolve: navigate %s: %w", req.URL, err)
+		return "", fmt.Errorf("testsolve: navigate %s: %w", reqURL, err)
 	}
 	// Redirects must stay on the allow-list (same refusal as the draft
 	// fetcher's CheckRedirect).
 	if !kit11.HostAllowed(hostPortOf(finalURL), h.Cfg.Forms.AllowedDomains) {
-		return FillResult{}, fmt.Errorf("%w: %s", ErrHostDisallowed, finalURL)
+		return "", fmt.Errorf("%w: %s", ErrHostDisallowed, finalURL)
 	}
+	return finalURL, nil
+}
 
+// extractPage runs the field-extraction JS, decodes it and applies the
+// raw-DOM gates: password fields, unanswerable pages, off-list hosts.
+func (h *HeadlessFiller) extractPage(ctx context.Context) (extractedPage, error) {
 	// 5. Extract fields (anti-phishing password gate first, raw-DOM
 	// semantics preserved from the draft path).
 	var extracted string
-	if err := chromedp.Run(runCtx, chromedp.Evaluate(extractFieldsJS, &extracted)); err != nil {
-		return FillResult{}, fmt.Errorf("testsolve: extract: %w", err)
+	if err := chromedp.Run(ctx, chromedp.Evaluate(extractFieldsJS, &extracted)); err != nil {
+		return extractedPage{}, fmt.Errorf("testsolve: extract: %w", err)
 	}
 	page, err := decodeExtracted(extracted)
 	if err != nil {
-		return FillResult{}, err
+		return extractedPage{}, err
 	}
 	if page.PasswordDetected {
-		return FillResult{}, ErrPasswordDetected
+		return extractedPage{}, ErrPasswordDetected
 	}
 	if len(page.Fields) == 0 {
-		return FillResult{}, ErrNoFields
+		return extractedPage{}, ErrNoFields
 	}
 	if !kit11.HostAllowed(hostPortOf(page.URL), h.Cfg.Forms.AllowedDomains) {
-		return FillResult{}, fmt.Errorf("%w: %s", ErrHostDisallowed, page.URL)
+		return extractedPage{}, fmt.Errorf("%w: %s", ErrHostDisallowed, page.URL)
 	}
+	return page, nil
+}
 
-	// 6. AI answers in batches of ≤5 (same task/verdict contract as draft).
-	form := page.form()
-	answers, unsure, err := h.answerAll(runCtx, req, form)
-	if err != nil {
-		return FillResult{}, err // transient: AI outage → engine requeue
+// fillFields applies the fill operations in one JS pass; the count of
+// unanswered fields is reported (never guessed).
+func (h *HeadlessFiller) fillFields(ctx context.Context, fields []extractedField, answers []AnswerEntry) (int, error) {
+	ops, unfilled := planFillOps(fields, answers)
+	if len(ops) == 0 {
+		return unfilled, nil
 	}
-
-	// 7. Fill by field type; unmatched options are never guessed.
-	ops, unfilled := planFillOps(page.Fields, answers)
-	if len(ops) > 0 {
-		var fillRes string
-		if err := chromedp.Run(runCtx, chromedp.Evaluate(fillJS(ops), &fillRes)); err != nil {
-			return FillResult{}, fmt.Errorf("testsolve: fill: %w", err)
-		}
+	var fillRes string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(fillJS(ops), &fillRes)); err != nil {
+		return unfilled, fmt.Errorf("testsolve: fill: %w", err)
 	}
-	unsure = unsure || unfilled > 0
+	return unfilled, nil
+}
 
-	// 8. Serialize the filled DOM (the artifact; screenshots forbidden).
+// domSnapshot serializes the filled DOM (the artifact; screenshots forbidden).
+func (h *HeadlessFiller) domSnapshot(ctx context.Context) (string, error) {
 	var dom string
-	if err := chromedp.Run(runCtx, chromedp.Evaluate(domJS, &dom)); err != nil {
-		return FillResult{}, fmt.Errorf("testsolve: serialize: %w", err)
+	if err := chromedp.Run(ctx, chromedp.Evaluate(domJS, &dom)); err != nil {
+		return "", fmt.Errorf("testsolve: serialize: %w", err)
 	}
+	return dom, nil
+}
 
-	res := FillResult{
-		URL:      finalURL,
-		DOM:      dom,
-		Answers:  answers,
-		Unsure:   unsure,
-		Unfilled: unfilled,
-	}
-
+// maybeSubmit clicks submit exactly once when the policy allows and the
+// verdict is certain; a missing button escalates to unsure instead.
+func (h *HeadlessFiller) maybeSubmit(ctx context.Context, req FillRequest, res *FillResult) error {
 	// 9. Submit exactly once, only when policy allows and nothing is unsure.
-	if req.SubmitPolicy != "auto" || unsure {
-		return res, nil
+	if req.SubmitPolicy != "auto" || res.Unsure {
+		return nil
 	}
 	submitFn := h.clickSubmit
 	if submitFn == nil {
 		submitFn = func(c context.Context) error { return clickSubmit(c) }
 	}
-	st, serr := h.submitOnce(runCtx, req.AccountID, req.TestID, submitFn)
+	st, serr := h.submitOnce(ctx, req.AccountID, req.TestID, submitFn)
 	if errors.Is(serr, ErrNoSubmitButton) {
 		// Deterministic no-side-effect: the intent stays retriable; the run
 		// escalates to a human instead of looping the queue.
 		res.Unsure = true
-		return res, nil
+		return nil
 	}
 	if serr != nil {
 		// Lost click answer: intent burned (never repeat), task requeues and
 		// the next run hits SubmitAlreadyDone → escalated.
 		res.Submit = st
-		return res, fmt.Errorf("testsolve: submit: %w", serr)
+		return fmt.Errorf("testsolve: submit: %w", serr)
 	}
 	res.Submit = st
-	return res, nil
+	return nil
 }
 
 // submitOnce guards the single click with the extsubmit intent. Any error

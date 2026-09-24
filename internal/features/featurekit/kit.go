@@ -118,7 +118,7 @@ func NoLinksRule(text string) error {
 	lower := strings.ToLower(text)
 	for _, pat := range []string{"http://", "https://", "www.", "t.me/", "telegram.me/"} {
 		if i := strings.Index(lower, pat); i >= 0 {
-			return fmt.Errorf("%w: %s", ErrLinkFound, fragment(text, i))
+			return fmt.Errorf("%w: %s", ErrLinkFound, fragment(lower, i))
 		}
 	}
 	if i := strings.IndexAny(text, "@"); i >= 0 {

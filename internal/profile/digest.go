@@ -87,30 +87,11 @@ func BuildResumeDigest(raw json.RawMessage) (string, error) {
 	}
 
 	var b strings.Builder
-	title := ""
-	if r.Title != nil {
-		title = strings.TrimSpace(*r.Title)
-	}
-	if title != "" || (r.Status != nil && r.Status.Name != "") {
-		b.WriteString("Резюме")
-		if title != "" {
-			b.WriteString(" «" + title + "»")
-		}
-		if r.Status != nil && r.Status.Name != "" {
-			b.WriteString(" (" + r.Status.Name + ")")
-		}
-		b.WriteString("\n")
-	}
+	writeResumeHeader(&b, r)
 	if r.Area != nil && r.Area.Name != "" {
 		fmt.Fprintf(&b, "Регион: %s\n", r.Area.Name)
 	}
-	if r.Salary != nil && r.Salary.Amount != "" {
-		line := "Зарплата: " + r.Salary.Amount.String()
-		if r.Salary.Currency != "" {
-			line += " " + r.Salary.Currency
-		}
-		b.WriteString(line + "\n")
-	}
+	writeSalaryLine(&b, r)
 	if r.TotalExp != nil && r.TotalExp.Months > 0 {
 		fmt.Fprintf(&b, "Общий опыт: %s\n", formatMonths(r.TotalExp.Months))
 	}
@@ -120,13 +101,7 @@ func BuildResumeDigest(raw json.RawMessage) (string, error) {
 	if names := nameList(r.Schedules, r.Schedule); len(names) > 0 {
 		b.WriteString("График: " + strings.Join(names, ", ") + "\n")
 	}
-	if r.Relocation != nil && r.Relocation.Type != nil && r.Relocation.Type.Name != "" {
-		line := "Релокация: " + r.Relocation.Type.Name
-		if names := refNames(r.Relocation.Area); len(names) > 0 {
-			line += " (" + strings.Join(names, ", ") + ")"
-		}
-		b.WriteString(line + "\n")
-	}
+	writeRelocationLine(&b, r)
 	if r.BusinessTrip != nil && r.BusinessTrip.Name != "" {
 		fmt.Fprintf(&b, "Командировки: %s\n", r.BusinessTrip.Name)
 	}
@@ -148,6 +123,48 @@ func BuildResumeDigest(raw json.RawMessage) (string, error) {
 		}
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// writeResumeHeader emits the "Резюме «title» (status)" heading when either
+// a title or a status name is present.
+func writeResumeHeader(b *strings.Builder, r rawResume) {
+	title := ""
+	if r.Title != nil {
+		title = strings.TrimSpace(*r.Title)
+	}
+	if title != "" || (r.Status != nil && r.Status.Name != "") {
+		b.WriteString("Резюме")
+		if title != "" {
+			b.WriteString(" «" + title + "»")
+		}
+		if r.Status != nil && r.Status.Name != "" {
+			b.WriteString(" (" + r.Status.Name + ")")
+		}
+		b.WriteString("\n")
+	}
+}
+
+// writeSalaryLine emits the "Зарплата" line when a salary amount is present.
+func writeSalaryLine(b *strings.Builder, r rawResume) {
+	if r.Salary != nil && r.Salary.Amount != "" {
+		line := "Зарплата: " + r.Salary.Amount.String()
+		if r.Salary.Currency != "" {
+			line += " " + r.Salary.Currency
+		}
+		b.WriteString(line + "\n")
+	}
+}
+
+// writeRelocationLine emits the "Релокация" line, with the relocation
+// areas in parentheses, when a relocation type name is present.
+func writeRelocationLine(b *strings.Builder, r rawResume) {
+	if r.Relocation != nil && r.Relocation.Type != nil && r.Relocation.Type.Name != "" {
+		line := "Релокация: " + r.Relocation.Type.Name
+		if names := refNames(r.Relocation.Area); len(names) > 0 {
+			line += " (" + strings.Join(names, ", ") + ")"
+		}
+		b.WriteString(line + "\n")
+	}
 }
 
 // nameList merges the plural field with its singular alias, preserving

@@ -40,120 +40,34 @@ func (f *Feature) processVacancy(ctx context.Context, runID string, run config.R
 	}
 	batch[v.ID] = true
 
-	// Write-through the seen record (audit trail; not a skip condition —
-	// quota-filtered vacancies must stay retryable on later days).
-	_, _ = f.opt.DB.VacanciesSeenUpsert(ctx, store.VacancySeen{
-		AccountID: accountID, VacancyID: v.ID, Source: "multiapply",
-		FirstSeenAt: f.opt.Now(), Meta: runID,
-	})
-
-	// F2: exclude words (name always; description when enabled).
-	if excluded(v, run.Filters) {
-		return "", "exclude_words"
-	}
-
-	// F3: blacklist / whitelist (by employer id and name).
-	flt := run.Filters
-	whitelisted := len(flt.CompanyWhitelist) > 0 && matchEmployer(flt.CompanyWhitelist, v.EmployerID, v.EmployerName)
-	if len(flt.CompanyWhitelist) > 0 && !whitelisted {
-		return "", "not_whitelisted"
-	}
-	if matchEmployer(flt.CompanyBlacklist, v.EmployerID, v.EmployerName) {
-		return "", "blacklisted"
-	}
-	bypass := bypassSet(flt.WhitelistBypass)
-
-	// F4: employer rating (skipped for whitelisted employers listing "F4").
-	if (!whitelisted || !bypass[stageF4]) && flt.MinEmployerRating > 0 {
-		pass, reason := emplrating.New(f.opt.DB, api, f.log).
-			Pass(ctx, accountID, v.EmployerID, flt)
-		if !pass {
-			if reason == "no_reviews_human" || reason == "no_reviews" {
-				return "", reason
-			}
-			return "", "rating_low"
-		}
-	}
-
-	// F5: dedup — recorded application (dry_run survey rows never block a
-	// live apply), native auto-responder.
-	key := featurekit.DedupKey(accountID, resumeHash, v.ID)
-	if app, err := f.opt.DB.ApplicationsGetByDedupKeyLive(ctx, key); err == nil && app != nil {
-		return "", "already_applied"
-	}
-	if f.opt.Config.Features.MultiApply.DedupNativeResp {
-		if accepts, found := rawAcceptsAutoResponse(v.Raw); found && !accepts {
-			return "", "native_autoresponse"
-		}
+	// F2-F5: static filters, rating and dedup (the seen row is written
+	// through as audit trail, never as a skip condition).
+	bypass := bypassSet(run.Filters.WhitelistBypass)
+	skip, whitelisted := f.prefilter(ctx, runID, run, accountID, api, resumeHash, v)
+	if skip != "" {
+		return "", skip
 	}
 
 	// F6: AI relevance (threshold bypassed for whitelisted employers
 	// listing "F6_threshold"; needs_human/injection still gate).
-	if f.opt.Config.Features.MultiApply.AIFilter && f.opt.Runner != nil {
-		threshold := run.AIFilterOverrides.MinScore
-		if threshold <= 0 {
-			threshold = f.opt.Config.Features.MultiApply.MinMatchPercent
-		}
-		if threshold <= 0 {
-			threshold = defaultMinMatch
-		}
-		if whitelisted && bypass[stageF6Threshold] {
-			threshold = 0
-		}
-		rules := relevance.Rules{
-			ExcludeWords:      flt.ExcludeWords,
-			TargetRoles:       relevance.RolesFromFacts(prof),
-			ExtraInstructions: run.AIFilterOverrides.ExtraInstructions,
-		}
-		_, pass, reason := relevance.New(f.opt.Runner, f.opt.DB, accountID, runID, prof, rules, f.log).
-			Pass(ctx, v, resumeHash, threshold)
-		if !pass {
-			return "", reason
-		}
+	if skip := f.aiFilterSkip(ctx, runID, run, accountID, prof, resumeHash, v, whitelisted, bypass); skip != "" {
+		return "", skip
 	}
 
 	// F7: daily quotas — cheap DB checks run BEFORE the expensive popup
 	// request (Wave 3 review fix 1).
-	if run.MaxPerDay > 0 && f.countToday(ctx, accountID, runID) >= run.MaxPerDay {
-		return "run_quota", ""
-	}
-	if f.accountCountToday(ctx, accountID) >= f.accountCap(accountID) {
-		return "account_cap", ""
-	}
-	if f.employerToday(ctx, accountID, v.EmployerID) >= perEmployerDailyCap {
-		return "", "employer_daily_cap"
+	if stop, skip := f.quotaCheck(ctx, runID, run, accountID, v); stop != "" || skip != "" {
+		return stop, skip
 	}
 
 	// F6.5: feasibility from the apply popup.
-	meta, err := api.ApplyPopup(ctx, v.ID)
-	if err != nil {
-		if errors.Is(err, hhapi.ErrLoggedOut) {
-			f.stopAccount(ctx, accountID, "apply_popup: "+err.Error())
-			return stopLoggedOut, ""
-		}
-		if errors.Is(err, hhapi.ErrRateLimited) {
-			return "", "hh_limit"
-		}
-		f.log.Warn("multiapply: popup failed", "vacancy", v.ID, "err", err)
-		return "", "popup_failed"
-	}
-	if len(meta.ResumeInconsistencies) > 0 {
-		f.log.Info("multiapply: resume inconsistencies", "vacancy", v.ID,
-			"inconsistencies", strings.Join(meta.ResumeInconsistencies, "; "))
-		return "", "inconsistencies"
-	}
-	if meta.AlreadyApplied {
-		// Live popup surfaces the structural alreadyApplied flag upfront
-		// (responseStatus.alreadyApplied) — same skip as the dedup hit,
-		// one request earlier.
-		return "", "already_applied"
-	}
-	if meta.ChatWritePossibility == "DISABLED" {
-		return "", "chat_disabled"
+	stop, skip, letterRequired := f.popupGate(ctx, accountID, api, v)
+	if stop != "" || skip != "" {
+		return stop, skip
 	}
 
 	// F8: apply.
-	return f.applyOne(ctx, runID, run, accountID, api, prof, resumeHash, v, meta.LetterRequired)
+	return f.applyOne(ctx, runID, run, accountID, api, prof, resumeHash, v, letterRequired)
 }
 
 // applyOne performs the mutation with intent, letter, captcha retry and
@@ -162,39 +76,12 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 	api hhapi.HHAPI, prof profile.Profile, resumeHash string, v hhapi.Vacancy, letterRequired bool,
 ) (stop, skip string) {
 	// Cover letter: required by the popup or configured by the run.
-	letter := ""
-	if letterRequired || run.LetterTemplate != "" {
-		var err error
-		letter, err = f.buildLetter(ctx, runID, run, accountID, prof, v, resumeHash)
-		if err != nil {
-			if letterRequired {
-				return "", "letter_unavailable"
-			}
-			letter = ""
-		} else if letter == "" && letterRequired {
-			return "", "letter_unavailable"
-		}
-		if letter != "" {
-			if lerr := featurekit.NoLinksRule(letter); lerr != nil {
-				f.review(ctx, accountID, "letter_links", lerr.Error(),
-					fmt.Sprintf(`{"vacancy_id":%d,"run":%q}`, v.ID, runID))
-				return "", "letter_links"
-			}
-		}
+	letter, skip := f.prepareLetter(ctx, runID, run, accountID, prof, v, resumeHash, letterRequired)
+	if skip != "" {
+		return "", skip
 	}
 
-	if f.opt.Config.General.DryRun {
-		f.log.Info("multiapply: dry-run apply", "account", accountID, "vacancy", v.ID, "run", runID)
-		if err := f.opt.DB.ApplicationsCreate(ctx, &store.Application{
-			AccountID: accountID, RunID: runID, HhResumeID: resumeHash,
-			VacancyID: v.ID, EmployerID: v.EmployerID,
-			DedupKey: featurekit.DedupKey(accountID, resumeHash, v.ID),
-			Status:   "dry_run",
-			Letter:   strPtr(letter),
-		}); err != nil {
-			f.log.Error("multiapply: dry-run application record failed", "err", err)
-		}
-		f.incr(ctx, "apply.dry_run")
+	if f.dryRunApply(ctx, runID, accountID, resumeHash, v, letter) {
 		return "", ""
 	}
 
@@ -218,30 +105,9 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 		return "", "intent_done"
 	}
 
-	_, err = f.sendApply(ctx, api, v, resumeHash, letter)
-	if errors.Is(err, hhapi.ErrCaptcha) {
-		if f.captchaExhausted(ctx, accountID) {
-			// Circuit breaker open: skip without another Solve call; the
-			// day-scoped key resets tomorrow. Abandon so a later pass can
-			// re-attack the vacancy once the chain is healthy again.
-			if aerr := featurekit.AbandonIntent(ctx, f.opt.DB, claim); aerr != nil {
-				f.log.Error("multiapply: intent abandon failed", "err", aerr)
-			}
-			return "", "captcha_exhausted"
-		}
-		var chain captcha.Chain
-		var ok bool
-		if f.opt.ChainFor != nil {
-			chain, ok = f.opt.ChainFor(accountID)
-		}
-		if !ok || chain == nil {
-			f.tripCaptchaBreaker(ctx, accountID, "captcha challenge with no provider chain configured")
-		} else if _, serr := chain.Solve(ctx, captchaChallenge()); serr != nil {
-			f.tripCaptchaBreaker(ctx, accountID, "captcha solve failed: "+serr.Error())
-		} else {
-			f.incr(ctx, "apply.captcha_retry")
-			_, err = f.sendApply(ctx, api, v, resumeHash, letter)
-		}
+	skip, err = f.sendWithCaptcha(ctx, accountID, api, v, resumeHash, letter, claim)
+	if skip != "" {
+		return "", skip
 	}
 	if err == nil {
 		f.recordApplied(ctx, runID, accountID, resumeHash, v, claim, letter, "apply.ok")
@@ -269,49 +135,8 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 	// reading, never by repeating.
 	var amb *hhapi.AmbiguousError
 	if errors.As(err, &amb) {
-		found, rerr := f.reconcileNegotiations(ctx, api, v.ID)
-		switch {
-		case rerr == nil && found:
-			f.recordApplied(ctx, runID, accountID, resumeHash, v, claim, letter, "apply.reconciled")
-			return "", ""
-		case rerr == nil && !found:
-			// Server has no trace: abandon the intent and retry once —
-			// this is the only sanctioned repeat.
-			if aerr := featurekit.AbandonIntent(ctx, f.opt.DB, claim); aerr != nil {
-				f.log.Error("multiapply: intent abandon failed", "err", aerr)
-			}
-			claim2, retryErr := f.retryApplyOnce(ctx, runID, accountID, api, v, resumeHash, letter)
-			if retryErr == nil {
-				f.recordApplied(ctx, runID, accountID, resumeHash, v, claim2, letter, "apply.ok")
-				return "", ""
-			}
-			// A second ambiguity inside the sanctioned retry is handled
-			// symmetrically with the first: resolve by reading, never a
-			// silent "failed" (Wave 3 review fix 7).
-			var amb2 *hhapi.AmbiguousError
-			if errors.As(retryErr, &amb2) {
-				found2, rerr2 := f.reconcileNegotiations(ctx, api, v.ID)
-				if rerr2 == nil && found2 {
-					f.recordApplied(ctx, runID, accountID, resumeHash, v, claim2, letter, "apply.reconciled")
-					return "", ""
-				}
-				f.review(ctx, accountID, "apply_ambiguous",
-					"second ambiguous outcome; negotiations empty or unreadable",
-					fmt.Sprintf(`{"vacancy_id":%d,"run":%q}`, v.ID, runID))
-				f.incr(ctx, "apply.ambiguous_review")
-				return "", "" // intent stays pending: parked for a human
-			}
-			_ = featurekit.FinishIntent(ctx, f.opt.DB, claim2, retryErr)
-			f.createApplication(ctx, runID, accountID, resumeHash, v, "failed", letter, retryErr.Error())
-			f.incr(ctx, "apply.error")
-			return "", ""
-		default:
-			// Undeterminable: park for a human; the intent stays pending so
-			// the vacancy is not re-attacked automatically.
-			f.review(ctx, accountID, "apply_ambiguous",
-				"apply outcome unknown and negotiations unavailable: "+rerr.Error(),
-				fmt.Sprintf(`{"vacancy_id":%d,"run":%q}`, v.ID, runID))
-			f.incr(ctx, "apply.ambiguous_review")
+		handled, _ := f.resolveAmbiguous(ctx, runID, accountID, api, resumeHash, v, letter, claim, err)
+		if handled {
 			return "", ""
 		}
 	}
@@ -437,38 +262,49 @@ func (f *Feature) buildLetter(ctx context.Context, runID string, run config.Run,
 	prof profile.Profile, v hhapi.Vacancy, _ string,
 ) (string, error) {
 	if f.opt.Runner != nil {
-		raw, _, err := f.opt.Runner.Run(ctx, accountID, "vacancy",
-			strconv.FormatInt(v.ID, 10), runID, ai.TaskCoverLetter, letterInput{
-				Vacancy:           v,
-				ResumeDigest:      prof.ResumeDigest,
-				ProfileText:       prof.ProfileText,
-				Facts:             prof.Facts,
-				Template:          run.LetterTemplate,
-				ExtraInstructions: run.AIFilterOverrides.ExtraInstructions,
-			})
-		if err == nil {
-			var lv struct {
-				Letter     string `json:"letter"`
-				NeedsHuman bool   `json:"needs_human"`
-				Injection  bool   `json:"injection_suspected"`
-			}
-			if jerr := json.Unmarshal(raw, &lv); jerr == nil {
-				if lv.NeedsHuman || lv.Injection || strings.TrimSpace(lv.Letter) == "" {
-					f.review(ctx, accountID, "letter_needs_human",
-						"cover letter verdict needs human or is empty",
-						fmt.Sprintf(`{"vacancy_id":%d,"run":%q}`, v.ID, runID))
-					return "", errLetterNeedsHuman
-				}
-				return strings.TrimSpace(lv.Letter), nil
-			}
-		} else {
-			f.log.Warn("multiapply: cover letter task failed", "vacancy", v.ID, "err", err)
+		letter, aerr := f.aiLetter(ctx, runID, run, accountID, prof, v)
+		if aerr == nil {
+			return letter, nil
 		}
+		f.log.Warn("multiapply: cover letter task failed", "vacancy", v.ID, "err", aerr)
 	}
 	if run.LetterTemplate != "" {
 		return run.LetterTemplate, nil
 	}
 	return "", errors.New("multiapply: no cover letter available")
+}
+
+// aiLetter asks the runner for the cover-letter verdict; needs_human,
+// injection-flagged or empty letters are refused (errLetterNeedsHuman).
+func (f *Feature) aiLetter(ctx context.Context, runID string, run config.Run, accountID string,
+	prof profile.Profile, v hhapi.Vacancy) (string, error) {
+	raw, _, err := f.opt.Runner.Run(ctx, accountID, "vacancy",
+		strconv.FormatInt(v.ID, 10), runID, ai.TaskCoverLetter, letterInput{
+			Vacancy:           v,
+			ResumeDigest:      prof.ResumeDigest,
+			ProfileText:       prof.ProfileText,
+			Facts:             prof.Facts,
+			Template:          run.LetterTemplate,
+			ExtraInstructions: run.AIFilterOverrides.ExtraInstructions,
+		})
+	if err != nil {
+		return "", err
+	}
+	var lv struct {
+		Letter     string `json:"letter"`
+		NeedsHuman bool   `json:"needs_human"`
+		Injection  bool   `json:"injection_suspected"`
+	}
+	if jerr := json.Unmarshal(raw, &lv); jerr != nil {
+		return "", jerr
+	}
+	if lv.NeedsHuman || lv.Injection || strings.TrimSpace(lv.Letter) == "" {
+		f.review(ctx, accountID, "letter_needs_human",
+			"cover letter verdict needs human or is empty",
+			fmt.Sprintf(`{"vacancy_id":%d,"run":%q}`, v.ID, runID))
+		return "", errLetterNeedsHuman
+	}
+	return strings.TrimSpace(lv.Letter), nil
 }
 
 type letterInput struct {
@@ -747,4 +583,290 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// prefilter runs the seen write-through and gates F2-F5 (exclude words,
+// employer lists, rating, recorded applications). Returns the first skip
+// reason plus the whitelisted flag for the F6 threshold bypass.
+func (f *Feature) prefilter(ctx context.Context, runID string, run config.Run, accountID string,
+	api hhapi.HHAPI, resumeHash string, v hhapi.Vacancy) (string, bool) {
+	// Write-through the seen record (audit trail; not a skip condition —
+	// quota-filtered vacancies must stay retryable on later days).
+	_, _ = f.opt.DB.VacanciesSeenUpsert(ctx, store.VacancySeen{
+		AccountID: accountID, VacancyID: v.ID, Source: "multiapply",
+		FirstSeenAt: f.opt.Now(), Meta: runID,
+	})
+
+	// F2: exclude words (name always; description when enabled).
+	if excluded(v, run.Filters) {
+		return "exclude_words", false
+	}
+
+	// F3: blacklist / whitelist (by employer id and name).
+	flt := run.Filters
+	whitelisted := len(flt.CompanyWhitelist) > 0 && matchEmployer(flt.CompanyWhitelist, v.EmployerID, v.EmployerName)
+	if len(flt.CompanyWhitelist) > 0 && !whitelisted {
+		return "not_whitelisted", false
+	}
+	if matchEmployer(flt.CompanyBlacklist, v.EmployerID, v.EmployerName) {
+		return "blacklisted", false
+	}
+	bypass := bypassSet(flt.WhitelistBypass)
+
+	// F4: employer rating (skipped for whitelisted employers listing "F4").
+	if (!whitelisted || !bypass[stageF4]) && flt.MinEmployerRating > 0 {
+		pass, reason := emplrating.New(f.opt.DB, api, f.log).
+			Pass(ctx, accountID, v.EmployerID, flt)
+		if !pass {
+			if reason == "no_reviews_human" || reason == "no_reviews" {
+				return reason, whitelisted
+			}
+			return "rating_low", whitelisted
+		}
+	}
+
+	// F5: dedup — recorded application (dry_run survey rows never block a
+	// live apply), native auto-responder.
+	key := featurekit.DedupKey(accountID, resumeHash, v.ID)
+	if app, err := f.opt.DB.ApplicationsGetByDedupKeyLive(ctx, key); err == nil && app != nil {
+		return "already_applied", whitelisted
+	}
+	if f.opt.Config.Features.MultiApply.DedupNativeResp {
+		if accepts, found := rawAcceptsAutoResponse(v.Raw); found && !accepts {
+			return "native_autoresponse", whitelisted
+		}
+	}
+	return "", whitelisted
+}
+
+// aiFilterSkip is gate F6: AI relevance with the whitelisted threshold
+// bypass; needs_human and injection verdicts still gate.
+func (f *Feature) aiFilterSkip(ctx context.Context, runID string, run config.Run, accountID string,
+	prof profile.Profile, resumeHash string, v hhapi.Vacancy, whitelisted bool, bypass map[string]bool) string {
+	// F6: AI relevance (threshold bypassed for whitelisted employers
+	// listing "F6_threshold"; needs_human/injection still gate).
+	if f.opt.Config.Features.MultiApply.AIFilter && f.opt.Runner != nil {
+		threshold := run.AIFilterOverrides.MinScore
+		if threshold <= 0 {
+			threshold = f.opt.Config.Features.MultiApply.MinMatchPercent
+		}
+		if threshold <= 0 {
+			threshold = defaultMinMatch
+		}
+		if whitelisted && bypass[stageF6Threshold] {
+			threshold = 0
+		}
+		rules := relevance.Rules{
+			ExcludeWords:      run.Filters.ExcludeWords,
+			TargetRoles:       relevance.RolesFromFacts(prof),
+			ExtraInstructions: run.AIFilterOverrides.ExtraInstructions,
+		}
+		_, pass, reason := relevance.New(f.opt.Runner, f.opt.DB, accountID, runID, prof, rules, f.log).
+			Pass(ctx, v, resumeHash, threshold)
+		if !pass {
+			return reason
+		}
+	}
+	return ""
+}
+
+// quotaCheck is gate F7: run, account and per-employer daily caps. A stop
+// means the run is done for today; a skip only affects this vacancy.
+func (f *Feature) quotaCheck(ctx context.Context, runID string, run config.Run, accountID string, v hhapi.Vacancy) (string, string) {
+	// F7: daily quotas — cheap DB checks run BEFORE the expensive popup
+	// request (Wave 3 review fix 1).
+	if run.MaxPerDay > 0 && f.countToday(ctx, accountID, runID) >= run.MaxPerDay {
+		return "run_quota", ""
+	}
+	if f.accountCountToday(ctx, accountID) >= f.accountCap(accountID) {
+		return "account_cap", ""
+	}
+	if f.employerToday(ctx, accountID, v.EmployerID) >= perEmployerDailyCap {
+		return "", "employer_daily_cap"
+	}
+	return "", ""
+}
+
+// popupGate is F6.5: the apply-popup feasibility probe (logged-out stops
+// the account; inconsistencies, already-applied, disabled chat skip).
+func (f *Feature) popupGate(ctx context.Context, accountID string, api hhapi.HHAPI,
+	v hhapi.Vacancy) (string, string, bool) {
+	// F6.5: feasibility from the apply popup.
+	meta, err := api.ApplyPopup(ctx, v.ID)
+	if err != nil {
+		if errors.Is(err, hhapi.ErrLoggedOut) {
+			f.stopAccount(ctx, accountID, "apply_popup: "+err.Error())
+			return stopLoggedOut, "", false
+		}
+		if errors.Is(err, hhapi.ErrRateLimited) {
+			return "", "hh_limit", false
+		}
+		f.log.Warn("multiapply: popup failed", "vacancy", v.ID, "err", err)
+		return "", "popup_failed", false
+	}
+	if len(meta.ResumeInconsistencies) > 0 {
+		f.log.Info("multiapply: resume inconsistencies", "vacancy", v.ID,
+			"inconsistencies", strings.Join(meta.ResumeInconsistencies, "; "))
+		return "", "inconsistencies", false
+	}
+	if meta.AlreadyApplied {
+		// Live popup surfaces the structural alreadyApplied flag upfront
+		// (responseStatus.alreadyApplied) — same skip as the dedup hit,
+		// one request earlier.
+		return "", "already_applied", false
+	}
+	if meta.ChatWritePossibility == "DISABLED" {
+		return "", "chat_disabled", false
+	}
+	return "", "", meta.LetterRequired
+}
+
+// prepareLetter builds the cover letter when the popup requires one or the
+// run configures a template; links in the letter are a hard skip.
+func (f *Feature) prepareLetter(ctx context.Context, runID string, run config.Run, accountID string,
+	prof profile.Profile, v hhapi.Vacancy, resumeHash string, letterRequired bool) (string, string) {
+	if !letterRequired && run.LetterTemplate == "" {
+		return "", ""
+	}
+	letter, err := f.buildLetter(ctx, runID, run, accountID, prof, v, resumeHash)
+	if err != nil {
+		if letterRequired {
+			return "", "letter_unavailable"
+		}
+		return "", ""
+	}
+	if letter == "" && letterRequired {
+		return "", "letter_unavailable"
+	}
+	if letter != "" {
+		if lerr := featurekit.NoLinksRule(letter); lerr != nil {
+			f.review(ctx, accountID, "letter_links", lerr.Error(),
+				fmt.Sprintf(`{"vacancy_id":%d,"run":%q}`, v.ID, runID))
+			return "", "letter_links"
+		}
+	}
+	return letter, ""
+}
+
+// dryRunApply records a dry_run survey application: no pacer, no intent,
+// no mutation — the survey row is upgradeable in place later (Wave 3 fix 2).
+func (f *Feature) dryRunApply(ctx context.Context, runID string, accountID string, resumeHash string,
+	v hhapi.Vacancy, letter string) bool {
+	if !f.opt.Config.General.DryRun {
+		return false
+	}
+	f.log.Info("multiapply: dry-run apply", "account", accountID, "vacancy", v.ID, "run", runID)
+	if err := f.opt.DB.ApplicationsCreate(ctx, &store.Application{
+		AccountID: accountID, RunID: runID, HhResumeID: resumeHash,
+		VacancyID: v.ID, EmployerID: v.EmployerID,
+		DedupKey: featurekit.DedupKey(accountID, resumeHash, v.ID),
+		Status:   "dry_run",
+		Letter:   strPtr(letter),
+	}); err != nil {
+		f.log.Error("multiapply: dry-run application record failed", "err", err)
+	}
+	f.incr(ctx, "apply.dry_run")
+	return true
+}
+
+// sendWithCaptcha sends the apply once and, on a captcha challenge, honors
+// the circuit breaker or solves and retries exactly once. skip is set when
+// the vacancy is skipped without an error (captcha breaker open).
+func (f *Feature) sendWithCaptcha(ctx context.Context, accountID string, api hhapi.HHAPI, v hhapi.Vacancy,
+	resumeHash, letter string, claim featurekit.IntentClaim) (string, error) {
+	_, err := f.sendApply(ctx, api, v, resumeHash, letter)
+	if errors.Is(err, hhapi.ErrCaptcha) {
+		if f.captchaExhausted(ctx, accountID) {
+			return f.captchaBreakerSkip(ctx, claim), nil
+		}
+		if f.solveCaptchaOrBreak(ctx, accountID) {
+			_, err = f.sendApply(ctx, api, v, resumeHash, letter)
+		}
+	}
+	return "", err
+}
+
+// captchaBreakerSkip abandons the apply intent (a later pass re-attacks the
+// vacancy once the chain is healthy again) and reports the day-scoped skip.
+func (f *Feature) captchaBreakerSkip(ctx context.Context, claim featurekit.IntentClaim) string {
+	// Circuit breaker open: skip without another Solve call; the day-scoped
+	// key resets tomorrow. Abandon so a later pass can re-attack the vacancy
+	// once the chain is healthy again.
+	if aerr := featurekit.AbandonIntent(ctx, f.opt.DB, claim); aerr != nil {
+		f.log.Error("multiapply: intent abandon failed", "err", aerr)
+	}
+	return "captcha_exhausted"
+}
+
+// solveCaptchaOrBreak solves one captcha challenge via the account chain;
+// a missing chain or failed solve trips the breaker and reports false.
+func (f *Feature) solveCaptchaOrBreak(ctx context.Context, accountID string) bool {
+	var chain captcha.Chain
+	var ok bool
+	if f.opt.ChainFor != nil {
+		chain, ok = f.opt.ChainFor(accountID)
+	}
+	if !ok || chain == nil {
+		f.tripCaptchaBreaker(ctx, accountID, "captcha challenge with no provider chain configured")
+		return false
+	}
+	if _, serr := chain.Solve(ctx, captchaChallenge()); serr != nil {
+		f.tripCaptchaBreaker(ctx, accountID, "captcha solve failed: "+serr.Error())
+		return false
+	}
+	f.incr(ctx, "apply.captcha_retry")
+	return true
+}
+
+// resolveAmbiguous settles an ambiguous apply by reading the negotiations:
+// found → applied; not found → the single sanctioned retry; unreadable →
+// park for a human. handled=true means applyOne returns cleanly.
+func (f *Feature) resolveAmbiguous(ctx context.Context, runID string, accountID string, api hhapi.HHAPI,
+	resumeHash string, v hhapi.Vacancy, letter string, claim featurekit.IntentClaim, _ error) (bool, error) {
+	found, rerr := f.reconcileNegotiations(ctx, api, v.ID)
+	switch {
+	case rerr == nil && found:
+		f.recordApplied(ctx, runID, accountID, resumeHash, v, claim, letter, "apply.reconciled")
+		return true, nil
+	case rerr == nil && !found:
+		// Server has no trace: abandon the intent and retry once —
+		// this is the only sanctioned repeat.
+		if aerr := featurekit.AbandonIntent(ctx, f.opt.DB, claim); aerr != nil {
+			f.log.Error("multiapply: intent abandon failed", "err", aerr)
+		}
+		claim2, retryErr := f.retryApplyOnce(ctx, runID, accountID, api, v, resumeHash, letter)
+		if retryErr == nil {
+			f.recordApplied(ctx, runID, accountID, resumeHash, v, claim2, letter, "apply.ok")
+			return true, nil
+		}
+		// A second ambiguity inside the sanctioned retry is handled
+		// symmetrically with the first: resolve by reading, never a
+		// silent "failed" (Wave 3 review fix 7).
+		var amb2 *hhapi.AmbiguousError
+		if errors.As(retryErr, &amb2) {
+			found2, rerr2 := f.reconcileNegotiations(ctx, api, v.ID)
+			if rerr2 == nil && found2 {
+				f.recordApplied(ctx, runID, accountID, resumeHash, v, claim2, letter, "apply.reconciled")
+				return true, nil
+			}
+			f.review(ctx, accountID, "apply_ambiguous",
+				"second ambiguous outcome; negotiations empty or unreadable",
+				fmt.Sprintf(`{"vacancy_id":%d,"run":%q}`, v.ID, runID))
+			f.incr(ctx, "apply.ambiguous_review")
+			return true, nil // intent stays pending: parked for a human
+		}
+		_ = featurekit.FinishIntent(ctx, f.opt.DB, claim2, retryErr)
+		f.createApplication(ctx, runID, accountID, resumeHash, v, "failed", letter, retryErr.Error())
+		f.incr(ctx, "apply.error")
+		return true, nil
+	default:
+		// Undeterminable: park for a human; the intent stays pending so
+		// the vacancy is not re-attacked automatically.
+		f.review(ctx, accountID, "apply_ambiguous",
+			"apply outcome unknown and negotiations unavailable: "+rerr.Error(),
+			fmt.Sprintf(`{"vacancy_id":%d,"run":%q}`, v.ID, runID))
+		f.incr(ctx, "apply.ambiguous_review")
+		return true, nil
+	}
+
 }
