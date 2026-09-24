@@ -21,7 +21,6 @@ package featurekit
 import "testing"
 
 func TestNoLinksRuleInvalidUTF8NoPanic(t *testing.T) {
-	t.Skip("T19-F1 known bug: NoLinksRule panics on invalid UTF-8 + link pattern (see comment); unskip after kit.go fix")
 	// The exact fuzz crasher, kept byte-for-byte:
 	text := "\xb4\x80\xbe\xb5http://"
 	_ = NoLinksRule(text) // must not panic

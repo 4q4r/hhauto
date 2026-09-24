@@ -5,6 +5,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -37,6 +38,7 @@ func Execute(version, commit, date string) int {
 	buildVersion, buildCommit, buildDate = version, commit, date
 	root := newRootCmd()
 	if err := root.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		return 1
 	}
 	return 0
