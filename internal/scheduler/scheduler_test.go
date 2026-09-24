@@ -180,6 +180,35 @@ func TestNextZeroSpecReturnsAfter(t *testing.T) {
 	}
 }
 
+func TestNextPicksEarliestTimeWithinDay(t *testing.T) {
+	// R5: with unsorted Times the candidate must be the earliest instant of
+	// the day, not the first slice element after `base`.
+	s := Spec{TZ: "UTC", Times: []string{"22:00", "09:00"}, Days: All}
+
+	// Same day: 08:00 < 09:00 → today 09:00, not today 22:00.
+	after := time.Date(2026, time.September, 24, 8, 0, 0, 0, time.UTC)
+	got := s.Next(after, nil)
+	want := time.Date(2026, time.September, 24, 9, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("Next = %v, want earliest same-day candidate %v", got, want)
+	}
+
+	// All of today's times passed → earliest of tomorrow.
+	got = s.Next(time.Date(2026, time.September, 24, 23, 0, 0, 0, time.UTC), nil)
+	want = time.Date(2026, time.September, 25, 9, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("Next late-day = %v, want earliest candidate of next day %v", got, want)
+	}
+
+	// Day mask with unsorted times: only Tuesdays, earliest of 10:00/06:00.
+	s = Spec{TZ: "UTC", Times: []string{"10:00", "06:00"}, Days: Tue}
+	got = s.Next(time.Date(2026, time.September, 26, 12, 0, 0, 0, time.UTC), nil) // Saturday
+	want = time.Date(2026, time.September, 29, 6, 0, 0, 0, time.UTC)              // Tuesday
+	if !got.Equal(want) {
+		t.Fatalf("masked Next = %v, want %v", got, want)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	if err := (Spec{TZ: "Europe/Moscow", Times: []string{"09:00", "23:59"}}).Validate(); err != nil {
 		t.Fatalf("Validate(valid) = %v, want nil", err)

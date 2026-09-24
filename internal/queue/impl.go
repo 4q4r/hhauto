@@ -93,23 +93,6 @@ func dedupKey(t Task) string {
 	return t.AccountID + "\x00" + string(t.Kind) + "\x00" + t.DedupKey
 }
 
-func (q *impl) accountFor(accountID string) *accountQueue {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.stage != stageOpen {
-		return nil
-	}
-	a, ok := q.accounts[accountID]
-	if ok {
-		return a
-	}
-	a = &accountQueue{dedup: map[string]struct{}{}, changed: make(chan struct{})}
-	q.accounts[accountID] = a
-	close(q.newAccount)
-	q.newAccount = make(chan struct{})
-	return a
-}
-
 // lookup returns the account queue without creating it.
 func (q *impl) lookup(accountID string) *accountQueue {
 	q.mu.Lock()
@@ -124,12 +107,25 @@ func (q *impl) lookup(accountID string) *accountQueue {
 // while the earlier task is still queued. The ctx is accepted per the
 // contract but never blocks: Enqueue has no waiting path. Task.ID is filled
 // with a fresh ULID when empty; caller-provided IDs are preserved.
+//
+// The whole operation runs under q.mu (lock order q.mu → a.mu): once Close
+// has left stageOpen under q.mu, pending can no longer increase, so Close's
+// pending sample is race-free.
 func (q *impl) Enqueue(_ context.Context, t Task) error {
-	a := q.accountFor(t.AccountID)
-	if a == nil {
+	q.mu.Lock()
+	if q.stage != stageOpen {
+		q.mu.Unlock()
 		return ErrClosed
 	}
+	a, ok := q.accounts[t.AccountID]
+	if !ok {
+		a = &accountQueue{dedup: map[string]struct{}{}, changed: make(chan struct{})}
+		q.accounts[t.AccountID] = a
+		close(q.newAccount)
+		q.newAccount = make(chan struct{})
+	}
 	a.mu.Lock()
+	defer q.mu.Unlock() // held through the a.mu section: stage + pending are one atomic step
 	dk := ""
 	if t.DedupKey != "" {
 		dk = dedupKey(t)
@@ -226,10 +222,18 @@ func (q *impl) Close(ctx context.Context, drainTimeout time.Duration) error {
 		return nil
 	}
 	q.stage = stageDraining
+	// From here no pending can appear: Enqueue checks the stage under q.mu
+	// in the same critical section as its pending increment. Wake waiters
+	// for not-yet-created accounts — no account will appear anymore.
+	close(q.newAccount)
+	q.newAccount = make(chan struct{})
 	empty := q.empty
+	pending := q.pending.Load()
 	q.mu.Unlock()
 
-	if drainTimeout > 0 {
+	// Nothing queued: skip the drain window entirely instead of burning it
+	// on an `empty` signal that was already observed (or never fired).
+	if drainTimeout > 0 && pending != 0 {
 		timer := time.NewTimer(drainTimeout)
 		defer timer.Stop()
 		select {
@@ -241,6 +245,8 @@ func (q *impl) Close(ctx context.Context, drainTimeout time.Duration) error {
 
 	q.mu.Lock()
 	q.stage = stageFinal
+	close(q.newAccount) // release waiters that sampled stageOpen earlier
+	q.newAccount = make(chan struct{})
 	accounts := q.accounts
 	q.mu.Unlock()
 

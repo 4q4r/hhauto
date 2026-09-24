@@ -108,6 +108,10 @@ func (r *Registry) Get(name string) (Spec, bool) {
 func (r *Registry) Names() []string { return append([]string(nil), r.order...) }
 
 // Next returns the next run instant strictly after `after`, with jitter applied once.
+// Within a day the earliest valid candidate across all Times wins (R5): the
+// slice order of Times carries no priority, ["22:00","09:00"] at 08:00 must
+// yield 09:00 the same day. The search takes the first day that has any
+// candidate.
 func (s Spec) Next(after time.Time, rnd *rand.Rand) time.Time {
 	loc, err := time.LoadLocation(s.tzOrLocal())
 	if err != nil {
@@ -119,6 +123,7 @@ func (s Spec) Next(after time.Time, rnd *rand.Rand) time.Time {
 		if s.Days&(Weekdays(1<<uint((int(day.Weekday())+6)%7))) == 0 {
 			continue
 		}
+		var best time.Time
 		for _, t := range s.Times {
 			hm, err := time.Parse("15:04", t)
 			if err != nil {
@@ -128,11 +133,17 @@ func (s Spec) Next(after time.Time, rnd *rand.Rand) time.Time {
 			if !cand.After(base) {
 				continue
 			}
-			if s.Jitter > 0 && rnd != nil {
-				cand = cand.Add(time.Duration(rnd.Int63n(int64(s.Jitter) + 1)))
+			if best.IsZero() || cand.Before(best) {
+				best = cand
 			}
-			return cand
 		}
+		if best.IsZero() {
+			continue
+		}
+		if s.Jitter > 0 && rnd != nil {
+			best = best.Add(time.Duration(rnd.Int63n(int64(s.Jitter) + 1)))
+		}
+		return best
 	}
 	return after
 }
