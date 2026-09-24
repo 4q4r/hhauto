@@ -2,6 +2,7 @@ package logging
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -69,6 +70,38 @@ func TestTextHandlerRedactsSensitiveAttrs(t *testing.T) {
 	}
 	if !strings.Contains(out, "hhto***") {
 		t.Errorf("expected masked cookie value hhto***..., got:\n%s", out)
+	}
+}
+
+// Б3a regression: an any-typed attribute (a wrapped error carrying a URL
+// with an api key) must be redacted too — KindAny used to pass through raw.
+func TestAnyAttrErrorWithURLKeyIsRedacted(t *testing.T) {
+	out := captureStderr(t, func() {
+		logger, closeFn := New(config.Log{Level: "debug", Format: "text", RedactSecrets: true})
+		defer closeFn() //nolint:errcheck // no file in text mode
+		logger.Error("captcha balance failed",
+			"err", errors.New(`Get "https://api.2captcha.com/res.php?key=SUPERSECRETKEY&action=getbalance": connection refused`),
+		)
+	})
+
+	if strings.Contains(out, "SUPERSECRETKEY") {
+		t.Errorf("stderr contains the raw key from an error attr:\n%s", out)
+	}
+	if !strings.Contains(out, "key=SUPE***") {
+		t.Errorf("expected masked key in the error attr, got:\n%s", out)
+	}
+}
+
+// KindAny values that contain nothing sensitive must keep their type.
+func TestAnyAttrUntouchedWhenNothingToRedact(t *testing.T) {
+	out := captureStderr(t, func() {
+		logger, closeFn := New(config.Log{Level: "debug", Format: "json", RedactSecrets: true})
+		defer closeFn() //nolint:errcheck // no file in json-to-stderr mode
+		logger.Info("counts", "attempts", 3)
+	})
+
+	if !strings.Contains(out, `"attempts":3`) {
+		t.Errorf("numeric any-attr must keep its JSON type, got:\n%s", out)
 	}
 }
 

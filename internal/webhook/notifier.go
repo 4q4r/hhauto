@@ -57,7 +57,7 @@ func New(endpoints []config.Webhook, proxyReg proxy.Registry, outbox Outbox, log
 	for _, cfg := range endpoints {
 		ep, err := newEndpoint(cfg, proxyReg)
 		if err != nil {
-			log.Error("webhook endpoint disabled: configuration error", "err", err)
+			log.Error("webhook endpoint disabled: configuration error", "err", MaskEndpoint(err.Error()))
 			continue
 		}
 		n.endpoints = append(n.endpoints, ep)
@@ -128,9 +128,9 @@ func (n *notifier) dispatch(ctx context.Context, ev Event) {
 		}
 		payload, err := ep.deliver(ctx, ev)
 		if err != nil {
-			n.log.Error("webhook delivery failed", "endpoint", ep.id, "event", ev.Type, "err", err)
+			n.log.Error("webhook delivery failed", "endpoint", MaskEndpoint(ep.id), "event", ev.Type, "err", MaskEndpoint(err.Error()))
 			if parkErr := ep.park(ctx, payload, n.outbox); parkErr != nil {
-				n.log.Error("webhook outbox Add failed", "endpoint", ep.id, "event", ev.Type, "err", parkErr)
+				n.log.Error("webhook outbox Add failed", "endpoint", MaskEndpoint(ep.id), "event", ev.Type, "err", MaskEndpoint(parkErr.Error()))
 			}
 		}
 	}
