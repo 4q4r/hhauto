@@ -2272,7 +2272,7 @@
        }
       ]
      },
-     "companySiteUrl": "https://www.digitalleague.ru/",
+     "companySiteUrl": "https://www.company-n.example/",
      "accreditedITEmployer": true,
      "employerOnAdditionalCheck": false
     },
@@ -8034,9 +8034,9 @@
       "type": "cell",
       "country": "7",
       "city": "993",
-      "number": "4518418",
+      "number": "0000000",
       "formatted": "+7 900 000-00-00",
-      "raw": "79934518418",
+      "raw": "79930000000",
       "verified": true,
       "needVerification": false,
       "comment": null
@@ -8076,9 +8076,9 @@
       "type": "cell",
       "country": "7",
       "city": "993",
-      "number": "4518418",
+      "number": "0000000",
       "formatted": "+7 900 000-00-00",
-      "raw": "79934518418",
+      "raw": "79930000000",
       "verified": true,
       "needVerification": false,
       "comment": null
@@ -8118,9 +8118,9 @@
       "type": "cell",
       "country": "7",
       "city": "993",
-      "number": "4518418",
+      "number": "0000000",
       "formatted": "+7 900 000-00-00",
-      "raw": "79934518418",
+      "raw": "79930000000",
       "verified": true,
       "needVerification": false,
       "comment": null
