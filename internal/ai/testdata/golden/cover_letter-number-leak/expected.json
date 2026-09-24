@@ -1,0 +1,9 @@
+{
+  "confidence": 0.9,
+  "needs_human": true,
+  "needs_human_reason": "number_not_in_sources",
+  "injection_suspected": false,
+  "letter": "Вёл команду из 12 инженеров, разрабатываю на Go 4 года.",
+  "used_facts": ["4 года Go"],
+  "missing_data": []
+}

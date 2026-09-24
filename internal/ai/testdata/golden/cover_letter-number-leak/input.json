@@ -1,0 +1,9 @@
+{
+  "task": "cover_letter",
+  "input": {
+    "vacancy": { "title": "Backend-разработчик (Go)" },
+    "resume_digest": "опыт 4 года Go, PostgreSQL",
+    "profile_text": "ищу удалённую работу",
+    "facts": ["gRPC"]
+  }
+}

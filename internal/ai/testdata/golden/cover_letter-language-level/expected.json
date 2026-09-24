@@ -1,0 +1,9 @@
+{
+  "confidence": 0.9,
+  "needs_human": true,
+  "needs_human_reason": "forbidden_topic_no_fact",
+  "injection_suspected": false,
+  "letter": "Мой английский на уровне B1, опыт с Go 4 года.",
+  "used_facts": [],
+  "missing_data": []
+}

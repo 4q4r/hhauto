@@ -273,7 +273,7 @@ func TestOpenAIChat429HonorsRetryAfter(t *testing.T) {
 	}
 }
 
-func TestOpenAIChat5xxBackoffSequence(t *testing.T) {
+func TestOpenAIChat5xxBackoffFullJitter(t *testing.T) {
 	f := newFakeServer(t, func(call int, r *http.Request, raw []byte) (int, map[string]string, string) {
 		if call < 3 {
 			return http.StatusInternalServerError, nil, `{"error":{"message":"boom"}}`
@@ -290,8 +290,15 @@ func TestOpenAIChat5xxBackoffSequence(t *testing.T) {
 		t.Fatalf("calls = %d", f.calls())
 	}
 	durs := sleeps.all()
-	if len(durs) != 2 || durs[0] != time.Second || durs[1] != 2*time.Second {
-		t.Errorf("sleeps = %v, want [1s 2s]", durs)
+	// Full jitter: uniform in [0, 1s) then [0, 2s).
+	if len(durs) != 2 {
+		t.Fatalf("sleeps = %v, want 2", durs)
+	}
+	if durs[0] < 0 || durs[0] >= time.Second {
+		t.Errorf("sleep1 = %v, want in [0, 1s)", durs[0])
+	}
+	if durs[1] < 0 || durs[1] >= 2*time.Second {
+		t.Errorf("sleep2 = %v, want in [0, 2s)", durs[1])
 	}
 }
 
