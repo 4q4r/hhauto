@@ -5,6 +5,11 @@
 // closed and replaced under the account lock on every enqueue and on close.
 // Waiters snapshot the channel under the lock and select on it together with
 // ctx.Done(), which sync.Cond cannot do — that is why channels were chosen.
+// The same close-and-replace pattern backs q.pendingChanged: every dequeue
+// rebroadcasts it, so Close's drain loop can wait for "pending == 0" as a
+// *current* condition. A one-shot "empty" signal would be wrong here:
+// pending is non-monotonic while producers and consumers run concurrently,
+// so an intermediate zero must not latch the signal forever.
 //
 // Close semantics (see Close): intake stops immediately, consumers keep
 // pulling whatever is queued for up to drainTimeout (or until ctx is done),
@@ -73,19 +78,18 @@ type impl struct {
 	accounts map[string]*accountQueue
 	stage    stage
 
-	seq        atomic.Uint64 // monotonic enqueue sequence
-	pending    atomic.Int64  // queued-and-not-yet-dequeued items
-	empty      chan struct{} // closed once when pending reaches zero
-	emptyOnce  sync.Once
-	newAccount chan struct{} // closed-and-replaced when an account appears
+	seq            atomic.Uint64 // monotonic enqueue sequence
+	pending        atomic.Int64  // queued-and-not-yet-dequeued items
+	pendingChanged chan struct{} // closed-and-replaced on every dequeue
+	newAccount     chan struct{} // closed-and-replaced when an account appears
 }
 
 // New returns a ready-to-use Queue.
 func New() Queue {
 	return &impl{
-		accounts:   map[string]*accountQueue{},
-		empty:      make(chan struct{}),
-		newAccount: make(chan struct{}),
+		accounts:       map[string]*accountQueue{},
+		pendingChanged: make(chan struct{}),
+		newAccount:     make(chan struct{}),
 	}
 }
 
@@ -149,6 +153,27 @@ func (q *impl) Enqueue(_ context.Context, t Task) error {
 // Dequeue blocks until a task for accountID is available, ctx is done, or
 // the queue reaches its final stage. During the drain window tasks are still
 // handed out; afterwards it returns (zero, false).
+// dequeue hands out a popped item and rebroadcasts pendingChanged so a
+// concurrent Close drain loop re-samples q.pending. Lock order is q.mu after
+// a.mu (Enqueue takes them in the same order; nobody takes a.mu while
+// holding q.mu without first acquiring it in that order), so there is no
+// cycle.
+func (q *impl) dequeueIt(a *accountQueue, it *item) Task {
+	if it.dkey != "" {
+		delete(a.dedup, it.dkey)
+	}
+	q.pending.Add(-1) // under a.mu: same atomicity as the matching Enqueue increment
+	a.mu.Unlock()
+	q.mu.Lock()
+	close(q.pendingChanged)
+	q.pendingChanged = make(chan struct{})
+	q.mu.Unlock()
+	return it.task
+}
+
+// Dequeue blocks until a task for accountID is available, ctx is done, or
+// the queue reaches its final stage. During the drain window tasks are still
+// handed out; afterwards it returns (zero, false).
 func (q *impl) Dequeue(ctx context.Context, accountID string) (Task, bool) {
 	for {
 		a := q.lookup(accountID)
@@ -173,14 +198,7 @@ func (q *impl) Dequeue(ctx context.Context, accountID string) (Task, bool) {
 		a.mu.Lock()
 		if len(a.items) > 0 {
 			it := heap.Pop(&a.items).(*item)
-			if it.dkey != "" {
-				delete(a.dedup, it.dkey)
-			}
-			if q.pending.Add(-1) == 0 {
-				q.emptyOnce.Do(func() { close(q.empty) })
-			}
-			a.mu.Unlock()
-			return it.task, true
+			return q.dequeueIt(a, it), true
 		}
 		ch := a.changed
 		a.mu.Unlock()
@@ -227,19 +245,31 @@ func (q *impl) Close(ctx context.Context, drainTimeout time.Duration) error {
 	// for not-yet-created accounts — no account will appear anymore.
 	close(q.newAccount)
 	q.newAccount = make(chan struct{})
-	empty := q.empty
-	pending := q.pending.Load()
 	q.mu.Unlock()
 
-	// Nothing queued: skip the drain window entirely instead of burning it
-	// on an `empty` signal that was already observed (or never fired).
-	if drainTimeout > 0 && pending != 0 {
+	// Drain: wait for the *current* pending to reach zero. pending only
+	// decreases from here, and every dequeue rebroadcasts pendingChanged —
+	// unlike a one-shot "empty" latch this cannot be satisfied by an
+	// intermediate zero from before Close started.
+	if drainTimeout > 0 {
 		timer := time.NewTimer(drainTimeout)
 		defer timer.Stop()
-		select {
-		case <-empty:
-		case <-timer.C:
-		case <-ctx.Done():
+	drain:
+		for {
+			q.mu.Lock()
+			p := q.pending.Load()
+			ch := q.pendingChanged
+			q.mu.Unlock()
+			if p == 0 {
+				break
+			}
+			select {
+			case <-ch: // pending changed: re-sample
+			case <-timer.C:
+				break drain
+			case <-ctx.Done():
+				break drain
+			}
 		}
 	}
 
@@ -250,18 +280,15 @@ func (q *impl) Close(ctx context.Context, drainTimeout time.Duration) error {
 	accounts := q.accounts
 	q.mu.Unlock()
 
-	var dropped int64
 	for _, a := range accounts {
 		a.mu.Lock()
-		dropped += int64(len(a.items))
 		a.items = nil
 		a.dedup = map[string]struct{}{}
 		close(a.changed) // wake all Dequeue waiters
 		a.changed = make(chan struct{})
 		a.mu.Unlock()
 	}
-	if dropped > 0 && q.pending.Add(-dropped) == 0 {
-		q.emptyOnce.Do(func() { close(q.empty) })
-	}
+	// q.pending is not rewound for dropped tasks: after stageFinal the queue
+	// is dead and nothing reads the counter again.
 	return nil
 }
