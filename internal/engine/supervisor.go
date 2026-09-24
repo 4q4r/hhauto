@@ -113,30 +113,9 @@ type Deps struct {
 // that error-path is the CALLER's (CLI's) responsibility. On any shutdown
 // path that reaches the graceful sequence, Run closes them itself.
 func Run(ctx context.Context, deps Deps) error {
-	if deps.Cfg == nil {
-		return errors.New("engine: Deps.Cfg is nil")
-	}
-	if deps.DB == nil {
-		return errors.New("engine: Deps.DB is nil")
-	}
-	if deps.Queue == nil {
-		return errors.New("engine: Deps.Queue is nil")
-	}
-	if deps.Log == nil {
-		deps.Log = slog.Default()
-	}
-	if deps.Clock == nil {
-		deps.Clock = RealClock()
-	}
-	if deps.KillSwitch == nil {
-		deps.KillSwitch = NewKillSwitch(StopFilePath(deps.Cfg.General.DataDir))
-	}
-	if deps.Pacer == nil {
-		p := NewPacer(deps.Cfg.Pacing, deps.Rnd)
-		for id, acct := range deps.Cfg.Accounts {
-			p.SetExpectedDaily(id, acct.DailyApplyCap)
-		}
-		deps.Pacer = p
+	deps, err := defaultDeps(deps)
+	if err != nil {
+		return err
 	}
 
 	// Isolated randomness per concurrent consumer (math/rand.Rand is not
@@ -165,33 +144,7 @@ func Run(ctx context.Context, deps Deps) error {
 	sigCtx, stopSignals := signal.NotifyContext(runCtx, syscall.SIGINT, syscall.SIGTERM)
 	defer stopSignals()
 
-	// Kill-switch watcher: an instant notification channel when the engine
-	// built the switch (file flag or programmatic Stop), a periodic poll as
-	// the generic fallback; a trip begins the graceful shutdown.
-	var stopCh <-chan struct{}
-	if sn, ok := deps.KillSwitch.(stopNotifier); ok {
-		stopCh = sn.StopCh()
-	}
-	ksDone := make(chan struct{})
-	go func() {
-		defer close(ksDone)
-		for {
-			select {
-			case <-sigCtx.Done():
-				return
-			case <-stopCh:
-				deps.Log.Warn("engine: kill switch tripped, shutting down")
-				cancelRun()
-				return
-			case <-s.deps.Clock.After(killSwitchPoll):
-				if deps.KillSwitch.Tripped(context.Background()) {
-					deps.Log.Warn("engine: kill switch tripped, shutting down")
-					cancelRun()
-					return
-				}
-			}
-		}
-	}()
+	ksDone := s.startKillSwitchWatch(sigCtx, cancelRun)
 
 	if err := s.seedFeatures(sigCtx); err != nil {
 		cancelRun()
@@ -204,45 +157,9 @@ func Run(ctx context.Context, deps Deps) error {
 		return err
 	}
 
-	// Scheduler + outbox loops: cancelled first at shutdown (no new work).
-	schedCtx, cancelSched := context.WithCancel(sigCtx)
-	schedDone := make(chan struct{})
-	go func() {
-		defer close(schedDone)
-		s.schedulerLoop(schedCtx)
-	}()
-	outboxDone := make(chan struct{})
-	if deps.Outbox != nil {
-		go func() {
-			defer close(outboxDone)
-			s.outboxLoop(schedCtx)
-		}()
-	} else {
-		close(outboxDone)
-	}
+	cancelSched, schedDone, outboxDone := s.startLoops(sigCtx)
 
-	// Account supervisors: workers must SURVIVE the signal that started the
-	// shutdown — the whole point of the queue drain is that they finish the
-	// queued work. Their context therefore hangs off the BASE ctx with its
-	// own cancel, which fires only after Queue.Close has drained. The
-	// kill switch is still checked before every task: a signal drains
-	// gracefully, a tripped switch drops the remaining tasks.
-	workerCtx, cancelWorkers := context.WithCancel(ctx)
-	var workerWG sync.WaitGroup
-	accounts := s.sortedAccounts()
-	for _, id := range accounts {
-		if p, ok := s.deps.Pacer.(*pacer); ok {
-			p.SetExpectedDaily(id, s.deps.Cfg.Accounts[id].DailyApplyCap)
-		}
-	}
-	for _, id := range accounts {
-		workerWG.Add(1)
-		go func(accountID string) {
-			defer workerWG.Done()
-			s.accountLoop(workerCtx, accountID)
-		}(id)
-	}
-	deps.Log.Info("engine: running", "accounts", len(accounts), "schedules", len(s.bindings))
+	workerWG, cancelWorkers := s.startWorkers(ctx)
 
 	// Block until signal / kill-switch / parent ctx.
 	<-sigCtx.Done()
@@ -281,6 +198,118 @@ func Run(ctx context.Context, deps Deps) error {
 	<-ksDone
 	deps.Log.Info("engine: stopped")
 	return nil
+}
+
+// defaultDeps fills every unset Deps field with a working default (fail
+// fast on required nils; Log/Clock/KillSwitch/Pacer get sensible fallbacks).
+func defaultDeps(deps Deps) (Deps, error) {
+	if deps.Cfg == nil {
+		return deps, errors.New("engine: Deps.Cfg is nil")
+	}
+	if deps.DB == nil {
+		return deps, errors.New("engine: Deps.DB is nil")
+	}
+	if deps.Queue == nil {
+		return deps, errors.New("engine: Deps.Queue is nil")
+	}
+	if deps.Log == nil {
+		deps.Log = slog.Default()
+	}
+	if deps.Clock == nil {
+		deps.Clock = RealClock()
+	}
+	if deps.KillSwitch == nil {
+		deps.KillSwitch = NewKillSwitch(StopFilePath(deps.Cfg.General.DataDir))
+	}
+	if deps.Pacer == nil {
+		p := NewPacer(deps.Cfg.Pacing, deps.Rnd)
+		for id, acct := range deps.Cfg.Accounts {
+			p.SetExpectedDaily(id, acct.DailyApplyCap)
+		}
+		deps.Pacer = p
+	}
+	return deps, nil
+}
+
+// startKillSwitchWatch watches the kill switch: an instant notification
+// channel when the engine built the switch (file flag or programmatic
+// Stop), a periodic poll as the generic fallback; a trip begins the
+// graceful shutdown. Returns the watcher's done channel.
+func (s *supervisor) startKillSwitchWatch(sigCtx context.Context, cancelRun context.CancelFunc) <-chan struct{} {
+	var stopCh <-chan struct{}
+	if sn, ok := s.deps.KillSwitch.(stopNotifier); ok {
+		stopCh = sn.StopCh()
+	}
+	ksDone := make(chan struct{})
+	go func() {
+		defer close(ksDone)
+		for {
+			select {
+			case <-sigCtx.Done():
+				return
+			case <-stopCh:
+				s.deps.Log.Warn("engine: kill switch tripped, shutting down")
+				cancelRun()
+				return
+			case <-s.deps.Clock.After(killSwitchPoll):
+				if s.deps.KillSwitch.Tripped(context.Background()) {
+					s.deps.Log.Warn("engine: kill switch tripped, shutting down")
+					cancelRun()
+					return
+				}
+			}
+		}
+	}()
+	return ksDone
+}
+
+// startLoops launches the scheduler and outbox loops. Both hang off the
+// signal context: cancelled first at shutdown (no new work enqueued).
+// Returns their cancel plus the two done channels.
+func (s *supervisor) startLoops(sigCtx context.Context) (context.CancelFunc, <-chan struct{}, <-chan struct{}) {
+	schedCtx, cancelSched := context.WithCancel(sigCtx)
+	schedDone := make(chan struct{})
+	go func() {
+		defer close(schedDone)
+		s.schedulerLoop(schedCtx)
+	}()
+	outboxDone := make(chan struct{})
+	if s.deps.Outbox != nil {
+		go func() {
+			defer close(outboxDone)
+			s.outboxLoop(schedCtx)
+		}()
+	} else {
+		close(outboxDone)
+	}
+	return cancelSched, schedDone, outboxDone
+}
+
+// startWorkers spawns one account supervisor goroutine per configured
+// account. Account workers must SURVIVE the signal that started the
+// shutdown — the whole point of the queue drain is that they finish the
+// queued work. Their context therefore hangs off the BASE ctx with its
+// own cancel, which fires only after Queue.Close has drained. The kill
+// switch is still checked before every task: a signal drains gracefully,
+// a tripped switch drops the remaining tasks.
+func (s *supervisor) startWorkers(ctx context.Context) (*sync.WaitGroup, context.CancelFunc) {
+	workerCtx, cancelWorkers := context.WithCancel(ctx)
+	var workerWG sync.WaitGroup
+	accounts := s.sortedAccounts()
+	for _, id := range accounts {
+		if p, ok := s.deps.Pacer.(*pacer); ok {
+			p.SetExpectedDaily(id, s.deps.Cfg.Accounts[id].DailyApplyCap)
+		}
+	}
+	for _, id := range accounts {
+		workerWG.Add(1)
+		go func(accountID string) {
+			defer workerWG.Done()
+			s.accountLoop(workerCtx, accountID)
+		}(id)
+	}
+	s.deps.Log.Info("engine: running", "accounts", len(accounts), "schedules", len(s.bindings))
+	return &workerWG, cancelWorkers
 }
 
 // --- account supervision ---

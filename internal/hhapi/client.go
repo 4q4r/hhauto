@@ -177,34 +177,10 @@ func (c *Client) do(ctx context.Context, spec requestSpec) (*response, error) {
 		}
 		resp, err := c.attempt(ctx, spec)
 		if err != nil {
-			var off *offsiteRedirectError
-			if errors.As(err, &off) {
-				// The fence fired inside CheckRedirect: net/http closed the
-				// response, retrying cannot change the answer, and the
-				// redirect itself is the finding (soft block / SSO bounce).
-				return nil, &StatusError{
-					Kind:        ErrForbidden,
-					URL:         spec.url,
-					Chain:       off.chain,
-					BodySnippet: "redirect left the site registrable domain",
-				}
+			if r, done, ret := c.handleAttemptError(ctx, spec, attempt, err, &lastErr); done {
+				return r, ret
 			}
-			lastErr = err
-			if !spec.retryable() {
-				// The request went on the wire; a transport failure leaves
-				// the outcome unknown unless the dial never completed.
-				if isDialError(err) {
-					return nil, &StatusError{Kind: ErrNetwork, URL: spec.url, BodySnippet: redactSnippet(err.Error())}
-				}
-				return nil, &AmbiguousError{Err: err}
-			}
-			if attempt+1 < maxAttempts {
-				if werr := sleepCtx(ctx, c.jitter(attempt)); werr != nil {
-					return nil, werr
-				}
-				continue
-			}
-			return nil, &StatusError{Kind: ErrNetwork, URL: spec.url, BodySnippet: redactSnippet(err.Error())}
+			continue
 		}
 
 		c.absorbAndPersist(ctx, resp)
@@ -244,6 +220,41 @@ func (c *Client) do(ctx context.Context, spec requestSpec) (*response, error) {
 		}
 	}
 	return nil, c.finalError(spec, lastErr)
+}
+
+// handleAttemptError applies the transport-failure rules for one failed
+// attempt. It returns done=true with the terminal (resp, err) pair when the
+// retry loop must exit immediately, and done=false when the caller should
+// proceed to the next attempt (the backoff sleep already happened).
+func (c *Client) handleAttemptError(ctx context.Context, spec requestSpec, attempt int, err error, lastErr *error) (*response, bool, error) {
+	var off *offsiteRedirectError
+	if errors.As(err, &off) {
+		// The fence fired inside CheckRedirect: net/http closed the
+		// response, retrying cannot change the answer, and the
+		// redirect itself is the finding (soft block / SSO bounce).
+		return nil, true, &StatusError{
+			Kind:        ErrForbidden,
+			URL:         spec.url,
+			Chain:       off.chain,
+			BodySnippet: "redirect left the site registrable domain",
+		}
+	}
+	*lastErr = err
+	if !spec.retryable() {
+		// The request went on the wire; a transport failure leaves
+		// the outcome unknown unless the dial never completed.
+		if isDialError(err) {
+			return nil, true, &StatusError{Kind: ErrNetwork, URL: spec.url, BodySnippet: redactSnippet(err.Error())}
+		}
+		return nil, true, &AmbiguousError{Err: err}
+	}
+	if attempt+1 < maxAttempts {
+		if werr := sleepCtx(ctx, c.jitter(attempt)); werr != nil {
+			return nil, true, werr
+		}
+		return nil, false, nil
+	}
+	return nil, true, &StatusError{Kind: ErrNetwork, URL: spec.url, BodySnippet: redactSnippet(err.Error())}
 }
 
 // finalError applies the ambiguous-outcome rules after the attempt budget

@@ -190,16 +190,9 @@ func (f *Feature) HandleChatSync(ctx context.Context, task queue.Task) error {
 		if len(chats) == 0 {
 			break
 		}
-		if negStates == nil {
-			for _, c := range chats {
-				if c.VacancyID != 0 {
-					negStates, err = f.loadNegotiations(ctx, api)
-					if err != nil {
-						return err
-					}
-					break
-				}
-			}
+		negStates, err = f.negStatesFor(ctx, api, chats, negStates)
+		if err != nil {
+			return err
 		}
 		for _, c := range chats {
 			if f.Stopped != nil && f.Stopped(ctx) {
@@ -261,74 +254,9 @@ func (f *Feature) syncChat(ctx context.Context, api hhapi.HHAPI, accountID strin
 		}
 	}
 
-	row := store.Chat{
-		AccountID:     accountID,
-		ChatikChatID:  c.ID,
-		TopicID:       optStr(c.TopicID),
-		VacancyID:     optI64(c.VacancyID),
-		EmployerName:  optStr(c.EmployerName),
-		LastMessageAt: optTime(c.LastMessageAt),
-	}
-	if err := f.DB.ChatsUpsert(ctx, &row); err != nil {
-		return fmt.Errorf("chatops: upsert chat: %w", err)
-	}
-
-	msgs, err := api.ChatHistory(ctx, c.ID)
+	row, newIn, err := f.syncMessages(ctx, api, accountID, c)
 	if err != nil {
-		return fmt.Errorf("chatops: chat history %s: %w", c.ID, err)
-	}
-	sort.Slice(msgs, func(i, j int) bool { return msgs[i].SentAt.Before(msgs[j].SentAt) })
-
-	stored, err := f.DB.MessagesHistory(ctx, row.ID, historyLimit)
-	if err != nil {
-		return fmt.Errorf("chatops: stored history: %w", err)
-	}
-	known := make(map[string]bool, len(stored))
-	var lastOut time.Time
-	for _, m := range stored {
-		known[m.MessageID] = true
-		if m.Direction == "out" && m.SentAt.After(lastOut) {
-			lastOut = m.SentAt
-		}
-	}
-	var newIn []store.Message
-	for _, m := range msgs {
-		if known[m.ID] {
-			if m.Direction == "out" && m.SentAt.After(lastOut) {
-				lastOut = m.SentAt
-			}
-			continue
-		}
-		sm := store.Message{
-			ChatID:    row.ID,
-			MessageID: m.ID,
-			Direction: m.Direction,
-			Author:    optStr(m.Author),
-			Text:      m.Text,
-			SentAt:    m.SentAt,
-		}
-		if err := f.DB.MessagesAdd(ctx, &sm); err != nil {
-			if kit11.IsUniqueViolation(err) {
-				// concurrent sync inserted it first: treat as known
-				known[m.ID] = true
-				continue
-			}
-			return fmt.Errorf("chatops: store message: %w", err)
-		}
-		known[m.ID] = true
-		switch m.Direction {
-		case "in":
-			newIn = append(newIn, sm)
-		case "out":
-			if m.SentAt.After(lastOut) {
-				lastOut = m.SentAt
-			}
-		}
-	}
-
-	row.LastOutgoingAt = optTime(lastOut)
-	if err := f.DB.ChatsUpsert(ctx, &row); err != nil {
-		return fmt.Errorf("chatops: refresh chat: %w", err)
+		return err
 	}
 
 	// Contacts (WF6): employer card task once per employer + message
@@ -337,66 +265,20 @@ func (f *Feature) syncChat(ctx context.Context, api hhapi.HHAPI, accountID strin
 
 	inbound := len(newIn) > 0
 	if inbound {
-		if f.Cfg.Warmup.Enabled {
-			if err := warmup.ResetLadder(ctx, f.DB, accountID, c.ID); err != nil {
-				return fmt.Errorf("chatops: reset ladder: %w", err)
-			}
-		}
-		if mirror == stateWarmupDue {
-			if err := f.DB.ChatsUpdateState(ctx, accountID, c.ID, stateActive, nil); err != nil {
-				return fmt.Errorf("chatops: reactivate chat: %w", err)
-			}
-			mirror = f.setMirror(ctx, accountID, c.ID, stateActive)
+		mirror, err = f.onInbound(ctx, accountID, c, mirror)
+		if err != nil {
+			return err
 		}
 	}
 
 	if inbound && mirror != stateEscalated && mirror != stateLeft {
-		target := newIn[len(newIn)-1]
-		// RULING R9 (live contracts): the chat list itself carries the
-		// applicant state (resources.negotiation_topics /
-		// lastMessage.workflowTransition, live enum "DISCARD") — zero extra
-		// requests. The SSR negotiations map stays as the fallback source,
-		// and both spellings route through hhapi.IsStructuralRefusal.
-		if hhapi.IsStructuralRefusal(c.ApplicantState) || hhapi.IsStructuralRefusal(negStates[derefI64(row.VacancyID)]) {
-			// RULING R9: the structural negotiation state is the PRIMARY
-			// rejection signal — no AI call, straight to the rejection
-			// branch (auto-leave gates still apply downstream).
-			f.handleRejection(ctx, accountID, row, classVerdict{
-				Category: "rejection",
-				Common:   ai.Common{Confidence: 1.0},
-			})
-			_ = f.DB.MetricsIncr(ctx, "chatops.rejection_structural", kit11.Day(f.now()))
-			mirror = stateRejected
-		} else {
-			verdict, err := f.classify(ctx, accountID, row, target)
-			if err != nil {
-				if kit11.IsTransient(err) {
-					return err
-				}
-				f.Log.Error("chatops: classification failed", "chat", c.ID, "err", err)
-			} else {
-				f.route(ctx, api, accountID, row, target, verdict)
-			}
-		}
-	}
-
-	// Warmup (WF9) silence marking for the warmup consumer.
-	if f.Cfg.Warmup.Enabled && !inbound && mirror == stateActive && !lastOut.IsZero() {
-		ladder, err := warmup.LadderOf(ctx, f.DB, accountID, c.ID)
+		mirror, err = f.routeLatest(ctx, api, accountID, c, row, newIn, negStates)
 		if err != nil {
 			return err
 		}
-		silence := time.Duration(f.Cfg.Warmup.SilenceHours) * time.Hour
-		if ladder < f.Cfg.Warmup.MaxPings && silence > 0 && f.now().Sub(lastOut) >= silence {
-			if err := f.DB.ChatsUpdateState(ctx, accountID, c.ID, stateWarmupDue, nil); err != nil {
-				return fmt.Errorf("chatops: mark warmup_due: %w", err)
-			}
-			// Last read/write of the local mirror: the store state set by
-			// setMirror is what the warmup consumer sees.
-			_ = f.setMirror(ctx, accountID, c.ID, stateWarmupDue)
-		}
 	}
-	return nil
+
+	return f.markWarmupSilence(ctx, accountID, c, mirror, row)
 }
 
 // --- classification + routing ---
@@ -589,32 +471,7 @@ func parseQuestions(text string) []string {
 }
 
 func (f *Feature) handleTestAssignment(ctx context.Context, api hhapi.HHAPI, accountID string, chat store.Chat, msg store.Message) {
-	links := testsolve.DetectExternalLinks(msg.Text)
-	if len(links) > 0 {
-		// WF5 hand-off: external forms are solved by the testsolve package.
-		if f.Queue == nil {
-			f.Log.Warn("chatops: queue not registered, cannot enqueue solve_test")
-			return
-		}
-		for _, u := range links {
-			testID := testsolve.TestIDForURL(u)
-			if err := f.Queue.Enqueue(ctx, queue.Task{
-				AccountID: accountID,
-				Kind:      queue.KindSolveTest,
-				Priority:  queue.PrioChats,
-				DedupKey:  "solve:" + accountID + ":" + testID,
-				Payload: testsolve.SolvePayload{
-					AccountID: accountID,
-					TestID:    testID,
-					URL:       u,
-					Source:    "chat_message",
-					ChatikID:  chat.ChatikChatID,
-					VacancyID: derefI64(chat.VacancyID),
-				},
-			}); err != nil {
-				f.Log.Error("chatops: enqueue solve_test", "err", err)
-			}
-		}
+	if f.enqueueExternalForms(ctx, accountID, chat, msg.Text) {
 		return
 	}
 
@@ -649,27 +506,7 @@ func (f *Feature) handleTestAssignment(ctx context.Context, api hhapi.HHAPI, acc
 	})
 
 	if unsure {
-		if _, aerr := f.DB.ReviewItemsAdd(ctx, accountID, "test_unsure",
-			"AI unsure about test answers — test NOT submitted",
-			artifactJSONWithAnswers(answers, msg.MessageID)); aerr != nil {
-			f.Log.Error("chatops: review add", "err", aerr)
-		}
-		if err := f.DB.AssessmentsAdd(ctx, &store.Assessment{
-			AccountID: accountID,
-			VacancyID: chat.VacancyID,
-			Kind:      "hh_internal",
-			Status:    "escalated",
-			Answers:   strPtr(artifactJSONWithAnswers(answers, msg.MessageID)),
-		}); err != nil {
-			f.Log.Error("chatops: store escalated test", "err", err)
-		}
-		if f.Notify != nil {
-			f.Notify.Emit(webhook.Event{
-				Type: webhook.EvNeedsHuman, AccountID: accountID, Time: f.now(),
-				Message: "Тест: неуверенные ответы — отправка вручную",
-				Payload: map[string]any{"chat": chat.ChatikChatID},
-			})
-		}
+		f.escalateUnsureTest(ctx, accountID, chat, msg, answers)
 		return
 	}
 
@@ -686,40 +523,7 @@ func (f *Feature) handleTestAssignment(ctx context.Context, api hhapi.HHAPI, acc
 	if err != nil {
 		f.Log.Error("chatops: test submit", "err", err)
 	}
-	switch outcome {
-	case sendSent, sendDryRun, sendAlreadySent:
-		if outcome == sendSent {
-			_ = f.DB.MetricsIncr(ctx, "chatops.test_submitted", kit11.Day(f.now()))
-			if f.Notify != nil {
-				f.Notify.Emit(webhook.Event{
-					Type: webhook.EvTestSolved, AccountID: accountID, Time: f.now(),
-					Message: "Тест пройден и отправлен",
-					Payload: map[string]any{"chat": chat.ChatikChatID, "test_id": testID},
-				})
-			}
-		}
-		// Dry-run records no solved/submitted artifact: the assessment row
-		// must reflect a fact, and in dry-run nothing was submitted.
-		if !f.Cfg.General.DryRun {
-			if err := f.recordTest(ctx, accountID, chat, artifact, testID, "solved", "submitted"); err != nil {
-				f.Log.Error("chatops: record test", "err", err)
-			}
-		}
-	case sendAmbiguous:
-		// RECONCILE by reading the chat: did our answers land?
-		sent, rerr := textDelivered(ctx, api, chat.ChatikChatID, submitText)
-		if rerr == nil && sent {
-			if err := f.recordTest(ctx, accountID, chat, artifact, testID, "solved", "submitted_ambiguous_reconciled"); err != nil {
-				f.Log.Error("chatops: record test", "err", err)
-			}
-			return
-		}
-		f.review(ctx, accountID, "test_submit_ambiguous",
-			"test submit outcome unknown — check the chat before any manual repeat",
-			map[string]any{"chat": chat.ChatikChatID, "test_id": testID})
-	case sendInFlight, sendFailed:
-		// in-flight: another attempt owns it; failed: reviewed by the helper
-	}
+	f.finishTestSubmit(ctx, api, accountID, chat, testID, artifact, submitText, outcome)
 }
 
 // recordTest persists the assessment row unless an identical artifact is
@@ -910,83 +714,42 @@ func (f *Feature) maybeLeave(ctx context.Context, api hhapi.HHAPI, accountID str
 		return nil
 	}
 
-	// Optional farewell (best-effort, its own message intent).
-	if tpl := strings.TrimSpace(f.Cfg.Features.ChatOps.LeaveFarewell); tpl != "" {
-		text := strings.ReplaceAll(tpl, "{employer}", c.EmployerName)
-		outcome, ferr := f.sendWithIntent(ctx, api, accountID, c.ID,
-			messageIntentKey(accountID, c.ID, "leave-farewell"), text)
-		// An ambiguous or failed farewell is not fatal: still leave, the
-		// farewell is cosmetic.
-		_ = outcome
-		if ferr != nil {
-			f.Log.Warn("chatops: farewell send failed", "chat", c.ID, "err", ferr)
-		}
-	}
+	f.sendFarewell(ctx, api, accountID, c)
 
-	// Pacer before the leave mutation (wave-3 review #4).
-	if err := f.pace(ctx, accountID); err != nil {
-		_ = f.DB.IntentsMarkFailed(ctx, intentID)
-		return fmt.Errorf("chatops: pacer: %w", err)
-	}
-	leaveErr := api.LeaveChat(ctx, c.ID)
-	switch {
-	case leaveErr == nil || errors.Is(leaveErr, hhapi.ErrNotFound):
-		if leaveErr != nil {
-			// not found → we are already out; treat as success
-			_ = f.DB.IntentsMarkFailed(ctx, intentID)
-		} else if err := f.DB.IntentsMarkDone(ctx, intentID); err != nil {
-			return err
-		}
-		if err := f.DB.ChatsUpdateState(ctx, accountID, c.ID, stateLeft, nil); err != nil {
-			return err
-		}
-		_ = f.DB.FeatureStateSet(ctx, featureName, accountID, "leave:"+c.ID, "done")
-		_ = f.DB.FeatureStateSet(ctx, featureName, accountID, "leavetry:"+c.ID, "0")
-		f.setMirror(ctx, accountID, c.ID, stateLeft)
-		_ = f.DB.MetricsIncr(ctx, "chatops.leave_executed", kit11.Day(f.now()))
-		f.Log.Info("chatops: chat left", "chat", c.ID)
-		return nil
-	case kit11.IsAmbiguous(leaveErr):
-		// Outcome unknown: the failed intent allows a reconcile-confirmed
-		// retry on a later cycle; a duplicated LeaveChat is harmless (the
-		// second attempt returns "already a participant? no" → ErrNotFound).
-		_ = f.DB.IntentsMarkFailed(ctx, intentID)
-		_ = f.bumpLeaveTries(ctx, accountID, c.ID)
-		return nil
-	case kit11.IsTransient(leaveErr):
-		_ = f.DB.IntentsMarkFailed(ctx, intentID)
-		_ = f.bumpLeaveTries(ctx, accountID, c.ID)
-		return leaveErr
-	default:
-		_ = f.DB.IntentsMarkFailed(ctx, intentID)
-		_ = f.bumpLeaveTries(ctx, accountID, c.ID)
-		f.Log.Warn("chatops: leave rejected", "chat", c.ID, "err", leaveErr)
-		return nil
-	}
+	return f.executeLeave(ctx, api, accountID, c, intentID)
 }
 
 // --- invitation / offer ---
 
 func (f *Feature) handleInvitation(ctx context.Context, accountID string, chat store.Chat, msg store.Message) {
-	if det := f.interviewDetector(); det != nil {
-		res, err := det.Detect(ctx, accountID, chat.ID, chat.ChatikChatID, msg.Text)
-		if err != nil {
-			if kit11.IsTransient(err) {
-				f.Log.Warn("chatops: interview detect transient", "err", err)
-				// escalate anyway: the milestone must stop automatisms
-			} else {
-				f.Log.Error("chatops: interview detect failed", "err", err)
-			}
-		} else {
-			f.Log.Info("chatops: interview detected", "chat", chat.ChatikChatID, "links", len(res.Links), "when", res.When)
-		}
-	}
+	f.detectInterview(ctx, accountID, chat, msg)
 	if err := f.DB.ChatsUpdateState(ctx, accountID, chat.ChatikChatID, stateEscalated, nil); err != nil {
 		f.Log.Error("chatops: escalate chat", "err", err)
 		return
 	}
 	f.setMirror(ctx, accountID, chat.ChatikChatID, stateEscalated)
 	_ = f.DB.MetricsIncr(ctx, "chatops.interview_found", kit11.Day(f.now()))
+}
+
+// detectInterview runs the milestone detector (best-effort): transient
+// failures still escalate (the milestone must stop automatisms), permanent
+// ones are logged; a positive detection is logged with its links.
+func (f *Feature) detectInterview(ctx context.Context, accountID string, chat store.Chat, msg store.Message) {
+	det := f.interviewDetector()
+	if det == nil {
+		return
+	}
+	res, err := det.Detect(ctx, accountID, chat.ID, chat.ChatikChatID, msg.Text)
+	if err != nil {
+		if kit11.IsTransient(err) {
+			f.Log.Warn("chatops: interview detect transient", "err", err)
+			// escalate anyway: the milestone must stop automatisms
+			return
+		}
+		f.Log.Error("chatops: interview detect failed", "err", err)
+		return
+	}
+	f.Log.Info("chatops: interview detected", "chat", chat.ChatikChatID, "links", len(res.Links), "when", res.When)
 }
 
 // interviewDetector builds the interview detector against the CURRENT config
@@ -1377,3 +1140,339 @@ func strPtr(s string) *string { return &s }
 
 // Compile-time conformance with the feature-module contract.
 var _ features.Feature = (*Feature)(nil)
+
+// negStatesFor lazily loads the per-pass negotiation cache once the page
+// carries a vacancy-bound chat (RULING R9: at most one fetch per sync pass).
+func (f *Feature) negStatesFor(ctx context.Context, api hhapi.HHAPI, chats []hhapi.Chat, cached map[int64]string) (map[int64]string, error) {
+	if cached != nil {
+		return cached, nil
+	}
+	for _, c := range chats {
+		if c.VacancyID != 0 {
+			return f.loadNegotiations(ctx, api)
+		}
+	}
+	return nil, nil
+}
+
+// syncMessages upserts the chat row, pulls the history, stores the unseen
+// messages (concurrent inserts count as known) and refreshes LastOutgoingAt.
+func (f *Feature) syncMessages(ctx context.Context, api hhapi.HHAPI, accountID string, c hhapi.Chat) (store.Chat, []store.Message, error) {
+	mirror := f.mirrorState(ctx, accountID, c.ID)
+	_ = mirror
+	row := store.Chat{
+		AccountID:     accountID,
+		ChatikChatID:  c.ID,
+		TopicID:       optStr(c.TopicID),
+		VacancyID:     optI64(c.VacancyID),
+		EmployerName:  optStr(c.EmployerName),
+		LastMessageAt: optTime(c.LastMessageAt),
+	}
+	if err := f.DB.ChatsUpsert(ctx, &row); err != nil {
+		return store.Chat{}, nil, fmt.Errorf("chatops: upsert chat: %w", err)
+	}
+
+	msgs, err := api.ChatHistory(ctx, c.ID)
+	if err != nil {
+		return store.Chat{}, nil, fmt.Errorf("chatops: chat history %s: %w", c.ID, err)
+	}
+	sort.Slice(msgs, func(i, j int) bool { return msgs[i].SentAt.Before(msgs[j].SentAt) })
+
+	stored, err := f.DB.MessagesHistory(ctx, row.ID, historyLimit)
+	if err != nil {
+		return store.Chat{}, nil, fmt.Errorf("chatops: stored history: %w", err)
+	}
+	known := make(map[string]bool, len(stored))
+	var lastOut time.Time
+	for _, m := range stored {
+		known[m.MessageID] = true
+		if m.Direction == "out" && m.SentAt.After(lastOut) {
+			lastOut = m.SentAt
+		}
+	}
+	var newIn []store.Message
+	for _, m := range msgs {
+		if known[m.ID] {
+			if m.Direction == "out" && m.SentAt.After(lastOut) {
+				lastOut = m.SentAt
+			}
+			continue
+		}
+		sm := store.Message{
+			ChatID:    row.ID,
+			MessageID: m.ID,
+			Direction: m.Direction,
+			Author:    optStr(m.Author),
+			Text:      m.Text,
+			SentAt:    m.SentAt,
+		}
+		if err := f.DB.MessagesAdd(ctx, &sm); err != nil {
+			if kit11.IsUniqueViolation(err) {
+				// concurrent sync inserted it first: treat as known
+				known[m.ID] = true
+				continue
+			}
+			return store.Chat{}, nil, fmt.Errorf("chatops: store message: %w", err)
+		}
+		known[m.ID] = true
+		switch m.Direction {
+		case "in":
+			newIn = append(newIn, sm)
+		case "out":
+			if m.SentAt.After(lastOut) {
+				lastOut = m.SentAt
+			}
+		}
+	}
+
+	row.LastOutgoingAt = optTime(lastOut)
+	if err := f.DB.ChatsUpsert(ctx, &row); err != nil {
+		return store.Chat{}, nil, fmt.Errorf("chatops: refresh chat: %w", err)
+	}
+	return row, newIn, nil
+}
+
+// onInbound reacts to fresh inbound messages: the warmup ladder resets and a
+// warmup-due chat reactivates.
+func (f *Feature) onInbound(ctx context.Context, accountID string, c hhapi.Chat, mirror string) (string, error) {
+	if f.Cfg.Warmup.Enabled {
+		if err := warmup.ResetLadder(ctx, f.DB, accountID, c.ID); err != nil {
+			return mirror, fmt.Errorf("chatops: reset ladder: %w", err)
+		}
+	}
+	if mirror == stateWarmupDue {
+		if err := f.DB.ChatsUpdateState(ctx, accountID, c.ID, stateActive, nil); err != nil {
+			return mirror, fmt.Errorf("chatops: reactivate chat: %w", err)
+		}
+		mirror = f.setMirror(ctx, accountID, c.ID, stateActive)
+	}
+	return mirror, nil
+}
+
+// routeLatest classifies the newest inbound message and routes the verdict;
+// a structural refusal (RULING R9) skips the AI call entirely.
+func (f *Feature) routeLatest(ctx context.Context, api hhapi.HHAPI, accountID string, c hhapi.Chat,
+	row store.Chat, newIn []store.Message, negStates map[int64]string) (string, error) {
+	target := newIn[len(newIn)-1]
+	// RULING R9 (live contracts): the chat list itself carries the
+	// applicant state (resources.negotiation_topics /
+	// lastMessage.workflowTransition, live enum "DISCARD") — zero extra
+	// requests. The SSR negotiations map stays as the fallback source,
+	// and both spellings route through hhapi.IsStructuralRefusal.
+	if hhapi.IsStructuralRefusal(c.ApplicantState) || hhapi.IsStructuralRefusal(negStates[derefI64(row.VacancyID)]) {
+		// RULING R9: the structural negotiation state is the PRIMARY
+		// rejection signal — no AI call, straight to the rejection
+		// branch (auto-leave gates still apply downstream).
+		f.handleRejection(ctx, accountID, row, classVerdict{
+			Category: "rejection",
+			Common:   ai.Common{Confidence: 1.0},
+		})
+		_ = f.DB.MetricsIncr(ctx, "chatops.rejection_structural", kit11.Day(f.now()))
+		return stateRejected, nil
+	}
+	verdict, err := f.classify(ctx, accountID, row, target)
+	if err != nil {
+		if kit11.IsTransient(err) {
+			return "", err
+		}
+		f.Log.Error("chatops: classification failed", "chat", c.ID, "err", err)
+		return "", nil
+	}
+	f.route(ctx, api, accountID, row, target, verdict)
+	return "", nil
+}
+
+// markWarmupSilence marks a silent active chat warmup_due for the warmup
+// consumer (WF9) once the configured silence window has passed.
+func (f *Feature) markWarmupSilence(ctx context.Context, accountID string, c hhapi.Chat, mirror string, row store.Chat) error {
+	if !f.Cfg.Warmup.Enabled || mirror != stateActive || row.LastOutgoingAt == nil || row.LastOutgoingAt.IsZero() {
+		return nil
+	}
+	lastOut := *row.LastOutgoingAt
+	ladder, err := warmup.LadderOf(ctx, f.DB, accountID, c.ID)
+	if err != nil {
+		return err
+	}
+	silence := time.Duration(f.Cfg.Warmup.SilenceHours) * time.Hour
+	if ladder >= f.Cfg.Warmup.MaxPings || silence <= 0 || f.now().Sub(lastOut) < silence {
+		return nil
+	}
+	if err := f.DB.ChatsUpdateState(ctx, accountID, c.ID, stateWarmupDue, nil); err != nil {
+		return fmt.Errorf("chatops: mark warmup_due: %w", err)
+	}
+	// Last read/write of the local mirror: the store state set by
+	// setMirror is what the warmup consumer sees.
+	_ = f.setMirror(ctx, accountID, c.ID, stateWarmupDue)
+	return nil
+}
+
+// enqueueExternalForms hands external form links (WF5) to the testsolve
+// package as solve_test tasks. Returns true when the message carried links.
+func (f *Feature) enqueueExternalForms(ctx context.Context, accountID string, chat store.Chat, text string) bool {
+	links := testsolve.DetectExternalLinks(text)
+	if len(links) == 0 {
+		return false
+	}
+	if f.Queue == nil {
+		f.Log.Warn("chatops: queue not registered, cannot enqueue solve_test")
+		return true
+	}
+	for _, u := range links {
+		testID := testsolve.TestIDForURL(u)
+		if err := f.Queue.Enqueue(ctx, queue.Task{
+			AccountID: accountID,
+			Kind:      queue.KindSolveTest,
+			Priority:  queue.PrioChats,
+			DedupKey:  "solve:" + accountID + ":" + testID,
+			Payload: testsolve.SolvePayload{
+				AccountID: accountID,
+				TestID:    testID,
+				URL:       u,
+				Source:    "chat_message",
+				ChatikID:  chat.ChatikChatID,
+				VacancyID: derefI64(chat.VacancyID),
+			},
+		}); err != nil {
+			f.Log.Error("chatops: enqueue solve_test", "err", err)
+		}
+	}
+	return true
+}
+
+// escalateUnsureTest records the unsure verdict: review item, escalated
+// assessment row and a needs-human notification; nothing is submitted.
+func (f *Feature) escalateUnsureTest(ctx context.Context, accountID string, chat store.Chat, msg store.Message, answers []aiAnswerEntry) {
+	if _, aerr := f.DB.ReviewItemsAdd(ctx, accountID, "test_unsure",
+		"AI unsure about test answers — test NOT submitted",
+		artifactJSONWithAnswers(answers, msg.MessageID)); aerr != nil {
+		f.Log.Error("chatops: review add", "err", aerr)
+	}
+	if err := f.DB.AssessmentsAdd(ctx, &store.Assessment{
+		AccountID: accountID,
+		VacancyID: chat.VacancyID,
+		Kind:      "hh_internal",
+		Status:    "escalated",
+		Answers:   strPtr(artifactJSONWithAnswers(answers, msg.MessageID)),
+	}); err != nil {
+		f.Log.Error("chatops: store escalated test", "err", err)
+	}
+	if f.Notify != nil {
+		f.Notify.Emit(webhook.Event{
+			Type: webhook.EvNeedsHuman, AccountID: accountID, Time: f.now(),
+			Message: "Тест: неуверенные ответы — отправка вручную",
+			Payload: map[string]any{"chat": chat.ChatikChatID},
+		})
+	}
+}
+
+// finishTestSubmit handles the sendWithIntent outcome: submitted → metrics,
+// notification and the solved artifact (unless dry-run); ambiguous →
+// reconcile by reading the chat, otherwise review; in-flight/failed are
+// owned/reported elsewhere.
+func (f *Feature) finishTestSubmit(ctx context.Context, api hhapi.HHAPI, accountID string, chat store.Chat,
+	testID, artifact, submitText string, outcome sendOutcome) {
+	switch outcome {
+	case sendSent, sendDryRun, sendAlreadySent:
+		if outcome == sendSent {
+			_ = f.DB.MetricsIncr(ctx, "chatops.test_submitted", kit11.Day(f.now()))
+			if f.Notify != nil {
+				f.Notify.Emit(webhook.Event{
+					Type: webhook.EvTestSolved, AccountID: accountID, Time: f.now(),
+					Message: "Тест пройден и отправлен",
+					Payload: map[string]any{"chat": chat.ChatikChatID, "test_id": testID},
+				})
+			}
+		}
+		// Dry-run records no solved/submitted artifact: the assessment row
+		// must reflect a fact, and in dry-run nothing was submitted.
+		if !f.Cfg.General.DryRun {
+			if err := f.recordTest(ctx, accountID, chat, artifact, testID, "solved", "submitted"); err != nil {
+				f.Log.Error("chatops: record test", "err", err)
+			}
+		}
+	case sendAmbiguous:
+		// RECONCILE by reading the chat: did our answers land?
+		sent, rerr := textDelivered(ctx, api, chat.ChatikChatID, submitText)
+		if rerr == nil && sent {
+			if err := f.recordTest(ctx, accountID, chat, artifact, testID, "solved", "submitted_ambiguous_reconciled"); err != nil {
+				f.Log.Error("chatops: record test", "err", err)
+			}
+			return
+		}
+		f.review(ctx, accountID, "test_submit_ambiguous",
+			"test submit outcome unknown — check the chat before any manual repeat",
+			map[string]any{"chat": chat.ChatikChatID, "test_id": testID})
+	case sendInFlight, sendFailed:
+		// in-flight: another attempt owns it; failed: reviewed by the helper
+	}
+}
+
+// sendFarewell delivers the optional configured farewell before the leave;
+// an ambiguous or failed farewell is not fatal (the leave still proceeds).
+func (f *Feature) sendFarewell(ctx context.Context, api hhapi.HHAPI, accountID string, c hhapi.Chat) {
+	tpl := strings.TrimSpace(f.Cfg.Features.ChatOps.LeaveFarewell)
+	if tpl == "" {
+		return
+	}
+	text := strings.ReplaceAll(tpl, "{employer}", c.EmployerName)
+	outcome, ferr := f.sendWithIntent(ctx, api, accountID, c.ID,
+		messageIntentKey(accountID, c.ID, "leave-farewell"), text)
+	// An ambiguous or failed farewell is not fatal: still leave, the
+	// farewell is cosmetic.
+	_ = outcome
+	if ferr != nil {
+		f.Log.Warn("chatops: farewell send failed", "chat", c.ID, "err", ferr)
+	}
+}
+
+// executeLeave performs the paced LeaveChat mutation and settles the intent
+// per outcome: success/not-found → left, ambiguous → reconcilable retry,
+// transient → propagate, rejected → logged and retried on a later cycle.
+func (f *Feature) executeLeave(ctx context.Context, api hhapi.HHAPI, accountID string, c hhapi.Chat, intentID string) error {
+	// Pacer before the leave mutation (wave-3 review #4).
+	if err := f.pace(ctx, accountID); err != nil {
+		_ = f.DB.IntentsMarkFailed(ctx, intentID)
+		return fmt.Errorf("chatops: pacer: %w", err)
+	}
+	leaveErr := api.LeaveChat(ctx, c.ID)
+	switch {
+	case leaveErr == nil || errors.Is(leaveErr, hhapi.ErrNotFound):
+		return f.leaveSuccess(ctx, accountID, c, intentID, leaveErr)
+	case kit11.IsAmbiguous(leaveErr):
+		// Outcome unknown: the failed intent allows a reconcile-confirmed
+		// retry on a later cycle; a duplicated LeaveChat is harmless (the
+		// second attempt returns "already a participant? no" → ErrNotFound).
+		_ = f.DB.IntentsMarkFailed(ctx, intentID)
+		_ = f.bumpLeaveTries(ctx, accountID, c.ID)
+		return nil
+	case kit11.IsTransient(leaveErr):
+		_ = f.DB.IntentsMarkFailed(ctx, intentID)
+		_ = f.bumpLeaveTries(ctx, accountID, c.ID)
+		return leaveErr
+	default:
+		_ = f.DB.IntentsMarkFailed(ctx, intentID)
+		_ = f.bumpLeaveTries(ctx, accountID, c.ID)
+		f.Log.Warn("chatops: leave rejected", "chat", c.ID, "err", leaveErr)
+		return nil
+	}
+}
+
+// leaveSuccess settles a leave that either landed or found the chat already
+// gone (not-found → we are already out; treated as success).
+func (f *Feature) leaveSuccess(ctx context.Context, accountID string, c hhapi.Chat, intentID string, leaveErr error) error {
+	if leaveErr != nil {
+		// not found → we are already out; treat as success
+		_ = f.DB.IntentsMarkFailed(ctx, intentID)
+	} else if err := f.DB.IntentsMarkDone(ctx, intentID); err != nil {
+		return err
+	}
+	if err := f.DB.ChatsUpdateState(ctx, accountID, c.ID, stateLeft, nil); err != nil {
+		return err
+	}
+	_ = f.DB.FeatureStateSet(ctx, featureName, accountID, "leave:"+c.ID, "done")
+	_ = f.DB.FeatureStateSet(ctx, featureName, accountID, "leavetry:"+c.ID, "0")
+	f.setMirror(ctx, accountID, c.ID, stateLeft)
+	_ = f.DB.MetricsIncr(ctx, "chatops.leave_executed", kit11.Day(f.now()))
+	f.Log.Info("chatops: chat left", "chat", c.ID)
+	return nil
+}
