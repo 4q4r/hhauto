@@ -24,6 +24,12 @@ import (
 // key is still pending (idempotency-key conflict).
 var ErrIntentPending = errors.New("store: intent with this key is already pending")
 
+// ErrIntentDone is returned by IntentsBegin when an intent with the same key
+// has already completed. A done intent is a hard barrier against re-running
+// the side effect; lifting it (and re-arming the key) is a feature-level
+// RECONCILE decision, never a store-level replacement.
+var ErrIntentDone = errors.New("store: intent with this key is already done")
+
 const (
 	driverName           = "sqlite"
 	defaultBusyTimeoutMS = 5000
@@ -135,20 +141,6 @@ func nowOr(t time.Time) string {
 		return fmtTime(time.Now())
 	}
 	return fmtTime(t)
-}
-
-func strArg(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func strArgPtr(s *string) any {
-	if s == nil || *s == "" {
-		return nil
-	}
-	return *s
 }
 
 func nullStr(ns sql.NullString) *string {

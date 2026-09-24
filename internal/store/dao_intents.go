@@ -12,8 +12,11 @@ import (
 
 // IntentsBegin claims an idempotency key. Behaviour on UNIQUE(key) conflict:
 //   - existing intent still pending -> ErrIntentPending (never clobbered);
-//   - existing intent finished (done/failed/abandoned) -> replaced in place
-//     with a fresh intent so the key can be retried.
+//   - existing intent done -> ErrIntentDone (hard barrier: a completed
+//     intent is never replaced by Begin; re-arming the key is a feature-level
+//     RECONCILE decision);
+//   - existing intent failed/abandoned -> replaced in place with a fresh
+//     intent so the key can be retried.
 //
 // state is CHECK-enforced (pending|done|failed|abandoned); callers normally
 // pass "pending". Returns the new intent ID (ULID).
@@ -34,6 +37,9 @@ func (db *DB) IntentsBegin(ctx context.Context, key, state, payload string) (str
 	}
 	if existing.Valid && existing.String == "pending" {
 		return "", ErrIntentPending
+	}
+	if existing.Valid && existing.String == "done" {
+		return "", ErrIntentDone
 	}
 
 	id := ulid.Make().String()

@@ -447,7 +447,6 @@ func TestPingQueueScheduleDueMarkSent(t *testing.T) {
 		t.Fatalf("duplicate schedule = (%d, %v), want (0, false)", id2, scheduled2)
 	}
 
-	past := now.Add(-time.Minute)
 	due, err := db.PingQueueDue(ctx, now, 10)
 	if err != nil {
 		t.Fatalf("PingQueueDue(now): %v", err)
@@ -489,7 +488,6 @@ func TestPingQueueScheduleDueMarkSent(t *testing.T) {
 	if left != nil {
 		t.Fatalf("ping survived chat delete (cascade broken): %+v", left)
 	}
-	_ = past
 }
 
 func TestAIDecisionsAddByEntitySumTokens(t *testing.T) {
@@ -709,6 +707,7 @@ func TestIntentsPendingConflictAndLifecycle(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 
+	// pending -> ErrIntentPending.
 	id1, err := db.IntentsBegin(ctx, "apply:10", "pending", `{"vacancy":10}`)
 	if err != nil {
 		t.Fatalf("IntentsBegin: %v", err)
@@ -716,36 +715,58 @@ func TestIntentsPendingConflictAndLifecycle(t *testing.T) {
 	if id1 == "" || len(id1) != 26 {
 		t.Fatalf("IntentsBegin must assign ULID, got %q", id1)
 	}
-
 	_, err = db.IntentsBegin(ctx, "apply:10", "pending", `{}`)
 	if !errors.Is(err, ErrIntentPending) {
 		t.Fatalf("second Begin on pending key: err = %v, want ErrIntentPending", err)
 	}
 
+	// done -> ErrIntentDone: a completed intent is a hard barrier against
+	// re-running the side effect; the store must not silently re-arm it
+	// (retry after done is a feature-level RECONCILE decision, not store's).
 	if err := db.IntentsMarkDone(ctx, id1); err != nil {
 		t.Fatalf("IntentsMarkDone: %v", err)
 	}
-	id2, err := db.IntentsBegin(ctx, "apply:10", "pending", `{}`)
-	if err != nil {
-		t.Fatalf("Begin after done: %v", err)
+	if _, err := db.IntentsBegin(ctx, "apply:10", "pending", `{}`); !errors.Is(err, ErrIntentDone) {
+		t.Fatalf("Begin on done key: err = %v, want ErrIntentDone", err)
 	}
-	if id2 == id1 {
-		t.Fatal("Begin after done must create a new intent")
+	var state string
+	if err := db.conn.QueryRow("SELECT state FROM intents WHERE key = 'apply:10'").Scan(&state); err != nil {
+		t.Fatalf("read intent after ErrIntentDone: %v", err)
+	}
+	if state != "done" {
+		t.Fatalf("done intent was clobbered: state = %q, want done", state)
 	}
 
+	// failed -> replaced in place with a fresh intent.
+	id2, err := db.IntentsBegin(ctx, "apply:11", "pending", `{}`)
+	if err != nil {
+		t.Fatalf("IntentsBegin (apply:11): %v", err)
+	}
 	if err := db.IntentsMarkFailed(ctx, id2); err != nil {
 		t.Fatalf("IntentsMarkFailed: %v", err)
 	}
-	if _, err := db.IntentsBegin(ctx, "apply:10", "pending", `{}`); err != nil {
+	id3, err := db.IntentsBegin(ctx, "apply:11", "pending", `{}`)
+	if err != nil {
 		t.Fatalf("Begin after failed: %v", err)
 	}
+	if id3 == id2 {
+		t.Fatal("Begin after failed must create a new intent")
+	}
 
-	if err := db.IntentsMarkAbandoned(ctx, id2); err != nil {
+	// abandoned -> replaced in place with a fresh intent.
+	if err := db.IntentsMarkAbandoned(ctx, id3); err != nil {
 		t.Fatalf("IntentsMarkAbandoned: %v", err)
+	}
+	id4, err := db.IntentsBegin(ctx, "apply:11", "pending", `{}`)
+	if err != nil {
+		t.Fatalf("Begin after abandoned: %v", err)
+	}
+	if id4 == id3 {
+		t.Fatal("Begin after abandoned must create a new intent")
 	}
 
 	// State CHECK: unknown states must fail.
-	if _, err := db.IntentsBegin(ctx, "apply:11", "running", `{}`); err == nil {
+	if _, err := db.IntentsBegin(ctx, "apply:12", "running", `{}`); err == nil {
 		t.Fatal("intent state outside CHECK must fail")
 	}
 }
