@@ -3,9 +3,10 @@ package config
 // applyDefaults fills every unset (zero) value with the documented default
 // from docs/PLAN.md §5 so that a minimal TOML file yields a working config.
 //
-// Note: because the config contract uses plain value types (no pointers),
-// boolean defaults are applied unconditionally — an explicit `false` in TOML
-// for the safety flags below is normalized back to the safe default.
+// Default-true toggles are *bool (orchestrator ruling R1): nil means "not
+// set" and becomes true, while an explicit false in TOML is respected.
+// Log.RedactSecrets and Forms.AbortOnPasswordField stay plain bool and are
+// forced to true: they are safety-critical and have no opt-out.
 func applyDefaults(c *Config) {
 	if c.General.Timezone == "" {
 		c.General.Timezone = "Local"
