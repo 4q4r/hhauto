@@ -1,0 +1,12 @@
+{
+  "password": false,
+  "title": "Анкета кандидата",
+  "url": "https://docs.google.com/forms/d/e/1/viewform",
+  "fields": [
+    {"kind": "text", "ctrls": [0], "label": "Сколько лет вы разрабатываете на Go?", "options": [], "required": true, "placeholder": ""},
+    {"kind": "select", "ctrls": [1], "label": "Готовы ли вы к переезду?", "options": ["Да, готов", "Нет", "Частично"], "required": false, "placeholder": ""},
+    {"kind": "radio", "ctrls": [2, 3], "label": "С какими командами работали?", "options": ["Распределёнными командами", "Локальными"], "required": false, "placeholder": ""},
+    {"kind": "textarea", "ctrls": [4], "label": "Комментарий", "options": [], "required": false, "placeholder": "Дополните рассказ"},
+    {"kind": "check", "ctrls": [5], "label": "Согласие на обработку данных", "options": [], "required": true, "placeholder": ""}
+  ]
+}
