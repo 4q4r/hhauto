@@ -1,0 +1,22 @@
+{
+  "type": "POPUP",
+  "letterRequired": true,
+  "test": { "hasTests": false },
+  "acceptAutoResponse": true,
+  "chatWritePossibility": "ENABLED",
+  "resumeInconsistencies": {
+    "resume": [
+      {
+        "inconsistencies": {
+          "inconsistency": [
+            {
+              "type": "EXPERIENCE",
+              "required": "WORK_EXPERIENCE_FROM_3_YEAR_TO_6_YEAR",
+              "actual": "WORK_EXPERIENCE_FROM_1_YEAR_TO_3_YEAR"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

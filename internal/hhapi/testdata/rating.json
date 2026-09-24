@@ -1,0 +1,10 @@
+{
+  "employerNameMap": { "9001": "Corp LLC" },
+  "employerReviews": {
+    "totalRating": "4.3",
+    "recommendationsPercent": 81,
+    "reviewsCount": 120,
+    "negativeReviewsCount": 10,
+    "last3MonthsReviewsInfo": { "totalRating": "4.6", "reviewsCount": 9 }
+  }
+}
