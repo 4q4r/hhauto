@@ -357,6 +357,46 @@ func TestConcurrentProducersConsumers(t *testing.T) {
 	}
 }
 
+func TestCloseOnEmptyQueueReturnsFast(t *testing.T) {
+	// Regression: with nothing ever pending, Close must not burn the whole
+	// drain timeout waiting on an `empty` signal that will never fire (the
+	// channel is only closed on Dequeue/drop transitions).
+	q := New()
+
+	start := time.Now()
+	const drainTimeout = 3 * time.Second
+	if err := q.Close(context.Background(), drainTimeout); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed >= time.Second {
+		t.Fatalf("Close on never-used queue took %v, want << drainTimeout %v", elapsed, drainTimeout)
+	}
+}
+
+func TestCloseWakesUnknownAccountWaiter(t *testing.T) {
+	// Regression: a Dequeue waiting for a never-enqueued account must be
+	// released by Close even without ctx cancellation.
+	q := New()
+	returned := make(chan bool, 1)
+	go func() {
+		_, ok := q.Dequeue(context.Background(), "ghost")
+		returned <- ok
+	}()
+	time.Sleep(50 * time.Millisecond) // let the consumer block first
+
+	if err := q.Close(context.Background(), 0); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case ok := <-returned:
+		if ok {
+			t.Fatal("Dequeue = ok, want false after Close")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Dequeue for unknown account leaked past Close without ctx cancellation")
+	}
+}
+
 func TestConcurrentDedupEnqueuesProduceExactlyOne(t *testing.T) {
 	q := New()
 	defer q.Close(context.Background(), 0)
