@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -124,7 +125,7 @@ func TestRawSignatureIsCorrectHMAC(t *testing.T) {
 	}
 
 	ev := Event{Type: EvOfferReceived, AccountID: "acc1", Time: time.Now().UTC(), Message: "hello"}
-	if err := ep.deliver(context.Background(), ev); err != nil {
+	if _, err := ep.deliver(context.Background(), ev); err != nil {
 		t.Fatalf("deliver: %v", err)
 	}
 
@@ -165,7 +166,7 @@ func TestTelegramShaping(t *testing.T) {
 	}
 
 	ev := Event{Type: EvNeedsHuman, Time: time.Now().UTC(), Message: `<b>alert</b> & "done"`}
-	if err := ep.deliver(context.Background(), ev); err != nil {
+	if _, err := ep.deliver(context.Background(), ev); err != nil {
 		t.Fatalf("deliver: %v", err)
 	}
 
@@ -206,7 +207,7 @@ func TestTelegramTruncatesTo3500Chars(t *testing.T) {
 	}
 
 	long := strings.Repeat("ж", 4000) // multibyte runes: byte-length truncation would be wrong
-	if err := ep.deliver(context.Background(), Event{Type: EvDailySummary, Message: long}); err != nil {
+	if _, err := ep.deliver(context.Background(), Event{Type: EvDailySummary, Message: long}); err != nil {
 		t.Fatalf("deliver: %v", err)
 	}
 
@@ -224,6 +225,34 @@ func TestTelegramTruncatesTo3500Chars(t *testing.T) {
 	}
 }
 
+func TestTelegramTruncationKeepsEntitiesIntact(t *testing.T) {
+	rs := newRecordStore(t, nil)
+	ep, err := newTestEndpoint(t, config.Webhook{URL: rs.srv.URL, Preset: "telegram", ChatID: "42"}, nil)
+	if err != nil {
+		t.Fatalf("newEndpoint: %v", err)
+	}
+
+	// The cut lands exactly where an entity would start: a '&' at the limit.
+	msg := strings.Repeat("a", telegramTextLimit-1) + "&"
+	if _, err := ep.deliver(context.Background(), Event{Type: EvDailySummary, Message: msg}); err != nil {
+		t.Fatalf("deliver: %v", err)
+	}
+	if got := rs.calls(); got != 1 {
+		t.Fatalf("calls = %d, want 1", got)
+	}
+
+	var payload struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(rs.bodies[0]), &payload); err != nil {
+		t.Fatalf("payload not JSON: %v", err)
+	}
+	want := strings.Repeat("a", telegramTextLimit-1) + "&amp;"
+	if payload.Text != want {
+		t.Fatalf("truncated+escaped text = %q (tail %q), want ...%q", payload.Text, payload.Text[max(0, len(payload.Text)-12):], "&amp;")
+	}
+}
+
 // --- discord preset ---
 
 func TestDiscordShapingAndTruncation(t *testing.T) {
@@ -234,7 +263,7 @@ func TestDiscordShapingAndTruncation(t *testing.T) {
 	}
 
 	long := strings.Repeat("x", 2500)
-	if err := ep.deliver(context.Background(), Event{Type: EvApplySent, Message: long}); err != nil {
+	if _, err := ep.deliver(context.Background(), Event{Type: EvApplySent, Message: long}); err != nil {
 		t.Fatalf("deliver: %v", err)
 	}
 
@@ -270,7 +299,7 @@ func TestRetry429ThenSuccess(t *testing.T) {
 		t.Fatalf("newEndpoint: %v", err)
 	}
 
-	if err := ep.deliver(context.Background(), Event{Type: EvTestSolved, Message: "m"}); err != nil {
+	if _, err := ep.deliver(context.Background(), Event{Type: EvTestSolved, Message: "m"}); err != nil {
 		t.Fatalf("deliver should succeed after retries: %v", err)
 	}
 	if got := rs.calls(); got != 3 {
@@ -285,7 +314,7 @@ func TestRetry4xxNoRetry(t *testing.T) {
 		t.Fatalf("newEndpoint: %v", err)
 	}
 
-	err = ep.deliver(context.Background(), Event{Type: EvApplySent, Message: "m"})
+	_, err = ep.deliver(context.Background(), Event{Type: EvApplySent, Message: "m"})
 	if err == nil {
 		t.Fatal("deliver must fail on 400")
 	}
@@ -303,10 +332,11 @@ func TestRetriesExhaustedThenOutbox(t *testing.T) {
 	ob := &recordingOutbox{}
 
 	ev := Event{Type: EvContactCollected, Message: "payload-42"}
-	if err := ep.deliver(context.Background(), ev); err == nil {
+	payload, derr := ep.deliver(context.Background(), ev)
+	if derr == nil {
 		t.Fatal("deliver must fail when all attempts return 503")
 	}
-	if err := ep.park(context.Background(), ev, ob); err != nil {
+	if err := ep.park(context.Background(), payload, ob); err != nil {
 		t.Fatalf("park: %v", err)
 	}
 	if len(ob.added) != 1 {
@@ -314,6 +344,14 @@ func TestRetriesExhaustedThenOutbox(t *testing.T) {
 	}
 	if ob.added[0].EndpointID != rs.srv.URL {
 		t.Errorf("endpointID = %q, want %q", ob.added[0].EndpointID, rs.srv.URL)
+	}
+	// The parked body must be byte-for-byte the body that was sent.
+	sent := rs.bodies[len(rs.bodies)-1]
+	if !bytes.Equal(ob.added[0].Payload, []byte(sent)) {
+		t.Fatalf("parked payload differs from sent body:\nsent  = %q\nparked= %q", sent, ob.added[0].Payload)
+	}
+	if !bytes.Equal(ob.added[0].Payload, payload) {
+		t.Fatalf("parked payload differs from deliver() payload:\ndeliver  = %q\nparked   = %q", payload, ob.added[0].Payload)
 	}
 	var decoded Event
 	if err := json.Unmarshal(ob.added[0].Payload, &decoded); err != nil {
@@ -344,15 +382,18 @@ func TestOutboxOnUnreachableServer(t *testing.T) {
 	ob := &recordingOutbox{}
 
 	ev := Event{Type: EvAccountError, Message: "boom"}
-	derr := ep.deliver(context.Background(), ev)
+	shaped, derr := ep.deliver(context.Background(), ev)
 	if derr == nil {
 		t.Fatal("deliver must fail on connection refused")
 	}
-	if err := ep.park(context.Background(), ev, ob); err != nil {
+	if err := ep.park(context.Background(), shaped, ob); err != nil {
 		t.Fatalf("park: %v", err)
 	}
 	if len(ob.added) != 1 {
 		t.Fatalf("outbox additions = %d, want 1", len(ob.added))
+	}
+	if !bytes.Equal(ob.added[0].Payload, shaped) {
+		t.Fatal("parked payload must be byte-for-byte the shaped telegram body")
 	}
 	// The parked payload must be the shaped telegram body, replayable as-is.
 	var payload struct {
@@ -377,7 +418,7 @@ func TestProxyClientSelectedByRef(t *testing.T) {
 		t.Fatalf("newEndpoint: %v", err)
 	}
 
-	if err := ep.deliver(context.Background(), Event{Type: EvApplySkipped, Message: "via proxy"}); err != nil {
+	if _, err := ep.deliver(context.Background(), Event{Type: EvApplySkipped, Message: "via proxy"}); err != nil {
 		t.Fatalf("deliver through proxy dialer: %v", err)
 	}
 	if len(reg.refs) != 1 || reg.refs[0] != "socks5-1" {
