@@ -1,4 +1,5 @@
-// Per-reference dialer implementations over config.Proxy values.
+// Package proxy provides per-reference dialer implementations over the
+// [proxy.*] config table.
 //
 // Security posture:
 //   - fail-closed: an unknown registry reference is an error, never a direct
@@ -40,6 +41,8 @@ type registry struct {
 // NewRegistry builds one dialer per configured proxy reference. Construction
 // fails on invalid entries so misconfiguration surfaces at startup, not on
 // the first request.
+//
+//nolint:revive // sealed impl: consumers use the Registry interface methods; the concrete type is package-private
 func NewRegistry(proxies map[string]config.Proxy) (*registry, error) {
 	dialers := make(map[string]Dialer, len(proxies))
 	for ref, p := range proxies {
@@ -154,23 +157,23 @@ func (c *connectDialer) DialContext(ctx context.Context, network, addr string) (
 	}
 	req += "\r\n"
 	if _, err := conn.Write([]byte(req)); err != nil {
-		conn.Close()
+		_ = conn.Close() // discarding a failed connection; the CONNECT error is the one that matters
 		return nil, fmt.Errorf("proxy: send CONNECT: %w", err)
 	}
 
 	br := bufio.NewReader(conn)
 	statusLine, err := readConnectResponse(br)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close() // discarding a failed connection; the CONNECT error is the one that matters
 		return nil, fmt.Errorf("proxy: read CONNECT response: %w", err)
 	}
 	code, ok := parseStatusCode(statusLine)
 	if !ok {
-		conn.Close()
+		_ = conn.Close() // discarding a failed connection; the CONNECT error is the one that matters
 		return nil, fmt.Errorf("proxy: malformed CONNECT response %q", statusLine)
 	}
 	if code != 200 {
-		conn.Close()
+		_ = conn.Close() // discarding a rejected connection; the status is the error that matters
 		return nil, fmt.Errorf("proxy: CONNECT rejected with status %d", code)
 	}
 

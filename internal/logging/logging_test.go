@@ -32,7 +32,7 @@ func captureStderr(t *testing.T, fn func()) string {
 
 	fn()
 
-	w.Close()
+	_ = w.Close() // test teardown
 	os.Stderr = old
 	return <-written
 }
@@ -117,8 +117,7 @@ func TestRedactionNotDisableable(t *testing.T) {
 	// New() with redact_secrets=false: WARN goes to slog.Default() while the
 	// logger itself writes to (swapped) stderr — capture both at once.
 	var stderr string
-	var warn string
-	warn = captureDefaultLog(t, func() {
+	warn := captureDefaultLog(t, func() {
 		stderr = captureStderr(t, func() {
 			logger, closeFn := New(config.Log{Level: "info", Format: "text", RedactSecrets: false})
 			defer closeFn() //nolint:errcheck // no file in text mode

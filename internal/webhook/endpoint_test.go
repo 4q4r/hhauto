@@ -73,13 +73,13 @@ func (o *recordingOutbox) Add(endpointID string, payload []byte) error {
 	return nil
 }
 
-func (o *recordingOutbox) Due(now time.Time, limit int) ([]OutboxItem, error) {
+func (o *recordingOutbox) Due(_ time.Time, _ int) ([]OutboxItem, error) {
 	return nil, nil
 }
 
-func (o *recordingOutbox) MarkDelivered(id int64) error { return nil }
+func (o *recordingOutbox) MarkDelivered(_ int64) error { return nil }
 
-func (o *recordingOutbox) MarkFailed(id int64, nextRetry time.Time) error { return nil }
+func (o *recordingOutbox) MarkFailed(_ int64, _ time.Time) error { return nil }
 
 // fakeRegistry records resolved refs and redirects every dial to one address.
 type fakeRegistry struct {
@@ -96,9 +96,9 @@ func (f *fakeRegistry) HasProxies() bool { return true }
 
 type redirectDialer struct{ addr string }
 
-func (d redirectDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+func (d redirectDialer) DialContext(_ context.Context, network, _ string) (net.Conn, error) {
 	var nd net.Dialer
-	return nd.DialContext(ctx, network, d.addr)
+	return nd.DialContext(context.Background(), network, d.addr)
 }
 
 // newTestEndpoint builds an endpoint with instantaneous backoff for tests.
@@ -373,7 +373,7 @@ func TestOutboxOnUnreachableServer(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	addr := dead.Addr().String()
-	dead.Close() // port now refused
+	_ = dead.Close() // test teardown: port now refused
 
 	ep, err := newTestEndpoint(t, config.Webhook{URL: "http://" + addr + "/hook", Preset: "telegram", ChatID: "7"}, nil)
 	if err != nil {

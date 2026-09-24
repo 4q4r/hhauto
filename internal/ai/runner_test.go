@@ -17,7 +17,7 @@ func TestMemoryCacheHitMiss(t *testing.T) {
 	if _, ok, _ := c.Get(ctx, "k"); ok {
 		t.Fatal("empty cache must miss")
 	}
-	c.Set(ctx, "k", []byte(`{"v":1}`), time.Hour)
+	_ = c.Set(ctx, "k", []byte(`{"v":1}`), time.Hour) // seed; the hit assertion below fails if this errors
 	got, ok, err := c.Get(ctx, "k")
 	if err != nil || !ok {
 		t.Fatalf("want hit, got ok=%v err=%v", ok, err)
@@ -30,7 +30,7 @@ func TestMemoryCacheHitMiss(t *testing.T) {
 func TestMemoryCacheTTLExpiry(t *testing.T) {
 	c := NewMemoryCache()
 	ctx := context.Background()
-	c.Set(ctx, "k", []byte("x"), 30*time.Millisecond)
+	_ = c.Set(ctx, "k", []byte("x"), 30*time.Millisecond) // seed; the hit/miss assertions below fail if this errors
 	if _, ok, _ := c.Get(ctx, "k"); !ok {
 		t.Fatal("fresh entry must hit")
 	}

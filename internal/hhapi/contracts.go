@@ -22,12 +22,14 @@ var (
 	ErrNetwork     = errors.New("hhapi: network")
 )
 
+// User is the authenticated account owner (hh /me payload).
 type User struct {
 	ID       int64  `json:"id"`
 	Email    string `json:"email"`
 	FullName string `json:"full_name"`
 }
 
+// Resume is one resume as hh reports it (mine list view).
 type Resume struct {
 	HHID       string          `json:"hh_id"` // resume hash
 	Title      string          `json:"title"`
@@ -38,6 +40,7 @@ type Resume struct {
 	Raw        json.RawMessage `json:"raw,omitempty"`
 }
 
+// Salary is the vacancy salary band as published.
 type Salary struct {
 	From     int    `json:"from,omitempty"`
 	To       int    `json:"to,omitempty"`
@@ -45,6 +48,7 @@ type Salary struct {
 	Gross    bool   `json:"gross,omitempty"`
 }
 
+// Vacancy is one vacancy card as parsed from card or search payloads.
 type Vacancy struct {
 	ID             int64           `json:"id"`
 	Name           string          `json:"name"`
@@ -61,6 +65,7 @@ type Vacancy struct {
 	Raw            json.RawMessage `json:"raw,omitempty"`
 }
 
+// VacancyPage is one search result page.
 type VacancyPage struct {
 	Items []Vacancy `json:"items"`
 	Page  int       `json:"page"`
@@ -68,6 +73,7 @@ type VacancyPage struct {
 	Found int       `json:"found"`
 }
 
+// Employer is one employer card payload.
 type Employer struct {
 	ID      int64           `json:"id"`
 	Name    string          `json:"name"`
@@ -85,6 +91,7 @@ type EmployerRating struct {
 	FetchedAt    time.Time `json:"fetched_at"`
 }
 
+// ApplyMeta is the response-popup metadata that gates the apply flow.
 type ApplyMeta struct {
 	HasTests              bool     `json:"has_tests"`
 	LetterRequired        bool     `json:"letter_required"`
@@ -93,18 +100,21 @@ type ApplyMeta struct {
 	ChatWritePossibility  string   `json:"chat_write_possibility,omitempty"`
 }
 
+// ApplyRequest is the input of a vacancy response submission.
 type ApplyRequest struct {
 	VacancyID  int64
 	ResumeHash string
 	Letter     string
 }
 
+// NegotiationRef is the handle returned right after an apply.
 type NegotiationRef struct {
 	ID      string `json:"id"`
 	Vacancy int64  `json:"vacancy"`
 	State   string `json:"state"`
 }
 
+// Negotiation is one applicant negotiation from the negotiations list.
 type Negotiation struct {
 	ID           string    `json:"id"`
 	VacancyID    int64     `json:"vacancy_id"`
@@ -115,6 +125,7 @@ type Negotiation struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+// Chat is one chatik conversation header.
 type Chat struct {
 	ID            string    `json:"id"` // chatik chat id
 	TopicID       string    `json:"topic_id,omitempty"`
@@ -124,6 +135,7 @@ type Chat struct {
 	Unread        int       `json:"unread,omitempty"`
 }
 
+// ChatMessage is one message inside a chat history.
 type ChatMessage struct {
 	ID        string    `json:"id"`
 	Author    string    `json:"author,omitempty"`
@@ -132,6 +144,7 @@ type ChatMessage struct {
 	SentAt    time.Time `json:"sent_at,omitempty"`
 }
 
+// Contact is one employer contact extracted from a card, chat or email.
 type Contact struct {
 	Type  string `json:"type"` // phone | email | telegram | name | url
 	Value string `json:"value"`

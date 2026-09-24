@@ -196,7 +196,7 @@ func (e *endpoint) attempt(ctx context.Context, payload []byte) error {
 	if err != nil { // transport errors are transient by definition
 		return fmt.Errorf("webhook %s: POST: %w", e.id, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // response drained; close error is not actionable
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 
 	switch {

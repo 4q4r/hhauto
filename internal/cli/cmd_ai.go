@@ -29,8 +29,8 @@ import (
 )
 
 func newAICmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "ai", Short: "AI subsystem (status | eval)"}
-	cmd.AddCommand(newAIStatusCmd(), newAIEvalCmd())
+	cmd := &cobra.Command{Use: "ai", Short: "AI subsystem (status | eval | compare)"}
+	cmd.AddCommand(newAIStatusCmd(), newAIEvalCmd(), newAICompareCmd())
 	return cmd
 }
 
@@ -38,13 +38,13 @@ func newAIStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "AI usage today: tokens and USD (from the decision ledger)",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			rt, err := Build(ctx, buildOpts())
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			o := outFor(cmd)
 			day := audit.Day()
 			tokens, usd, err := rt.DB.AIDecisionsSumTokensDayAll(ctx, day)
@@ -100,7 +100,7 @@ func newAIEvalCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "eval",
 		Short: "Run the golden-fixture regression catalog (exit 1 on any failure)",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			dir := goldenDir()
 			results, err := ai.RunGolden(ctx, dir)
@@ -171,6 +171,92 @@ func errString(err error) string {
 	return err.Error()
 }
 
+// ai compare implements the minimal PLAN §8.3 A/B story: the ai_decisions
+// schema has no variant column (the [ai.experiments] config was not built),
+// so the two experiment keys are matched against prompt_ver or model and the
+// decisions are aggregated per (prompt_ver, model) over the period.
+func newAICompareCmd() *cobra.Command {
+	var days int
+	cmd := &cobra.Command{
+		Use:   "compare <expA> <expB>",
+		Short: "Compare two experiment keys (prompt_ver or model) over ai_decisions: needs-human rate, confidence, latency, cost",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			rt, err := Build(ctx, buildOpts())
+			if err != nil {
+				return exitErr("wiring: %v", err)
+			}
+			defer func() { _ = rt.Close() }() // command teardown
+			o := outFor(cmd)
+			if days < 1 {
+				return exitErr("--days должен быть ≥ 1")
+			}
+			since := time.Now().UTC().AddDate(0, 0, -(days - 1)).Format("2006-01-02")
+			groups, err := rt.DB.AIDecisionsExperimentGroups(ctx, since, [2]string{args[0], args[1]})
+			if err != nil {
+				return exitErr("%v", err)
+			}
+			if len(groups) == 0 {
+				o.printf("За период с %s нет ai_decisions для %q или %q\n", since, args[0], args[1])
+				return nil
+			}
+			type compareRow struct {
+				Experiment    string   `json:"experiment"`
+				PromptVer     string   `json:"prompt_ver"`
+				Model         string   `json:"model"`
+				Decisions     int      `json:"decisions"`
+				NeedsHumanPct float64  `json:"needs_human_pct"`
+				AvgConfidence *float64 `json:"avg_confidence,omitempty"`
+				AvgLatencyMS  float64  `json:"avg_latency_ms"`
+				CostUSD       float64  `json:"cost_usd"`
+			}
+			rows := make([]compareRow, 0, len(groups))
+			for _, g := range groups {
+				row := compareRow{
+					PromptVer:     g.PromptVer,
+					Model:         g.Model,
+					Decisions:     g.Decisions,
+					NeedsHumanPct: 100 * float64(g.NeedsHuman) / float64(g.Decisions),
+					AvgLatencyMS:  float64(g.LatencyMS) / float64(g.Decisions),
+					CostUSD:       g.CostUSD,
+				}
+				switch {
+				case g.PromptVer == args[0] || g.Model == args[0]:
+					row.Experiment = "A"
+				case g.PromptVer == args[1] || g.Model == args[1]:
+					row.Experiment = "B"
+				}
+				if g.ConfidenceN > 0 {
+					avg := g.ConfidenceSum / float64(g.ConfidenceN)
+					row.AvgConfidence = &avg
+				}
+				rows = append(rows, row)
+			}
+			if flags.json {
+				return o.printJSON(rows)
+			}
+			o.printf("Период: с %s (%d дн.)\n", since, days)
+			table := make([][]string, 0, len(rows))
+			for _, r := range rows {
+				conf := "-"
+				if r.AvgConfidence != nil {
+					conf = fmt.Sprintf("%.3f", *r.AvgConfidence)
+				}
+				table = append(table, []string{
+					r.Experiment, r.PromptVer, r.Model,
+					strconv.Itoa(r.Decisions), fmt.Sprintf("%.1f%%", r.NeedsHumanPct),
+					conf, fmt.Sprintf("%.0f", r.AvgLatencyMS), fmt.Sprintf("%.4f", r.CostUSD),
+				})
+			}
+			o.printTable([]string{"EXP", "PROMPT_VER", "MODEL", "N", "NEEDS_HUMAN", "CONFIDENCE", "LATENCY_MS", "COST_USD"}, table)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&days, "days", 7, "period length in days (UTC, counted back from today)")
+	return cmd
+}
+
 // goldenDir resolves the fixture catalog: $HHAUTO_GOLDEN_DIR, ./golden, or
 // the repo's embedded catalog when run from a source checkout.
 func goldenDir() string {
@@ -195,7 +281,7 @@ func newConfigValidateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate",
 		Short: "Load and validate hhauto.toml (fail-fast with the offending path)",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.Load(flags.configPath)
 			if err != nil {
 				return exitErr("config invalid: %v", err)
@@ -224,7 +310,7 @@ func newConfigTemplateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "template",
 		Short: "Print the full commented config template (docs/PLAN.md §5)",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			o := outFor(cmd)
 			o.printf("%s", configTemplate)
 			return nil
@@ -236,7 +322,7 @@ func newBackupCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "backup",
 		Short: "Backup the SQLite database (VACUUM INTO), keep 7 copies",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := LoadConfigOnly(flags.configPath)
 			if err != nil {
 				return exitErr("%v", err)
@@ -307,7 +393,7 @@ func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print the version",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			outFor(cmd).printf("hhauto %s (%s, %s)\n", buildVersion, buildCommit, buildDate)
 			return nil
 		},
@@ -318,7 +404,7 @@ func newDoctorCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
 		Short: "Environment diagnostics: config, disk, cookies, proxies, sessions, captcha, Chrome, AI",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			return runDoctor(ctx, outFor(cmd))
 		},
@@ -359,12 +445,10 @@ func runDoctor(ctx context.Context, o out) error {
 	}
 
 	// Cookie store backend.
-	backend := "-"
 	if ckStore, cerr := openCookieStore(cfg); cerr != nil {
 		add("cookies", "FAIL", cerr.Error())
 	} else {
-		backend = ckStore.Backend()
-		add("cookies", "OK", "backend: "+backend)
+		add("cookies", "OK", "backend: "+ckStore.Backend())
 	}
 
 	// Direct egress IP first (baseline for the proxy comparison).

@@ -21,22 +21,22 @@ const emptySearchPage = `<!doctype html><html><body><template id="HH-Lux-Initial
 func newFakeHH(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/applicant/settings", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/applicant/settings", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(settingsPage))
 	})
-	mux.HandleFunc("/shards/applicant/resumes", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/shards/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = w.Write([]byte(`{"resumes":[{"hash":"res-h1","title":"Go разработчик",` +
 			`"updatedAt":"2026-09-24T10:00:00Z",` +
 			`"status":{"id":"published","name":"Опубликовано"},` +
 			`"_attributes":{"isSearchable":true,"percent":95,"status":{"id":"published","name":"Опубликовано"}}}]}`))
 	})
-	mux.HandleFunc("/chatik/api/chats", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/chatik/api/chats", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = w.Write([]byte(`{"chats":{"items":[]},"chatsDisplayInfo":{}}`))
 	})
-	mux.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/search", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(emptySearchPage))
 	})

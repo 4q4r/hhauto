@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -29,7 +30,7 @@ func newRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run the engine until interrupted (--once: process due tasks now and exit)",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			opts := buildOpts()
 			opts.Profile = profile
 			opts.Feature = feature
@@ -42,7 +43,7 @@ func newRunCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			if once {
 				_, _, err := runOnce(ctx, rt, outFor(cmd))
 				return err
@@ -77,6 +78,29 @@ func newRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&account, "account", "", "restrict to one account id")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "force dry-run for this invocation")
 	return cmd
+}
+
+// stop arms the kill-switch file channel without touching the engine: a
+// running `hhauto run` polls <data_dir>/STOP and shuts down gracefully. It
+// reads only the config, so it works even when the engine is wedged.
+func newStopCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop",
+		Short: "Arm the kill switch: write <data_dir>/STOP so a running engine stops gracefully",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := LoadConfigOnly(flags.configPath)
+			if err != nil {
+				return exitErr("%v", err)
+			}
+			stopPath := engine.StopFilePath(cfg.General.DataDir)
+			note := "stop requested " + time.Now().UTC().Format(time.RFC3339) + "\n"
+			if werr := os.WriteFile(stopPath, []byte(note), 0o640); werr != nil {
+				return exitErr("write %s: %v", stopPath, werr)
+			}
+			outFor(cmd).printf("STOP-файл записан: %s\nРаботающий движок остановится при следующей проверке kill-switch (полл ≤1с, тик планировщика ≤30с).\n", stopPath)
+			return nil
+		},
+	}
 }
 
 // runOnce processes everything currently queued and exits: features seed
@@ -227,7 +251,7 @@ func newStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Account states, today's counters, open reviews, next scheduled runs",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			opts := buildOpts()
 			opts.Account = account
 			ctx := cmd.Context()
@@ -235,7 +259,7 @@ func newStatusCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			return showStatus(ctx, rt, outFor(cmd), account)
 		},
 	}
@@ -402,7 +426,7 @@ func newFunnelCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "funnel",
 		Short: "Daily funnel: scanned → passed → applied → stage skips",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if days <= 0 {
 				days = 7
 			}
@@ -411,7 +435,7 @@ func newFunnelCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			return showFunnel(ctx, rt, outFor(cmd), days)
 		},
 	}

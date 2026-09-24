@@ -641,7 +641,7 @@ func TestRateLimitBackoffRequeues(t *testing.T) {
 	})
 
 	var calls atomic.Int32
-	mustRegisterHandler(t, testKind, func(_ context.Context, tc *TaskContext, _ queue.Task) error {
+	mustRegisterHandler(t, testKind, func(_ context.Context, _ *TaskContext, _ queue.Task) error {
 		calls.Add(1)
 		return &hhapi.StatusError{Kind: hhapi.ErrRateLimited, StatusCode: 429}
 	})
@@ -671,7 +671,7 @@ func TestPanicIsolation(t *testing.T) {
 	h := newHarness(t, nil)
 
 	var second atomic.Int32
-	mustRegisterHandler(t, testKind, func(_ context.Context, tc *TaskContext, task queue.Task) error {
+	mustRegisterHandler(t, testKind, func(_ context.Context, _ *TaskContext, task queue.Task) error {
 		if strings.HasSuffix(task.DedupKey, "1") {
 			panic("boom: task handler exploded")
 		}
@@ -830,7 +830,7 @@ func TestGracefulDrainProcessesQueuedTask(t *testing.T) {
 	h1Started := make(chan struct{})
 	release1 := make(chan struct{})
 	var handled2 atomic.Int32
-	mustRegisterHandler(t, testKind, func(_ context.Context, tc *TaskContext, task queue.Task) error {
+	mustRegisterHandler(t, testKind, func(_ context.Context, _ *TaskContext, task queue.Task) error {
 		switch task.DedupKey {
 		case "one":
 			if !phase.CompareAndSwap(0, 1) {

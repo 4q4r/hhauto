@@ -441,6 +441,8 @@ func SetLadder(ctx context.Context, db *store.DB, accountID, chatikID string, st
 	return db.FeatureStateSet(ctx, FeatureName, accountID, "ladder:"+chatikID, fmt.Sprint(stage))
 }
 
+// ResetLadder rewinds the warmup ping ladder to zero for a chat (used when
+// the account answers and the warmup cycle restarts).
 func ResetLadder(ctx context.Context, db *store.DB, accountID, chatikID string) error {
 	return SetLadder(ctx, db, accountID, chatikID, 0)
 }

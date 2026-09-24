@@ -43,7 +43,7 @@ func (db *DB) SchedulesDue(ctx context.Context, now time.Time, limit int) ([]Sch
 	if err != nil {
 		return nil, fmt.Errorf("store: SchedulesDue: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
 
 	var out []Schedule
 	for rows.Next() {
@@ -102,7 +102,7 @@ func (db *DB) SchedulesListAll(ctx context.Context) ([]Schedule, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: SchedulesListAll: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
 
 	var out []Schedule
 	for rows.Next() {

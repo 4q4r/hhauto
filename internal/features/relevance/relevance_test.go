@@ -34,8 +34,8 @@ type fakeRunner struct {
 	input   string
 }
 
-func (r *fakeRunner) Run(ctx context.Context, accountID, entityType, entityID, runID string,
-	task ai.TaskName, input any) (json.RawMessage, ai.Decision, error) {
+func (r *fakeRunner) Run(_ context.Context, _, _, _, _ string,
+	_ ai.TaskName, input any) (json.RawMessage, ai.Decision, error) {
 	r.calls++
 	b, _ := json.Marshal(input)
 	r.input = string(b)

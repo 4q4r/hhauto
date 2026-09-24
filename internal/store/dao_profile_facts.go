@@ -34,7 +34,7 @@ func (db *DB) ProfileFactsAll(ctx context.Context, accountID string) ([]ProfileF
 	if err != nil {
 		return nil, fmt.Errorf("store: ProfileFactsAll: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
 
 	var out []ProfileFact
 	for rows.Next() {

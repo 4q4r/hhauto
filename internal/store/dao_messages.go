@@ -33,7 +33,7 @@ func (db *DB) MessagesHistory(ctx context.Context, chatID int64, limit int) ([]M
 	if err != nil {
 		return nil, fmt.Errorf("store: MessagesHistory: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
 
 	var out []Message
 	for rows.Next() {

@@ -51,7 +51,7 @@ func (db *DB) InterviewLinksListByAccount(ctx context.Context, accountID string)
 	if err != nil {
 		return nil, fmt.Errorf("store: InterviewLinksListByAccount: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
 
 	var out []InterviewLink
 	for rows.Next() {

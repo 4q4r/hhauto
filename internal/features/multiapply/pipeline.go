@@ -64,7 +64,7 @@ func (f *Feature) processVacancy(ctx context.Context, runID string, run config.R
 	bypass := bypassSet(flt.WhitelistBypass)
 
 	// F4: employer rating (skipped for whitelisted employers listing "F4").
-	if !(whitelisted && bypass[stageF4]) && flt.MinEmployerRating > 0 {
+	if (!whitelisted || !bypass[stageF4]) && flt.MinEmployerRating > 0 {
 		pass, reason := emplrating.New(f.opt.DB, api, f.log).
 			Pass(ctx, accountID, v.EmployerID, flt)
 		if !pass {
@@ -421,7 +421,7 @@ var errLetterNeedsHuman = errors.New("multiapply: cover letter needs human")
 // (TaskCoverLetter), falling back to the run's static template; the result
 // still passes through NoLinksRule at the call site.
 func (f *Feature) buildLetter(ctx context.Context, runID string, run config.Run, accountID string,
-	prof profile.Profile, v hhapi.Vacancy, resumeHash string,
+	prof profile.Profile, v hhapi.Vacancy, _ string,
 ) (string, error) {
 	if f.opt.Runner != nil {
 		raw, _, err := f.opt.Runner.Run(ctx, accountID, "vacancy",
@@ -602,7 +602,7 @@ func (f *Feature) bumpEmployer(ctx context.Context, accountID string, employerID
 	}
 }
 
-func employerKey(accountID string, employerID int64, day string) string {
+func employerKey(_ string, employerID int64, day string) string {
 	return "emp:" + strconv.FormatInt(employerID, 10) + ":" + day
 }
 

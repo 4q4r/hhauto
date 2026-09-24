@@ -256,7 +256,7 @@ func TestPacerWaitRespectsContext(t *testing.T) {
 	}
 }
 
-func TestPacerWaitConcurrentAccountsRaceFree(t *testing.T) {
+func TestPacerWaitConcurrentAccountsRaceFree(_ *testing.T) {
 	// Deterministic shared Rand across goroutines: all rnd access must be
 	// mutex-guarded (math/rand.Rand is not goroutine-safe).
 	p := NewPacer(pacingCfg("adaptive", "08:00-22:00", "1m-2m", 0, boolPtr(true)), rand.New(rand.NewSource(42)))

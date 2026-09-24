@@ -24,7 +24,7 @@ type OpenAIChatProvider struct {
 
 // NewOpenAIChatProvider builds the dialect adapter for one provider config.
 func NewOpenAIChatProvider(id string, cfg config.AIProvider, opts ...Option) (*OpenAIChatProvider, error) {
-	base, err := newBaseProvider(id, cfg, DialectOpenAIChat, providerDeps(opts2deps(opts)))
+	base, err := newBaseProvider(id, cfg, DialectOpenAIChat, opts2deps(opts))
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +94,7 @@ func (p *OpenAIChatProvider) chatBody(model string, req Request, withTemperature
 		w.Messages = append(w.Messages, chatWireMessage{Role: "system", Content: req.System})
 	}
 	for _, m := range req.Messages {
-		w.Messages = append(w.Messages, chatWireMessage{Role: m.Role, Content: m.Content})
+		w.Messages = append(w.Messages, chatWireMessage(m))
 	}
 	if req.MaxOutputTokens > 0 {
 		w.MaxCompletionTokens = req.MaxOutputTokens
@@ -178,7 +178,7 @@ func parseChatReply(base baseProvider, model string, body []byte, start time.Tim
 }
 
 // Complete implements Provider; use NewBoundProvider to fix the model name.
-func (p *OpenAIChatProvider) Complete(ctx context.Context, req Request) (Response, error) {
+func (p *OpenAIChatProvider) Complete(_ context.Context, _ Request) (Response, error) {
 	return Response{}, fmt.Errorf("ai: openai-chat provider %q is not bound to a model; wrap it with NewBoundProvider", p.base.id)
 }
 

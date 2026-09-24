@@ -38,7 +38,7 @@ func (db *DB) ResumesListByAccount(ctx context.Context, accountID string) ([]Res
 	if err != nil {
 		return nil, fmt.Errorf("store: ResumesListByAccount: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
 
 	var out []Resume
 	for rows.Next() {

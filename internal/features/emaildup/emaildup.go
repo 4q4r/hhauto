@@ -1,3 +1,6 @@
+// Package emaildup implements the duplicate-email follow-up feature: when an
+// employer contact address is already known, a short reminder email is sent
+// once per (employer, vacancy) with dedup by the store intent keys.
 package emaildup
 
 import (
@@ -104,7 +107,7 @@ func (f *Feature) Enabled() bool { return f.Cfg.Features.EmailDupEnabled }
 // RegisterTasks implements features.Feature: emaildup is event-driven —
 // contacts (WF6) enqueues KindSendEmail when an email is found and the
 // auto-trigger is enabled. Nothing to seed on a schedule.
-func (f *Feature) RegisterTasks(ctx context.Context, q queue.Queue, _ *scheduler.Registry) error {
+func (f *Feature) RegisterTasks(_ context.Context, q queue.Queue, _ *scheduler.Registry) error {
 	f.Queue = q
 	return nil
 }
@@ -321,7 +324,7 @@ func (f *Feature) attachResume() bool {
 }
 
 // limitReached consults the metrics counters for the configured hour/day caps.
-func (f *Feature) limitReached(ctx context.Context, accountID string) (bool, error) {
+func (f *Feature) limitReached(ctx context.Context, _ string) (bool, error) {
 	day := kit11.Day(f.now())
 	snap, err := f.DB.MetricsSnapshot(ctx, day)
 	if err != nil {

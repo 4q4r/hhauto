@@ -28,7 +28,7 @@ type fakeAPI struct {
 	calls   int
 }
 
-func (f *fakeAPI) ListResumes(ctx context.Context) ([]hhapi.Resume, error) {
+func (f *fakeAPI) ListResumes(_ context.Context) ([]hhapi.Resume, error) {
 	f.calls++
 	if f.err != nil {
 		return nil, f.err

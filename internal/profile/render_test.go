@@ -29,7 +29,7 @@ func TestRenderForPromptAllSections(t *testing.T) {
 		"В: Вилка?\nО: от 250000 RUR",
 	)
 	// Canonical order regardless of map iteration.
-	if i1, i2, i3 := strings.Index(got, "ПРОФИЛЬ КАНДИДАТА"), strings.Index(got, "### РЕЗЮМЕ"), strings.Index(got, "ФАКТЫ ПОЛЬЗОВАТЕЛЯ"); !(i1 < i2 && i2 < i3) {
+	if i1, i2, i3 := strings.Index(got, "ПРОФИЛЬ КАНДИДАТА"), strings.Index(got, "### РЕЗЮМЕ"), strings.Index(got, "ФАКТЫ ПОЛЬЗОВАТЕЛЯ"); i1 >= i2 || i2 >= i3 {
 		t.Fatalf("sections out of canonical order:\n%s", got)
 	}
 }

@@ -24,8 +24,10 @@ type Registry struct {
 	features []Feature
 }
 
+// Add registers a constructed feature.
 func (r *Registry) Add(f Feature) { r.features = append(r.features, f) }
 
+// All returns every constructed feature, enabled or not.
 func (r *Registry) All() []Feature { return r.features }
 
 // Enabled returns only enabled features (engine drives these).

@@ -122,7 +122,7 @@ func newAccountAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add",
 		Short: "Add an account (optionally importing cookies from cookies.txt or a JSON export)",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if id == "" {
 				return exitErr("--id is required")
 			}
@@ -185,7 +185,7 @@ func newAccountListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List configured accounts with their store status",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := LoadConfigOnly(flags.configPath)
 			if err != nil {
 				return exitErr("%v", err)
@@ -231,7 +231,7 @@ func newAccountCheckCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			if _, ok := rt.Cfg.Accounts[id]; !ok {
 				return exitErr("аккаунт %q не найден", id)
 			}

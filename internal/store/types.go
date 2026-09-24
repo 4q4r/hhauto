@@ -5,6 +5,7 @@ import "time"
 // Domain structs. Nullable columns map to pointer fields; empty-string
 // status/state fields fall back to the schema DEFAULT on insert.
 
+// Account is a configured hh.ru account row and its session health.
 type Account struct {
 	ID          string
 	DisplayName string
@@ -15,6 +16,7 @@ type Account struct {
 	UpdatedAt   time.Time // filled on insert/update
 }
 
+// Resume is a cached resume snapshot (write-through from the live hh API).
 type Resume struct {
 	ID         int64 // assigned on insert, unchanged on conflict
 	AccountID  string
@@ -25,6 +27,7 @@ type Resume struct {
 	UpdatedAt  time.Time
 }
 
+// VacancySeen deduplicates vacancies per account+vacancy (UNIQUE).
 type VacancySeen struct {
 	AccountID   string
 	VacancyID   int64
@@ -33,6 +36,7 @@ type VacancySeen struct {
 	Meta        string
 }
 
+// Application is one apply attempt with its dedup key and funnel status.
 type Application struct {
 	ID            int64 // assigned on insert
 	AccountID     string
@@ -49,6 +53,7 @@ type Application struct {
 	AppliedAt     *time.Time
 }
 
+// Chat tracks one chatik conversation and its chatops state machine.
 type Chat struct {
 	ID                  int64 // assigned on insert, unchanged on conflict
 	AccountID           string
@@ -65,6 +70,7 @@ type Chat struct {
 	UpdatedAt           time.Time
 }
 
+// Message is a single chat message (in or out), unique per message_id.
 type Message struct {
 	ID        int64 // assigned on insert
 	ChatID    int64
@@ -76,6 +82,7 @@ type Message struct {
 	CreatedAt time.Time // filled on insert
 }
 
+// Contact is one collected employer contact (card, chat or email source).
 type Contact struct {
 	ID          int64 // assigned on insert, unchanged on conflict
 	AccountID   string
@@ -90,6 +97,7 @@ type Contact struct {
 	CollectedAt time.Time
 }
 
+// Assessment is a detected screening test and its lifecycle.
 type Assessment struct {
 	ID          int64 // assigned on insert
 	AccountID   string
@@ -104,6 +112,7 @@ type Assessment struct {
 	FinishedAt  *time.Time
 }
 
+// InterviewLink is a detected interview link from a chat.
 type InterviewLink struct {
 	ID         int64 // assigned on insert, unchanged on conflict
 	AccountID  string
@@ -114,6 +123,7 @@ type InterviewLink struct {
 	DetectedAt time.Time
 }
 
+// PingJob is a scheduled warm-up follow-up ping with attempt accounting.
 type PingJob struct {
 	ID          int64
 	AccountID   string
@@ -126,6 +136,7 @@ type PingJob struct {
 	SentAt      *time.Time
 }
 
+// AIDecision is the audit ledger row for one AI run (model, prompt, usage, cost).
 type AIDecision struct {
 	ID          string    // ULID, filled when empty
 	CreatedAt   time.Time // filled when zero
@@ -150,6 +161,7 @@ type AIDecision struct {
 	Outcome     string  // "" -> 'pending'
 }
 
+// Schedule is one persisted schedule row (next_run survives restarts).
 type Schedule struct {
 	ID        string
 	AccountID string
@@ -160,6 +172,7 @@ type Schedule struct {
 	UpdatedAt time.Time
 }
 
+// ReviewItem is an operator-review task surfaced by the engine.
 type ReviewItem struct {
 	ID         int64 // assigned on insert
 	AccountID  string
@@ -172,6 +185,7 @@ type ReviewItem struct {
 	ResolvedAt *time.Time
 }
 
+// EmployerRating is a cached employer rating snapshot for filtering.
 type EmployerRating struct {
 	EmployerID   int64
 	ScoreAll     float64
@@ -182,6 +196,7 @@ type EmployerRating struct {
 	FetchedAt    time.Time
 }
 
+// OutboxItem is a webhook payload pending delivery/redelivery.
 type OutboxItem struct {
 	ID          int64 // assigned on insert
 	EndpointID  string
@@ -192,6 +207,7 @@ type OutboxItem struct {
 	CreatedAt   time.Time // filled on insert
 }
 
+// CaptchaEvent records one captcha solve attempt and its latency.
 type CaptchaEvent struct {
 	ID         int64 // assigned on insert
 	AccountID  string
@@ -202,6 +218,7 @@ type CaptchaEvent struct {
 	CreatedAt  time.Time
 }
 
+// ProfileFact is one user-supplied Q&A fact used in AI prompts.
 type ProfileFact struct {
 	AccountID string
 	Question  string

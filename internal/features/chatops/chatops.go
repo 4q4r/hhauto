@@ -373,7 +373,9 @@ func (f *Feature) syncChat(ctx context.Context, api hhapi.HHAPI, accountID strin
 			if err := f.DB.ChatsUpdateState(ctx, accountID, c.ID, stateWarmupDue, nil); err != nil {
 				return fmt.Errorf("chatops: mark warmup_due: %w", err)
 			}
-			mirror = f.setMirror(ctx, accountID, c.ID, stateWarmupDue)
+			// Last read/write of the local mirror: the store state set by
+			// setMirror is what the warmup consumer sees.
+			_ = f.setMirror(ctx, accountID, c.ID, stateWarmupDue)
 		}
 	}
 	return nil
@@ -453,7 +455,7 @@ func (f *Feature) route(ctx context.Context, api hhapi.HHAPI, accountID string, 
 		f.handleOffer(ctx, accountID, chat, msg)
 	default:
 		// spam / other: no automation
-		f.DB.MetricsIncr(ctx, "chatops."+v.Category, kit11.Day(f.now()))
+		_ = f.DB.MetricsIncr(ctx, "chatops."+v.Category, kit11.Day(f.now()))
 	}
 }
 
@@ -833,7 +835,7 @@ func (f *Feature) leaveGated(ctx context.Context, accountID string, chat store.C
 // maybeLeave executes a scheduled leave once it is due. It runs while the
 // chat still appears in ListChats, which doubles as the RECONCILE signal for
 // an ambiguous prior attempt (still listed = still a participant).
-func (f *Feature) maybeLeave(ctx context.Context, api hhapi.HHAPI, accountID string, c hhapi.Chat, mirror string) error {
+func (f *Feature) maybeLeave(ctx context.Context, api hhapi.HHAPI, accountID string, c hhapi.Chat, _ string) error {
 	val, ok, err := f.DB.FeatureStateGet(ctx, featureName, accountID, "leave:"+c.ID)
 	if err != nil || !ok || val == "" || val == "done" || val == "off" || val == "failed" {
 		return err
@@ -888,11 +890,11 @@ func (f *Feature) maybeLeave(ctx context.Context, api hhapi.HHAPI, accountID str
 		text := strings.ReplaceAll(tpl, "{employer}", c.EmployerName)
 		outcome, ferr := f.sendWithIntent(ctx, api, accountID, c.ID,
 			messageIntentKey(accountID, c.ID, "leave-farewell"), text)
+		// An ambiguous or failed farewell is not fatal: still leave, the
+		// farewell is cosmetic.
+		_ = outcome
 		if ferr != nil {
 			f.Log.Warn("chatops: farewell send failed", "chat", c.ID, "err", ferr)
-		}
-		if outcome == sendAmbiguous || outcome == sendFailed {
-			// Still leave: the farewell is cosmetic.
 		}
 	}
 

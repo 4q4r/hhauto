@@ -1,5 +1,5 @@
-// Typed in-process task queue: per-account FIFO with priority, queued-scope
-// dedup, ULIDs and drain-on-close.
+// Package queue implements the typed in-process task queue: per-account
+// FIFO with priority, queued-scope dedup, ULIDs and drain-on-close.
 //
 // Wake-up design: each account has a `changed` broadcast channel that is
 // closed and replaced under the account lock on every enqueue and on close.

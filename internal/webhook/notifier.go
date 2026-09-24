@@ -40,6 +40,8 @@ var _ Notifier = (*notifier)(nil)
 // proxy_ref) are disabled with an error log instead of failing startup. A
 // nil outbox keeps failed deliveries in memory only; a nil logger falls
 // back to slog.Default.
+//
+//nolint:revive // sealed impl: consumers use the Notifier interface; the concrete type is package-private
 func New(endpoints []config.Webhook, proxyReg proxy.Registry, outbox Outbox, log *slog.Logger) *notifier {
 	if log == nil {
 		log = slog.Default()

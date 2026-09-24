@@ -8,8 +8,11 @@ import (
 	"time"
 )
 
+// TaskKind is the stable identifier of one task family; features define the
+// payload shapes behind their kinds.
 type TaskKind string
 
+// Task kinds registered by the CLI wiring (T13) and their features.
 const (
 	KindLift            TaskKind = "lift"
 	KindSearch          TaskKind = "search"
@@ -22,9 +25,11 @@ const (
 	KindClassify        TaskKind = "classify"
 )
 
-// Priority: lower value runs first (chat deadlines outrank applies).
+// Priority orders tasks within an account: lower value runs first (chat
+// deadlines outrank applies).
 type Priority int
 
+// Priority levels, one per task family.
 const (
 	PrioHealth Priority = 0
 	PrioReview Priority = 1
@@ -35,6 +40,7 @@ const (
 	PrioLift   Priority = 6
 )
 
+// Task is one queued unit of work for a single account.
 type Task struct {
 	ID        string // ULID
 	AccountID string
@@ -46,6 +52,7 @@ type Task struct {
 	Payload   any // typed payload per Kind, defined by feature packages
 }
 
+// Queue is the in-process per-account task queue the engine consumes.
 type Queue interface {
 	Enqueue(ctx context.Context, t Task) error // dedup: duplicate DedupKey is a no-op
 	Dequeue(ctx context.Context, accountID string) (Task, bool)

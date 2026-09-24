@@ -45,7 +45,7 @@ func newVacanciesSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search",
 		Short: "Run the source + filter cascade WITHOUT applying: table of vacancy, employer, score/band, stage/skip-reason",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if profileID == "" {
 				return exitErr("--profile is required")
 			}
@@ -62,7 +62,7 @@ func newVacanciesSearchCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			run, ok := rt.Cfg.Runs[profileID]
 			if !ok {
 				return exitErr("run profile %q не найден", profileID)
@@ -397,7 +397,7 @@ func newResumeListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List stored resume snapshots",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			opts := buildOpts()
 			opts.Account = account
 			ctx := cmd.Context()
@@ -405,7 +405,7 @@ func newResumeListCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			o := outFor(cmd)
 			type row struct {
 				Account string `json:"account"`
@@ -464,7 +464,7 @@ func newResumeLiftCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			if len(rt.Cfg.Accounts) == 0 {
 				return exitErr("аккаунтов нет")
 			}
@@ -512,7 +512,7 @@ func newChatsListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List live chats (optionally filtered by the chatops state mirror)",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			opts := buildOpts()
 			opts.Account = account
 			ctx := cmd.Context()
@@ -520,7 +520,7 @@ func newChatsListCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			o := outFor(cmd)
 			type row struct {
 				Account  string `json:"account"`
@@ -606,7 +606,7 @@ func newChatsShowCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			id, err := requireSingleAccount(rt, account)
 			if err != nil {
 				return exitErr("%v", err)
@@ -655,7 +655,7 @@ func newChatsReplyCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			id, err := requireSingleAccount(rt, account)
 			if err != nil {
 				return exitErr("%v", err)
@@ -709,7 +709,7 @@ func newChatsLeaveCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			id, err := requireSingleAccount(rt, account)
 			if err != nil {
 				return exitErr("%v", err)
@@ -750,7 +750,7 @@ func newContactsExportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "export",
 		Short: "Export collected contacts as CSV or JSON",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if format != "csv" && format != "json" {
 				return exitErr("--format must be csv or json")
 			}
@@ -761,7 +761,7 @@ func newContactsExportCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			o := outFor(cmd)
 			ids := make([]string, 0, len(rt.Cfg.Accounts))
 			for id := range rt.Cfg.Accounts {
@@ -862,7 +862,7 @@ func newTestsListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List test assessments",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			opts := buildOpts()
 			opts.Account = account
 			ctx := cmd.Context()
@@ -870,7 +870,7 @@ func newTestsListCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			rows, err := listAssessments(ctx, rt, account)
 			if err != nil {
 				return exitErr("%v", err)
@@ -930,7 +930,7 @@ func newTestsShowCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			a, acc, err := findAssessment(ctx, rt, account, args[0])
 			if err != nil {
 				return exitErr("%v", err)
@@ -992,7 +992,7 @@ func newTestsOpenCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			a, _, err := findAssessment(ctx, rt, account, args[0])
 			if err != nil {
 				return exitErr("%v", err)
@@ -1022,7 +1022,7 @@ func newTestsSolveCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			a, acc, err := findAssessment(ctx, rt, account, args[0])
 			if err != nil {
 				return exitErr("%v", err)
@@ -1090,7 +1090,7 @@ func newReviewListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List open review items",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			_ = open // the store contract exposes open items only
 			opts := buildOpts()
 			opts.Account = account
@@ -1099,7 +1099,7 @@ func newReviewListCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			rows, err := reviewRows(ctx, rt, account)
 			if err != nil {
 				return exitErr("%v", err)
@@ -1138,7 +1138,7 @@ func newReviewShowCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			rows, err := reviewRows(ctx, rt, account)
 			if err != nil {
 				return exitErr("%v", err)
@@ -1191,7 +1191,7 @@ func newReviewResolveCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			if note == "" {
 				note = "resolved via cli"
 			}
@@ -1224,7 +1224,7 @@ func newReviewIgnoreCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("wiring: %v", err)
 			}
-			defer rt.Close()
+			defer func() { _ = rt.Close() }() // command teardown
 			if err := review.New(rt.Webhooks, rt.Log).Ignore(ctx, rt.DB, id); err != nil {
 				return exitErr("%v", err)
 			}
@@ -1247,7 +1247,7 @@ func newProfileEditCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "edit",
 		Short: "Open profile.md in $EDITOR (VISUAL/EDITOR, fallback vi)",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := LoadConfigOnly(flags.configPath)
 			if err != nil {
 				return exitErr("%v", err)

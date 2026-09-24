@@ -26,8 +26,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/net/html/charset"
-
 	"hhauto/internal/ai"
 	"hhauto/internal/config"
 	"hhauto/internal/features"
@@ -112,7 +110,7 @@ func (s *Solver) Name() string { return "testsolve" }
 func (s *Solver) Enabled() bool { return s.Cfg.Features.TestSolve.Enabled }
 
 // RegisterTasks implements features.Feature.
-func (s *Solver) RegisterTasks(ctx context.Context, q queue.Queue, _ *scheduler.Registry) error {
+func (s *Solver) RegisterTasks(_ context.Context, q queue.Queue, _ *scheduler.Registry) error {
 	s.Queue = q
 	return nil
 }
@@ -603,16 +601,6 @@ func setBrowserUA(req *http.Request) {
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
 }
 
-// readBody reads the response body, decoding to UTF-8 when a non-UTF-8
-// charset is declared (legacy form pages sometimes serve windows-1251).
-func readBody(resp *http.Response) ([]byte, error) {
-	r, err := charset.NewReader(resp.Body, resp.Header.Get("Content-Type"))
-	if err != nil {
-		return io.ReadAll(resp.Body)
-	}
-	return io.ReadAll(r)
-}
-
 func (s *Solver) log() *slog.Logger {
 	if s.Log != nil {
 		return s.Log
@@ -625,14 +613,6 @@ func (s *Solver) now() time.Time {
 		return s.Now()
 	}
 	return time.Now()
-}
-
-func hostOf(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return ""
-	}
-	return strings.ToLower(u.Hostname())
 }
 
 // hostPortOf is hostOf but keeps an explicit port ("example.com:8443").

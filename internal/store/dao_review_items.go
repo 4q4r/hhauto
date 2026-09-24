@@ -37,7 +37,7 @@ func (db *DB) ReviewItemsOpen(ctx context.Context, accountID string, limit int) 
 	if err != nil {
 		return nil, fmt.Errorf("store: ReviewItemsOpen: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
 
 	var out []ReviewItem
 	for rows.Next() {

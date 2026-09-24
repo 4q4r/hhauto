@@ -33,6 +33,7 @@
 // we can zero them, so wiping is best-effort hardening, not a guarantee — a
 // process memory snapshot could still contain cookie values. This is an
 // accepted, documented limitation of handling secrets in a GC language.
+
 package cookies
 
 import (

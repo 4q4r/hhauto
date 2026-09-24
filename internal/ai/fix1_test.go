@@ -40,7 +40,7 @@ func TestMemoryCacheTTLExpiryInjectedClock(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(1700000000, 0)
 	c.now = func() time.Time { return now }
-	c.Set(ctx, "k", []byte("x"), 30*time.Millisecond)
+	_ = c.Set(ctx, "k", []byte("x"), 30*time.Millisecond) // seed; the hit/miss assertions below fail if this errors
 	if _, ok, _ := c.Get(ctx, "k"); !ok {
 		t.Fatal("fresh entry must hit")
 	}
@@ -119,8 +119,8 @@ func TestRunLedgerCachedRecordZeroCost(t *testing.T) {
 			"m1": {InputPerMTok: 3, OutputPerMTok: 15},
 		}}))
 	ctx := context.Background()
-	r.Run(ctx, "a", "vacancy", "1", "r1", TaskVacancyScoring, map[string]any{"x": 1})
-	r.Run(ctx, "a", "vacancy", "1", "r2", TaskVacancyScoring, map[string]any{"x": 1})
+	_, _, _ = r.Run(ctx, "a", "vacancy", "1", "r1", TaskVacancyScoring, map[string]any{"x": 1}) // cache warm-up; the ledger assertions below verify both runs
+	_, _, _ = r.Run(ctx, "a", "vacancy", "1", "r2", TaskVacancyScoring, map[string]any{"x": 1})
 	if len(ledger.recs) != 2 {
 		t.Fatalf("records = %d", len(ledger.recs))
 	}
@@ -139,7 +139,7 @@ type gatedProvider struct {
 	calls   int
 }
 
-func (g *gatedProvider) Complete(ctx context.Context, req Request) (Response, error) {
+func (g *gatedProvider) Complete(_ context.Context, _ Request) (Response, error) {
 	g.mu.Lock()
 	g.calls++
 	g.mu.Unlock()

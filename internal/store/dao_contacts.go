@@ -44,7 +44,7 @@ func (db *DB) ContactsByEmployer(ctx context.Context, accountID string, employer
 	if err != nil {
 		return nil, fmt.Errorf("store: ContactsByEmployer: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
 	return scanContacts(rows)
 }
 
@@ -58,7 +58,7 @@ func (db *DB) ContactsExport(ctx context.Context, accountID string) ([]Contact, 
 	if err != nil {
 		return nil, fmt.Errorf("store: ContactsExport: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
 	return scanContacts(rows)
 }
 

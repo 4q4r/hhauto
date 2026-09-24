@@ -50,7 +50,7 @@ func TestIntermediateHopCookiesAbsorbed(t *testing.T) {
 		target := env.srv2.URL + "/search/vacancy?" + r.URL.RawQuery
 		http.Redirect(w, r, target, http.StatusFound)
 	})
-	env.serve(env.mux2, "2", "GET", "/search/vacancy", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux2, "2", "GET", "/search/vacancy", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(readFixture(t, "search.html"))
 	})
 	c := env.client()
@@ -102,7 +102,7 @@ func TestCookieBookXSRFHostPriority(t *testing.T) {
 
 func Test429RetryAfterBeyondCapStopsRetrying(t *testing.T) {
 	env := newTestEnv(t)
-	env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "31")
 		w.WriteHeader(http.StatusTooManyRequests)
 	})

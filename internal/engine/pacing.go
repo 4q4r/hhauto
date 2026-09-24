@@ -229,6 +229,8 @@ type pacer struct {
 // behaves as adaptive; an unparsable ActiveWindow means always-active;
 // an unparsable Jitter is ignored. NightPause is a *bool (R1): nil means
 // enabled, an explicit false is respected.
+//
+//nolint:revive // sealed impl: Wait (Pacer) is the public surface; the concrete type carries internal/test knobs
 func NewPacer(cfg config.Pacing, rnd *rand.Rand) *pacer {
 	if rnd == nil {
 		rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -305,7 +307,7 @@ func (p *pacer) nextDelay(accountID string) time.Duration {
 	return p.nextDelayLocked(a, accountID)
 }
 
-func (p *pacer) nextDelayLocked(a *accountPace, accountID string) time.Duration {
+func (p *pacer) nextDelayLocked(a *accountPace, _ string) time.Duration {
 	now := p.now()
 
 	// Night pause dominates every mode: outside the active window the

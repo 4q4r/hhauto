@@ -24,17 +24,20 @@ type Config struct {
 	Schedule Schedule                   `toml:"schedule"`
 }
 
+// General carries deployment-wide paths and the dry-run master switch.
 type General struct {
 	DataDir  string `toml:"data_dir"`
 	Timezone string `toml:"timezone"` // IANA name, default for schedules
 	DryRun   bool   `toml:"dry_run"`
 }
 
+// Storage points at the SQLite database file.
 type Storage struct {
 	Path          string `toml:"path"`
 	BusyTimeoutMS int    `toml:"busy_timeout_ms"`
 }
 
+// Log configures the slog logger (level, format, optional file).
 type Log struct {
 	Level         string `toml:"level"`
 	Format        string `toml:"format"` // text | json
@@ -42,12 +45,14 @@ type Log struct {
 	RedactSecrets bool   `toml:"redact_secrets"` // validator forbids false
 }
 
+// API selects the hh surface kind and its endpoint map.
 type API struct {
 	Kind      string       `toml:"kind"` // "web" | "developer"
 	Endpoints APIEndpoints `toml:"endpoints"`
 	Developer DeveloperAPI `toml:"developer"`
 }
 
+// APIEndpoints holds the base URLs plus per-endpoint overrides.
 type APIEndpoints struct {
 	Site       string            `toml:"site"`
 	Chatik     string            `toml:"chatik"`
@@ -55,11 +60,13 @@ type APIEndpoints struct {
 	Override   map[string]string `toml:"override"` // endpoint name -> full URL
 }
 
+// DeveloperAPI configures the hh developer-API surface (token via env).
 type DeveloperAPI struct {
 	BaseURL  string `toml:"base_url"`
 	TokenEnv string `toml:"token_env"`
 }
 
+// CaptchaProvider is one captcha-solving service endpoint.
 type CaptchaProvider struct {
 	Protocol string `toml:"protocol"` // "2captcha" | "anticaptcha"
 	BaseURL  string `toml:"base_url"`
@@ -69,6 +76,7 @@ type CaptchaProvider struct {
 	TimeoutS int    `toml:"timeout_s"`
 }
 
+// Proxy is one outbound proxy definition.
 type Proxy struct {
 	Type    string `toml:"type"` // socks5 | http | https
 	Host    string `toml:"host"`
@@ -78,6 +86,7 @@ type Proxy struct {
 	Pass    string `toml:"pass"` // discouraged
 }
 
+// Account is one hh.ru account: identity, transport and rate knobs.
 type Account struct {
 	DisplayName   string            `toml:"display_name"`
 	CookieFile    string            `toml:"cookie_file"`
@@ -91,6 +100,7 @@ type Account struct {
 	ProfileFile   string            `toml:"profile_file"`    // overrides global profile.md
 }
 
+// AI aggregates the LLM subsystem: budgets, providers, models, tasks, pricing.
 type AI struct {
 	DailyBudgetTokens int                   `toml:"daily_budget_tokens"` // 0 = unlimited
 	DailyBudgetUSD    float64               `toml:"daily_budget_usd"`
@@ -101,6 +111,7 @@ type AI struct {
 	Pricing           map[string]AIPricing  `toml:"pricing"`
 }
 
+// AIProvider is one LLM API endpoint (one of the three dialects).
 type AIProvider struct {
 	Dialect   string `toml:"dialect"` // openai-chat | openai-responses | anthropic-messages
 	BaseURL   string `toml:"base_url"`
@@ -108,6 +119,7 @@ type AIProvider struct {
 	TimeoutS  int    `toml:"timeout_seconds"`
 }
 
+// AIModel binds a model profile (params) to a provider.
 type AIModel struct {
 	Provider         string  `toml:"provider"`
 	Model            string  `toml:"model"`
@@ -117,6 +129,7 @@ type AIModel struct {
 	FallbackModelRef string  `toml:"fallback"`
 }
 
+// AITask wires one AI task to a model profile and its prompt.
 type AITask struct {
 	ModelProfile  string `toml:"model_profile"`
 	PromptInline  string `toml:"inline"`
@@ -126,11 +139,13 @@ type AITask struct {
 	AutoSend      bool   `toml:"auto_send"`
 }
 
+// AIPricing is the per-million-token price used for cost accounting.
 type AIPricing struct {
 	InputPerMTok  float64 `toml:"input_per_mtok_usd"`
 	OutputPerMTok float64 `toml:"output_per_mtok_usd"`
 }
 
+// Features toggles every automation module.
 type Features struct {
 	AutoLift         AutoLift        `toml:"auto_lift"`
 	MultiApply       MultiApply      `toml:"multiapply"`
@@ -144,6 +159,7 @@ type Features struct {
 	WebsocketPush    bool            `toml:"websocket_push"`
 }
 
+// AutoLift configures resume auto-raising.
 type AutoLift struct {
 	Enabled        bool   `toml:"enabled"`
 	PerDay         int    `toml:"per_day"`          // default 6
@@ -151,6 +167,7 @@ type AutoLift struct {
 	Respect4hTimer *bool  `toml:"respect_4h_timer"` // default true; explicit false respected
 }
 
+// MultiApply configures the apply pipeline.
 type MultiApply struct {
 	Enabled            bool `toml:"enabled"`
 	AIFilter           bool `toml:"ai_filter"`
@@ -160,6 +177,7 @@ type MultiApply struct {
 	DedupNativeResp    bool `toml:"dedup_native_autoresponse"`
 }
 
+// TestSolve configures screening-test detection and filling.
 type TestSolve struct {
 	Enabled       bool     `toml:"enabled"`
 	SolveInternal bool     `toml:"solve_internal"`
@@ -169,6 +187,7 @@ type TestSolve struct {
 	SubmitPolicy  string   `toml:"submit_policy"` // auto | human
 }
 
+// ChatOps configures chat reading, replies and auto-leave.
 type ChatOps struct {
 	Enabled           bool     `toml:"enabled"`
 	AutoReply         bool     `toml:"auto_reply_enabled"`
@@ -180,11 +199,13 @@ type ChatOps struct {
 	QABaseEnabled     bool     `toml:"qa_base"`
 }
 
+// InterviewDetect configures interview-link detection in chats.
 type InterviewDetect struct {
 	Enabled     bool     `toml:"enabled"`
 	LinkDomains []string `toml:"link_domains"`
 }
 
+// Contacts configures employer-contact collection.
 type Contacts struct {
 	Enabled      bool `toml:"enabled"`
 	FromCard     bool `toml:"from_card"`
@@ -192,6 +213,7 @@ type Contacts struct {
 	AutoEmailDup bool `toml:"auto_trigger_emaildup"`
 }
 
+// Warmup configures the recruiter follow-up ping ladder.
 type Warmup struct {
 	Enabled        bool     `toml:"enabled"`
 	SilenceHours   int      `toml:"silence_hours"`
@@ -203,10 +225,12 @@ type Warmup struct {
 	RespectWeekend *bool    `toml:"respect_weekend"` // default true; explicit false respected
 }
 
+// Relevance carries the global relevance threshold.
 type Relevance struct {
 	MinScore int `toml:"min_match_score"`
 }
 
+// Pacing shapes per-account mutation timing (window, mode, jitter).
 type Pacing struct {
 	ActiveWindow string `toml:"active_window"` // "08:00-22:00"
 	Mode         string `toml:"mode"`          // adaptive | uniform | burst
@@ -215,6 +239,7 @@ type Pacing struct {
 	Jitter       string `toml:"jitter"`
 }
 
+// Webhook is one notification endpoint (raw/telegram/discord).
 type Webhook struct {
 	URL       string   `toml:"url"`
 	Preset    string   `toml:"preset"` // raw | telegram | discord
@@ -225,6 +250,7 @@ type Webhook struct {
 	ChatID    string   `toml:"chat_id"` // telegram preset target
 }
 
+// Run is one search-and-apply profile: query, windows, filters, letter.
 type Run struct {
 	Enabled           bool             `toml:"enabled"`
 	Account           string           `toml:"account"`
@@ -240,12 +266,14 @@ type Run struct {
 	AIFilterOverrides AIFilterOverride `toml:"ai_filter_overrides"`
 }
 
+// Window is one schedule time window inside a run profile.
 type Window struct {
 	TZ   string   `toml:"tz"`
 	Time []string `toml:"time"`
 	Days []string `toml:"days"`
 }
 
+// RunFilters is the native server-side vacancy filter set.
 type RunFilters struct {
 	SalaryFrom        int      `toml:"salary_from"`
 	SalaryTo          int      `toml:"salary_to"`
@@ -270,15 +298,18 @@ type RunFilters struct {
 	NoReviewsPolicy   string   `toml:"no_reviews_policy"` // allow | skip | human
 }
 
+// AIFilterOverride tweaks the AI relevance filter for one run.
 type AIFilterOverride struct {
 	MinScore          int    `toml:"min_score"`
 	ExtraInstructions string `toml:"extra_instructions"`
 }
 
+// Review configures the operator-review SLA.
 type Review struct {
 	SLADefaultHours int `toml:"sla_hours_default"`
 }
 
+// Forms configures external test-form filling.
 type Forms struct {
 	AllowedDomains       []string `toml:"allowed_domains"`
 	Mode                 string   `toml:"mode"` // draft_only | headless
@@ -287,6 +318,7 @@ type Forms struct {
 	PageTimeoutSec       int      `toml:"page_timeout_sec"`
 }
 
+// Email configures the follow-up email sender.
 type Email struct {
 	SMTPHost        string `toml:"smtp_host"`
 	SMTPPort        int    `toml:"smtp_port"`
@@ -303,6 +335,7 @@ type Email struct {
 	PerEmployerOnce *bool  `toml:"per_employer_once"` // default true; explicit false respected
 }
 
+// Schedule configures engine-wide scheduling behavior.
 type Schedule struct {
 	JitterMinutes   int    `toml:"jitter_minutes"`
 	MissedRunPolicy string `toml:"missed_run_policy"` // skip | run_once

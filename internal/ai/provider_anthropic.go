@@ -29,7 +29,7 @@ type AnthropicProvider struct {
 
 // NewAnthropicProvider builds the dialect adapter for one provider config.
 func NewAnthropicProvider(id string, cfg config.AIProvider, opts ...Option) (*AnthropicProvider, error) {
-	base, err := newBaseProvider(id, cfg, DialectAnthropicMessages, providerDeps(opts2deps(opts)))
+	base, err := newBaseProvider(id, cfg, DialectAnthropicMessages, opts2deps(opts))
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +102,7 @@ func (p *AnthropicProvider) body(model string, req Request, withTemperature, wit
 		w.MaxTokens = defaultAnthropicMaxTokens
 	}
 	for _, m := range req.Messages {
-		w.Messages = append(w.Messages, anthropicMessage{Role: m.Role, Content: m.Content})
+		w.Messages = append(w.Messages, anthropicMessage(m))
 	}
 	if withThinking && thinking {
 		w.Thinking = &anthropicThinking{Type: "adaptive"}
@@ -189,7 +189,7 @@ func (p *AnthropicProvider) parseReply(model string, body []byte, start time.Tim
 }
 
 // Complete implements Provider; use NewBoundProvider to fix the model name.
-func (p *AnthropicProvider) Complete(ctx context.Context, req Request) (Response, error) {
+func (p *AnthropicProvider) Complete(_ context.Context, _ Request) (Response, error) {
 	return Response{}, fmt.Errorf("ai: anthropic provider %q is not bound to a model; wrap it with NewBoundProvider", p.base.id)
 }
 

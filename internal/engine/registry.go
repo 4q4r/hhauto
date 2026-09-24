@@ -91,6 +91,14 @@ func registerSchedule(name, accountID string, spec scheduler.Spec, factory TaskF
 	if err := spec.Validate(); err != nil {
 		return fmt.Errorf("engine: RegisterSchedule %s: %w", name, err)
 	}
+	// Spec literals may omit the weekday mask; Spec.Next treats Days == 0
+	// as "no day matches" and never fires. Normalize to every-day (the
+	// same default scheduler.Parse applies) before the binding is stored —
+	// both schedule materialization and next_run recomputation consume
+	// this copy.
+	if spec.Days == 0 {
+		spec.Days = scheduler.All
+	}
 	if factory == nil {
 		return fmt.Errorf("engine: RegisterSchedule %s: nil factory", name)
 	}

@@ -1,13 +1,17 @@
 package kit11
 
 import (
+	"context"
 	"errors"
 	"math/rand/v2"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"hhauto/internal/config"
 	"hhauto/internal/hhapi"
+	"hhauto/internal/store"
 )
 
 func TestDetectLinks(t *testing.T) {
@@ -184,5 +188,42 @@ func TestIsUniqueViolation(t *testing.T) {
 	}
 	if IsUniqueViolation(errors.New("store: MessagesAdd: some other failure")) {
 		t.Fatal("false positive unique violation")
+	}
+}
+
+// profileAPIStub serves a resume list for RenderProfile; every other
+// hhapi call panics via the nil-embedded interface.
+type profileAPIStub struct {
+	hhapi.HHAPI
+	resumes []hhapi.Resume
+}
+
+func (f *profileAPIStub) ListResumes(_ context.Context) ([]hhapi.Resume, error) {
+	return f.resumes, nil
+}
+
+// T14 landmine: RenderProfile is the shared chatops/testsolve profile path,
+// and the resume write-through inside it inserts rows whose FK points at
+// accounts(id). The account row must be ensured here so a chatops boot
+// before the first multiapply does not die on the FK.
+func TestRenderProfileEnsuresAccountRow(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "kit11.db"), store.Options{BusyTimeoutMS: 2000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	api := &profileAPIStub{resumes: []hhapi.Resume{{
+		HHID: "res-1", Title: "Go разработчик", UpdatedAt: time.Now().UTC(),
+	}}}
+	cfg := config.Config{General: config.General{DataDir: t.TempDir()}}
+
+	got, err := RenderProfile(ctx, cfg, "acc-fk", db, api)
+	if err != nil {
+		t.Fatalf("RenderProfile: %v", err)
+	}
+	if !strings.Contains(got, "Go разработчик") {
+		t.Fatalf("RenderProfile missing resume title: %q", got)
 	}
 }

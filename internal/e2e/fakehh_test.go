@@ -149,7 +149,7 @@ func ssrPage(state any) []byte {
 		string(raw) + `</template></body></html>`)
 }
 
-func (f *fakeHH) track(w http.ResponseWriter, r *http.Request, mutation bool) {
+func (f *fakeHH) track(_ http.ResponseWriter, _ *http.Request, mutation bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.totalRequests++
@@ -241,10 +241,7 @@ func (f *fakeHH) servePopup(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.popupHits++
 	f.mu.Unlock()
-	letterRequired := false
-	if id == vacClean {
-		letterRequired = true // the clean vacancy demands a cover letter
-	}
+	letterRequired := id == vacClean // the clean vacancy demands a cover letter
 	f.serveJSON(w, map[string]any{
 		"test":                      map[string]any{"hasTests": false},
 		"letterRequired":            letterRequired,

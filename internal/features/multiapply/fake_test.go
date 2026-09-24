@@ -73,11 +73,11 @@ func newApplyEnv(t *testing.T) *applyEnv {
 		searchFound: 1,
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /applicant/settings", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /applicant/settings", func(w http.ResponseWriter, _ *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: "tok_test", Path: "/"})
 		_, _ = io.WriteString(w, xsrfPage)
 	})
-	mux.HandleFunc("GET /applicant/resumes", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
 		e.mu.Lock()
 		items := append([]string(nil), e.suitable...)
 		e.mu.Unlock()
@@ -85,7 +85,7 @@ func newApplyEnv(t *testing.T) *applyEnv {
 			`{"applicantSuitableVacancyByResume":{"hash1":{"vacancies":[%s],"searchCounts":{"value":%d}}}}`,
 			strings.Join(items, ","), len(items))))
 	})
-	mux.HandleFunc("GET /search/vacancy", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /search/vacancy", func(w http.ResponseWriter, _ *http.Request) {
 		e.mu.Lock()
 		e.searchReqs++
 		items := append([]string(nil), e.searchItems...)
@@ -286,7 +286,7 @@ type fakeChain struct {
 	err    error
 }
 
-func (c *fakeChain) Solve(ctx context.Context, ch captcha.Challenge) (captcha.Solution, error) {
+func (c *fakeChain) Solve(_ context.Context, _ captcha.Challenge) (captcha.Solution, error) {
 	c.solves++
 	if c.err != nil {
 		return captcha.Solution{}, c.err
@@ -305,7 +305,7 @@ func (n *fakeNotifier) Emit(ev webhook.Event) {
 	n.events = append(n.events, ev)
 }
 
-func (n *fakeNotifier) Close(ctx context.Context) error { return nil }
+func (n *fakeNotifier) Close(_ context.Context) error { return nil }
 
 func (n *fakeNotifier) has(t string) bool {
 	return n.count(t) > 0
@@ -331,7 +331,7 @@ type fakeAIRunner struct {
 	inputs  []string
 }
 
-func (r *fakeAIRunner) Run(ctx context.Context, accountID, entityType, entityID, runID string,
+func (r *fakeAIRunner) Run(_ context.Context, _ string, _ string, _ string, _ string,
 	task ai.TaskName, input any) (json.RawMessage, ai.Decision, error) {
 	r.calls = append(r.calls, task)
 	b, _ := json.Marshal(input)
@@ -452,9 +452,6 @@ func letterVerdict(letter string) string {
 	return string(b)
 }
 
-// popupOK is the benign popup body: no inconsistencies, letter optional.
-const popupOK = `{"type":"POPUP","letterRequired":false,"test":{"hasTests":false},"acceptAutoResponse":true,"chatWritePossibility":"ENABLED"}`
-
 func popupWith(letterRequired bool, inconsistencies bool, chat string) string {
 	inc := ""
 	if inconsistencies {
@@ -462,11 +459,4 @@ func popupWith(letterRequired bool, inconsistencies bool, chat string) string {
 	}
 	return fmt.Sprintf(`{"type":"POPUP","letterRequired":%t,"test":{"hasTests":false},"acceptAutoResponse":true,"chatWritePossibility":%q%s}`,
 		letterRequired, chat, inc)
-}
-
-func ctxbg(t *testing.T) context.Context {
-	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	return ctx
 }

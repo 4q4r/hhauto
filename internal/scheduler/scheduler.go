@@ -13,6 +13,7 @@ import (
 // Weekdays is a bitmask: bit0=Mon ... bit6=Sun.
 type Weekdays uint8
 
+// Weekday mask bits: All = every day.
 const (
 	Mon Weekdays = 1 << iota
 	Tue
@@ -24,6 +25,7 @@ const (
 	All = Mon | Tue | Wed | Thu | Fri | Sat | Sun
 )
 
+// ErrBadSpec is returned by Parse and Validate for malformed specs.
 var ErrBadSpec = errors.New("scheduler: bad spec")
 
 // Spec is the declarative schedule used by [runs.*.windows] and features.
@@ -63,6 +65,9 @@ func Parse(tz string, times, days []string) (Spec, error) {
 	return s, nil
 }
 
+// Validate reports whether the spec has a loadable timezone, at least one
+// valid HH:MM time; an empty weekday mask is allowed (the engine normalizes
+// it to every day).
 func (s Spec) Validate() error {
 	if _, err := time.LoadLocation(s.tzOrLocal()); err != nil {
 		return err
@@ -91,8 +96,11 @@ type Registry struct {
 	order []string
 }
 
+// NewRegistry builds an empty schedule registry.
 func NewRegistry() *Registry { return &Registry{items: map[string]Spec{}} }
 
+// Add inserts a spec under name; the first registration wins (duplicate
+// names are ignored).
 func (r *Registry) Add(name string, s Spec) {
 	if _, exists := r.items[name]; !exists {
 		r.order = append(r.order, name)
@@ -100,11 +108,13 @@ func (r *Registry) Add(name string, s Spec) {
 	r.items[name] = s
 }
 
+// Get returns the spec registered under name (ok=false when absent).
 func (r *Registry) Get(name string) (Spec, bool) {
 	s, ok := r.items[name]
 	return s, ok
 }
 
+// Names returns the registered names in insertion order.
 func (r *Registry) Names() []string { return append([]string(nil), r.order...) }
 
 // Next returns the next run instant strictly after `after`, with jitter applied once.

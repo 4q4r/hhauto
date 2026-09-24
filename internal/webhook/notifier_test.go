@@ -117,7 +117,7 @@ func TestNotifierEmitDoesNotBlockWhenServerIsSlow(t *testing.T) {
 	releaseCh := make(chan struct{})
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(releaseCh) }) }
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		<-releaseCh // stall the single worker on the first event
 	}))

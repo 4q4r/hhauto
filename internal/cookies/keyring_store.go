@@ -23,6 +23,7 @@
 // Construction never falls back silently: if no allowed backend can be
 // opened (headless CI, no D-Bus, no desktop keystore) NewKeyring returns an
 // error wrapping ErrUnavailable and the caller decides what to do.
+
 package cookies
 
 import (

@@ -2,8 +2,6 @@ package hhapi
 
 import (
 	"context"
-	"math"
-	"time"
 
 	"golang.org/x/time/rate"
 )
@@ -29,11 +27,3 @@ func (l *limiter) wait(ctx context.Context) error { return l.l.Wait(ctx) }
 
 // limit reports the effective requests-per-second (test/observability).
 func (l *limiter) limit() float64 { return float64(l.l.Limit()) }
-
-// reserveFor reports the wait a caller would face right now (test helper).
-func (l *limiter) reserveFor() time.Duration {
-	r := l.l.Reserve()
-	d := r.Delay()
-	r.Cancel()
-	return time.Duration(math.Round(float64(d)))
-}

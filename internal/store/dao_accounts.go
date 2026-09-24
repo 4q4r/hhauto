@@ -57,7 +57,7 @@ func (db *DB) AccountsList(ctx context.Context) ([]Account, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: AccountsList: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
 
 	var out []Account
 	for rows.Next() {

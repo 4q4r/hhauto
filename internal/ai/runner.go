@@ -230,8 +230,8 @@ func (r *runner) Run(ctx context.Context, accountID, entityType, entityID, runID
 	}
 	trustedText, trustedNums := trustedSources(trustedBlock, inputJSON)
 
-	open, close_ := r.delimiters()
-	userBlock := open + "\n" + string(inputJSON) + "\n" + close_
+	openTag, closeTag := r.delimiters()
+	userBlock := openTag + "\n" + string(inputJSON) + "\n" + closeTag
 	flagged, _ := r.guard.Inspect(userBlock)
 
 	model := r.models[taskCfg.ModelProfile]
@@ -310,8 +310,6 @@ func (r *runner) Run(ctx context.Context, accountID, entityType, entityID, runID
 				return verdict, dec, nil
 			}
 		}
-	} else {
-		admitted = true
 	}
 
 	// 3) Provider call with re-ask loop and model fallback; token usage is
@@ -681,7 +679,7 @@ func (r *runner) estimate(model config.AIModel) (int, float64) {
 // loudly: the caller still receives the verdict for observability, but the
 // error is non-nil so the audit gap is visible.
 func (r *runner) record(dec *Decision, verdict json.RawMessage) error {
-	dec.Verdict = json.RawMessage(verdict)
+	dec.Verdict = verdict
 	if r.ledger == nil {
 		return nil
 	}
@@ -743,7 +741,8 @@ func (r *runner) day() string {
 
 func cacheKey(task TaskName, promptVer string, model config.AIModel, trustedBlock string, schema json.RawMessage, input []byte) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s|%s|%s|%d|%.3f|%s|%s|%s|%s",
+	// hash.Hash writes never fail.
+	_, _ = fmt.Fprintf(h, "%s|%s|%s|%d|%.3f|%s|%s|%s|%s",
 		task, promptVer, model.Model, model.MaxOutputTokens, model.Temperature,
 		model.ReasoningEffort, inputDigest([]byte(trustedBlock)), inputDigest(schema), inputDigest(input))
 	return hex.EncodeToString(h.Sum(nil))
