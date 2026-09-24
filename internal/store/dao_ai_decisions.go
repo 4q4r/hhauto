@@ -32,12 +32,12 @@ func (db *DB) AIDecisionsAdd(ctx context.Context, d *AIDecision) error {
 		INSERT INTO ai_decisions (id, created_at, account_id, task, entity_type, entity_id,
 		                          run_id, model, prompt_ver, input_digest, verdict, score,
 		                          confidence, needs_human, injection, latency_ms, tokens_in,
-		                          tokens_out, cache_hit, outcome)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                          tokens_out, cache_hit, cost_usd, outcome)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.ID, fmtTime(createdAt), d.AccountID, d.Task, d.EntityType, d.EntityID,
 		d.RunID, d.Model, d.PromptVer, d.InputDigest, d.Verdict, d.Score,
 		d.Confidence, boolInt(d.NeedsHuman), boolInt(d.Injection), d.LatencyMS,
-		d.TokensIn, d.TokensOut, boolInt(d.CacheHit), d.Outcome)
+		d.TokensIn, d.TokensOut, boolInt(d.CacheHit), d.CostUSD, d.Outcome)
 	if err != nil {
 		return fmt.Errorf("store: AIDecisionsAdd: %w", err)
 	}
@@ -50,7 +50,7 @@ func (db *DB) AIDecisionsByEntity(ctx context.Context, accountID, task, entityTy
 	rows, err := db.conn.QueryContext(ctx, `
 		SELECT id, created_at, account_id, task, entity_type, entity_id, run_id, model,
 		       prompt_ver, input_digest, verdict, score, confidence, needs_human,
-		       injection, latency_ms, tokens_in, tokens_out, cache_hit, outcome
+		       injection, latency_ms, tokens_in, tokens_out, cache_hit, outcome, cost_usd
 		FROM ai_decisions
 		WHERE account_id = ? AND task = ? AND entity_type = ? AND entity_id = ?
 		ORDER BY created_at DESC, id DESC
@@ -86,6 +86,25 @@ func (db *DB) AIDecisionsSumTokensDay(ctx context.Context, accountID, day string
 	return in, out, nil
 }
 
+// AIDecisionsSumTokensDayAll sums tokens and cost globally — across ALL
+// accounts — for decisions created on day ("YYYY-MM-DD", UTC prefix match).
+// tokens = SUM(tokens_in + tokens_out): the consumer is the daily budget
+// guard capping total consumption (internal/ai runner compares it with
+// budget.DailyTokens); cost = SUM(cost_usd). The per-account
+// AIDecisionsSumTokensDay is unchanged.
+func (db *DB) AIDecisionsSumTokensDayAll(ctx context.Context, day string) (int, float64, error) {
+	var tokens int
+	var cost float64
+	err := db.conn.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(tokens_in + tokens_out), 0), COALESCE(SUM(cost_usd), 0)
+		FROM ai_decisions
+		WHERE substr(created_at, 1, 10) = ?`, day).Scan(&tokens, &cost)
+	if err != nil {
+		return 0, 0, fmt.Errorf("store: AIDecisionsSumTokensDayAll: %w", err)
+	}
+	return tokens, cost, nil
+}
+
 func scanAIDecision(rs rowScanner) (*AIDecision, error) {
 	var d AIDecision
 	var score, confidence sql.NullFloat64
@@ -93,7 +112,8 @@ func scanAIDecision(rs rowScanner) (*AIDecision, error) {
 	var created sql.NullString
 	if err := rs.Scan(&d.ID, &created, &d.AccountID, &d.Task, &d.EntityType, &d.EntityID,
 		&d.RunID, &d.Model, &d.PromptVer, &d.InputDigest, &d.Verdict, &score, &confidence,
-		&needsHuman, &injection, &d.LatencyMS, &d.TokensIn, &d.TokensOut, &cacheHit, &d.Outcome); err != nil {
+		&needsHuman, &injection, &d.LatencyMS, &d.TokensIn, &d.TokensOut, &cacheHit,
+		&d.Outcome, &d.CostUSD); err != nil {
 		return nil, err
 	}
 	if score.Valid {

@@ -703,6 +703,58 @@ func TestMetricsIncrAndSnapshot(t *testing.T) {
 	}
 }
 
+func TestAIDecisionsCostRoundtrip(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	d := AIDecision{
+		AccountID: "acc-1", Task: "letter", EntityType: "vacancy", EntityID: "10",
+		TokensIn: 100, TokensOut: 50, CostUSD: 0.25,
+	}
+	if err := db.AIDecisionsAdd(ctx, &d); err != nil {
+		t.Fatalf("AIDecisionsAdd: %v", err)
+	}
+	got, err := db.AIDecisionsByEntity(ctx, "acc-1", "letter", "vacancy", "10", 10)
+	if err != nil {
+		t.Fatalf("AIDecisionsByEntity: %v", err)
+	}
+	if len(got) != 1 || got[0].CostUSD != 0.25 {
+		t.Fatalf("cost roundtrip = %+v, want CostUSD 0.25", got)
+	}
+}
+
+func TestAIDecisionsSumTokensDayAll(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	today := time.Now().UTC().Format("2006-01-02")
+
+	for _, d := range []AIDecision{
+		{AccountID: "acc-1", Task: "letter", TokensIn: 100, TokensOut: 50, CostUSD: 0.25},
+		{AccountID: "acc-2", Task: "letter", TokensIn: 10, TokensOut: 20, CostUSD: 0.5},
+	} {
+		row := d
+		if err := db.AIDecisionsAdd(ctx, &row); err != nil {
+			t.Fatalf("AIDecisionsAdd (%s): %v", d.AccountID, err)
+		}
+	}
+
+	tokens, cost, err := db.AIDecisionsSumTokensDayAll(ctx, today)
+	if err != nil {
+		t.Fatalf("AIDecisionsSumTokensDayAll: %v", err)
+	}
+	if tokens != 180 {
+		t.Fatalf("tokens = %d, want 180 (in+out across accounts)", tokens)
+	}
+	if cost != 0.75 {
+		t.Fatalf("cost = %v, want 0.75", cost)
+	}
+
+	tokens, cost, err = db.AIDecisionsSumTokensDayAll(ctx, "1999-01-01")
+	if err != nil || tokens != 0 || cost != 0 {
+		t.Fatalf("empty day = (%d, %v, %v), want (0, 0, nil)", tokens, cost, err)
+	}
+}
+
 func TestIntentsPendingConflictAndLifecycle(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()

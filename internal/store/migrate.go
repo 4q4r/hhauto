@@ -17,10 +17,30 @@ type migration struct {
 }
 
 // migrations is the ordered, expand-only migration list. Applied migrations
-// are never edited; new versions are appended and 0002+ files added under
-// migrations/.
+// are never edited (0001 stays byte-identical to what shipped — comments in
+// applied migrations are not rewritten either); changes land as new 0002+
+// files under migrations/.
+//
+// Deliberate schema decisions (recorded here because applied migration
+// files are immutable):
+//
+//   - FK asymmetry is intentional. Only resumes, messages and ping_queue
+//     carry REFERENCES ... ON DELETE CASCADE. applications, chats, contacts,
+//     tests and interview_links reference accounts/vacancies by bare
+//     columns: their rows are audit/observability records whose lifecycle
+//     must survive the account row (nothing in store may silently destroy
+//     history when an account is deleted), and the referenced identifiers
+//     originate from external hh.ru ids rather than store-internal keys.
+//     Retroactively adding FKs would change deletion semantics for
+//     existing consumers, so the choice is documented here instead.
+//
+//   - NOT NULL is asserted on every UNIQUE/PK-bearing column even where the
+//     original contract wrote a bare type: SQLite UNIQUE treats NULLs as
+//     distinct, so nullable keys would silently break the dedup contract
+//     (see 0001).
 var migrations = []migration{
 	{version: 1, name: "init", script: readMigration("migrations/0001_init.sql")},
+	{version: 2, name: "ai_decisions_cost", script: readMigration("migrations/0002_ai_decisions_cost.sql")},
 }
 
 func readMigration(name string) string {
