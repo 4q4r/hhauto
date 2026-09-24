@@ -146,7 +146,8 @@ type AIDecision struct {
 	TokensIn    int
 	TokensOut   int
 	CacheHit    bool
-	Outcome     string // "" -> 'pending'
+	CostUSD     float64 // per-decision cost in USD (migration 0002)
+	Outcome     string  // "" -> 'pending'
 }
 
 type Schedule struct {

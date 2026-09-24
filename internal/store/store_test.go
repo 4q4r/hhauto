@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -19,6 +20,122 @@ func openTestDB(t *testing.T) *DB {
 
 func truncSec(t time.Time) time.Time { return t.Truncate(time.Second).UTC() }
 
+// TestMigration0002CostUSDOnLegacyDB verifies the expand-only 0002 migration
+// against a database built by 0001 only (ai_decisions without cost_usd):
+// Open must ALTER the column in, backfill existing rows with the default,
+// and a second Open must stay a no-op.
+func TestMigration0002CostUSDOnLegacyDB(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "legacy.db")
+
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	// Exact 0001-shape legacy database: ai_decisions without cost_usd plus
+	// the schema_migrations audit table 0001 always creates.
+	const legacyDDL = `
+		CREATE TABLE schema_migrations (
+			version    INTEGER PRIMARY KEY,
+			name       TEXT NOT NULL,
+			applied_at TEXT NOT NULL
+		);
+		CREATE TABLE ai_decisions (
+			id           TEXT NOT NULL PRIMARY KEY,
+			created_at   TEXT,
+			account_id   TEXT,
+			task         TEXT,
+			entity_type  TEXT,
+			entity_id    TEXT,
+			run_id       TEXT,
+			model        TEXT,
+			prompt_ver   TEXT,
+			input_digest TEXT,
+			verdict      TEXT,
+			score        REAL,
+			confidence   REAL,
+			needs_human  INTEGER,
+			injection    INTEGER,
+			latency_ms   INTEGER,
+			tokens_in    INTEGER,
+			tokens_out   INTEGER,
+			cache_hit    INTEGER,
+			outcome      TEXT NOT NULL DEFAULT 'pending'
+		);`
+	if _, err := legacy.ExecContext(ctx, legacyDDL); err != nil {
+		t.Fatalf("create legacy schema: %v", err)
+	}
+	if _, err := legacy.ExecContext(ctx,
+		"INSERT INTO schema_migrations (version, name, applied_at) VALUES (1, 'init', ?)",
+		time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatalf("insert legacy audit row: %v", err)
+	}
+	if _, err := legacy.ExecContext(ctx,
+		"INSERT INTO ai_decisions (id, created_at, account_id, task, tokens_in, tokens_out) VALUES ('legacy1', ?, 'acc-old', 'letter', 10, 5)",
+		time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+	if _, err := legacy.ExecContext(ctx, "PRAGMA user_version = 1"); err != nil {
+		t.Fatalf("stamp legacy user_version: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+
+	db, err := Open(ctx, path, Options{BusyTimeoutMS: 1000})
+	if err != nil {
+		t.Fatalf("Open on legacy 0001 db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	var userVersion int
+	if err := db.conn.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
+		t.Fatalf("read user_version: %v", err)
+	}
+	if userVersion != 2 {
+		t.Fatalf("user_version = %d, want 2 after 0002", userVersion)
+	}
+	var count int
+	if err := db.conn.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
+		t.Fatalf("count schema_migrations: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("schema_migrations rows = %d, want 2", count)
+	}
+
+	// Pre-existing rows are backfilled with the NOT NULL DEFAULT 0.
+	var legacyCost float64
+	if err := db.conn.QueryRow("SELECT cost_usd FROM ai_decisions WHERE id = 'legacy1'").Scan(&legacyCost); err != nil {
+		t.Fatalf("read cost_usd of legacy row: %v", err)
+	}
+	if legacyCost != 0 {
+		t.Fatalf("legacy cost_usd = %v, want 0 (default backfill)", legacyCost)
+	}
+
+	// Reopen: idempotent, still v2, data intact.
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	db2, err := Open(ctx, path, Options{BusyTimeoutMS: 1000})
+	if err != nil {
+		t.Fatalf("reopen legacy db: %v", err)
+	}
+	t.Cleanup(func() { _ = db2.Close() })
+	if err := db2.conn.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
+		t.Fatalf("read user_version after reopen: %v", err)
+	}
+	if userVersion != 2 {
+		t.Fatalf("user_version after reopen = %d, want 2", userVersion)
+	}
+	var legacyTokensIn int
+	if err := db2.conn.QueryRow("SELECT tokens_in FROM ai_decisions WHERE id = 'legacy1'").Scan(&legacyTokensIn); err != nil {
+		t.Fatalf("read legacy row after reopen: %v", err)
+	}
+	if legacyTokensIn != 10 {
+		t.Fatalf("legacy row corrupted by migration: tokens_in = %d, want 10", legacyTokensIn)
+	}
+}
+
 func TestOpenAppliesMigrations(t *testing.T) {
 	db := openTestDB(t)
 
@@ -26,17 +143,30 @@ func TestOpenAppliesMigrations(t *testing.T) {
 	if err := db.conn.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if userVersion != 1 {
-		t.Fatalf("user_version = %d, want 1", userVersion)
+	if userVersion != 2 {
+		t.Fatalf("user_version = %d, want 2 (0001 + 0002)", userVersion)
 	}
 
-	var version int
-	var name, appliedAt string
-	if err := db.conn.QueryRow("SELECT version, name, applied_at FROM schema_migrations").Scan(&version, &name, &appliedAt); err != nil {
-		t.Fatalf("read schema_migrations: %v", err)
+	var count int
+	if err := db.conn.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
+		t.Fatalf("count schema_migrations: %v", err)
 	}
-	if version != 1 || name != "init" || appliedAt == "" {
-		t.Fatalf("schema_migrations row = (%d, %q, %q), want (1, init, <non-empty>)", version, name, appliedAt)
+	if count != 2 {
+		t.Fatalf("schema_migrations rows = %d, want 2", count)
+	}
+
+	var name, appliedAt string
+	if err := db.conn.QueryRow("SELECT name, applied_at FROM schema_migrations WHERE version = 1").Scan(&name, &appliedAt); err != nil {
+		t.Fatalf("read schema_migrations v1: %v", err)
+	}
+	if name != "init" || appliedAt == "" {
+		t.Fatalf("schema_migrations v1 = (%q, %q), want (init, <non-empty>)", name, appliedAt)
+	}
+	if err := db.conn.QueryRow("SELECT name FROM schema_migrations WHERE version = 2").Scan(&name); err != nil {
+		t.Fatalf("read schema_migrations v2: %v", err)
+	}
+	if name != "ai_decisions_cost" {
+		t.Fatalf("schema_migrations v2 name = %q, want ai_decisions_cost", name)
 	}
 }
 
@@ -121,8 +251,8 @@ func TestOpenIsIdempotent(t *testing.T) {
 	if err := db2.conn.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
 		t.Fatalf("read user_version after reopen: %v", err)
 	}
-	if userVersion != 1 {
-		t.Fatalf("user_version after reopen = %d, want 1", userVersion)
+	if userVersion != 2 {
+		t.Fatalf("user_version after reopen = %d, want 2", userVersion)
 	}
 }
 
