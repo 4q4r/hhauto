@@ -1,0 +1,157 @@
+{
+ "resumes": [
+  {
+   "forbidden": null,
+   "_attributes": {
+    "canPublishOrUpdate": false,
+    "canTouch": false,
+    "created": 1788102713419,
+    "hasConditions": false,
+    "hasErrors": false,
+    "hasPublicVisibility": false,
+    "hash": "36da2d9718b405682313869d64912516567e10",
+    "hhid": "10000001",
+    "id": "10000002",
+    "isSearchable": true,
+    "lang": "RU",
+    "lastEditTime": 1788785184590,
+    "markServiceExpireTime": "2031-08-29T19:35:33+0300",
+    "marked": true,
+    "moderated": "2026-08-30T19:00:58+03:00",
+    "nextPublishAt": null,
+    "nextTouchAt": null,
+    "parentResumeId": null,
+    "percent": 0,
+    "permission": "edit",
+    "publishState": null,
+    "renewal": true,
+    "renewalServiceExpireTime": "2031-08-29T19:35:31+0300",
+    "siteId": 10,
+    "sitePlatform": "HEADHUNTER",
+    "source": "flexible_resume_builder",
+    "status": "modified",
+    "tags": [
+     "RESUME_MARK",
+     "RESUME_RENEWAL"
+    ],
+    "update_timeout": 14400000,
+    "updated": 1790263360225,
+    "user": "10000003",
+    "vacancySearchLastUsageDate": 1790210946,
+    "validation_schema": ""
+   },
+   "_conditions": {},
+   "professionalRole": [
+    {
+     "string": 96
+    }
+   ]
+  },
+  {
+   "forbidden": null,
+   "_attributes": {
+    "canPublishOrUpdate": false,
+    "canTouch": false,
+    "created": 1787998800536,
+    "hasConditions": false,
+    "hasErrors": false,
+    "hasPublicVisibility": false,
+    "hash": "ef134cfcd66f458ef1149317f290ca24609020",
+    "hhid": "10000001",
+    "id": "10000004",
+    "isSearchable": true,
+    "lang": "RU",
+    "lastEditTime": 1788785171082,
+    "markServiceExpireTime": "2031-08-28T13:51:36+0300",
+    "marked": true,
+    "moderated": "2026-08-29T13:59:48+03:00",
+    "nextPublishAt": null,
+    "nextTouchAt": null,
+    "parentResumeId": null,
+    "percent": 0,
+    "permission": "edit",
+    "publishState": null,
+    "renewal": true,
+    "renewalServiceExpireTime": "2031-08-28T13:51:29+0300",
+    "siteId": 10,
+    "sitePlatform": "HEADHUNTER",
+    "source": "flexible_resume_builder",
+    "status": "modified",
+    "tags": [
+     "RESUME_MARK",
+     "RESUME_RENEWAL"
+    ],
+    "update_timeout": 14400000,
+    "updated": 1790259732624,
+    "user": "10000003",
+    "vacancySearchLastUsageDate": 1790210946,
+    "validation_schema": ""
+   },
+   "_conditions": {},
+   "professionalRole": [
+    {
+     "string": 160
+    }
+   ]
+  },
+  {
+   "forbidden": null,
+   "_attributes": {
+    "canPublishOrUpdate": false,
+    "canTouch": false,
+    "created": 1787829365395,
+    "hasConditions": false,
+    "hasErrors": false,
+    "hasPublicVisibility": false,
+    "hash": "79ffde65dd678e7d2172e394212aef1d8f5093",
+    "hhid": "10000001",
+    "id": "10000005",
+    "isSearchable": true,
+    "lang": "RU",
+    "lastEditTime": 1788785147090,
+    "markServiceExpireTime": "2061-08-19T14:16:31+0300",
+    "marked": true,
+    "moderated": "2026-08-27T15:04:57+03:00",
+    "nextPublishAt": null,
+    "nextTouchAt": null,
+    "parentResumeId": null,
+    "percent": 0,
+    "permission": "edit",
+    "publishState": null,
+    "renewal": true,
+    "renewalServiceExpireTime": "2061-08-19T14:16:31+0300",
+    "siteId": 10,
+    "sitePlatform": "HEADHUNTER",
+    "source": "flexible_resume_builder",
+    "status": "modified",
+    "tags": [
+     "RESUME_MARK",
+     "RESUME_RENEWAL"
+    ],
+    "update_timeout": 14400000,
+    "updated": 1790257650093,
+    "user": "10000003",
+    "vacancySearchLastUsageDate": 1790210946,
+    "validation_schema": ""
+   },
+   "_conditions": {},
+   "professionalRole": [
+    {
+     "string": 160
+    },
+    {
+     "string": 96
+    },
+    {
+     "string": 113
+    },
+    {
+     "string": 116
+    },
+    {
+     "string": 124
+    }
+   ]
+  }
+ ]
+}

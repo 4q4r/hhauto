@@ -352,7 +352,12 @@ func (f *Feature) syncChat(ctx context.Context, api hhapi.HHAPI, accountID strin
 
 	if inbound && mirror != stateEscalated && mirror != stateLeft {
 		target := newIn[len(newIn)-1]
-		if negStates[derefI64(row.VacancyID)] == "refused" {
+		// RULING R9 (live contracts): the chat list itself carries the
+		// applicant state (resources.negotiation_topics /
+		// lastMessage.workflowTransition, live enum "DISCARD") — zero extra
+		// requests. The SSR negotiations map stays as the fallback source,
+		// and both spellings route through hhapi.IsStructuralRefusal.
+		if hhapi.IsStructuralRefusal(c.ApplicantState) || hhapi.IsStructuralRefusal(negStates[derefI64(row.VacancyID)]) {
 			// RULING R9: the structural negotiation state is the PRIMARY
 			// rejection signal — no AI call, straight to the rejection
 			// branch (auto-leave gates still apply downstream).

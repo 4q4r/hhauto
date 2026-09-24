@@ -462,36 +462,7 @@ func (c *Client) ListResumes(ctx context.Context) ([]Resume, error) {
 	if err != nil {
 		return nil, err
 	}
-	var payload struct {
-		Resumes []json.RawMessage `json:"resumes"`
-		Items   []json.RawMessage `json:"items"`
-	}
-	if err := json.Unmarshal(resp.body, &payload); err != nil {
-		return nil, fmt.Errorf("hhapi: list_resumes: %w: %s", err, snippet(resp.body))
-	}
-	raws := payload.Resumes
-	if raws == nil {
-		raws = payload.Items
-	}
-	resumes := make([]Resume, 0, len(raws))
-	for _, raw := range raws {
-		m := obj(raw)
-		attrs := obj(m["_attributes"])
-		status := str(m, "status")
-		if status == "" {
-			status = firstNonEmpty(str(attrs, "status"), str(obj(attrs["status"]), "id"), str(obj(attrs["status"]), "name"))
-		}
-		resumes = append(resumes, Resume{
-			HHID:       firstNonEmpty(str(m, "hash", "resumeHash", "resume_hash", "id")),
-			Title:      str(m, "title"),
-			Status:     status,
-			Percent:    int(num(attrs, "percent")),
-			Searchable: boolv(attrs, "isSearchable") || boolv(m, "isSearchable", "is_searchable"),
-			UpdatedAt:  timeFrom(m, "updated_at", "updatedAt", "modify_time"),
-			Raw:        raw,
-		})
-	}
-	return resumes, nil
+	return parseResumes(resp.body)
 }
 
 // SuitableVacancies reads the /applicant/resumes SSR state: per-resume
@@ -730,7 +701,8 @@ func (c *Client) EmployerCard(ctx context.Context, id int64) (*Employer, error) 
 }
 
 // EmployerRating implements hhapi.HHAPI: reads the employer's rating widget
-// (score, recommendation share, review counts).
+// (score, recommendation share, review counts). See parseEmployerRating for
+// the live envelope and the ScoreRecent window heuristic.
 func (c *Client) EmployerRating(ctx context.Context, id int64) (*EmployerRating, error) {
 	base := c.endpointURL(epEmployerRating, c.eps.siteDefault("/employer_reviews/proxy_components/small_widget"))
 	u, err := url.Parse(base)
@@ -744,34 +716,7 @@ func (c *Client) EmployerRating(ctx context.Context, id int64) (*EmployerRating,
 	if err != nil {
 		return nil, err
 	}
-	var payload struct {
-		EmployerReviews json.RawMessage `json:"employerReviews"`
-	}
-	if err := json.Unmarshal(resp.body, &payload); err != nil {
-		return nil, fmt.Errorf("hhapi: employer_rating %d: %w: %s", id, err, snippet(resp.body))
-	}
-	rev := obj(payload.EmployerReviews)
-	if rev == nil || str(rev, "totalRating") == "" {
-		return nil, fmt.Errorf("hhapi: employer_rating %d: %w (no employerReviews.totalRating)", id, ErrNotFound)
-	}
-	rating := &EmployerRating{
-		EmployerID:   id,
-		ScoreAll:     num(rev, "totalRating"),
-		ReviewsCount: int(num(rev, "reviewsCount")),
-		RecommendPct: int(num(rev, "recommendationsPercent")),
-		FetchedAt:    time.Now(),
-	}
-	recent := obj(rev["last3MonthsReviewsInfo"])
-	if recent != nil {
-		if s := str(recent, "totalRating"); s != "" {
-			rating.ScoreRecent = num(recent, "totalRating")
-		} else {
-			rating.ScoreRecent = rating.ScoreAll
-		}
-	} else {
-		rating.ScoreRecent = rating.ScoreAll
-	}
-	return rating, nil
+	return parseEmployerRating(resp.body, id, time.Now())
 }
 
 // Negotiations implements hhapi.HHAPI: lists the applicant negotiations.
@@ -850,7 +795,8 @@ func (c *Client) TouchResume(ctx context.Context, resumeHash string) error {
 }
 
 // ApplyPopup implements hhapi.HHAPI: fetches the response-popup metadata
-// (form hints and already-applied state) before an apply.
+// (form hints and already-applied state) before an apply. The live payload
+// is a JSON envelope — see parseApplyPopup.
 func (c *Client) ApplyPopup(ctx context.Context, vacancyID int64) (*ApplyMeta, error) {
 	base := c.endpointURL(epApplyPopup, c.eps.siteDefault("/applicant/vacancy_response/popup"))
 	u, err := url.Parse(base)
@@ -864,28 +810,17 @@ func (c *Client) ApplyPopup(ctx context.Context, vacancyID int64) (*ApplyMeta, e
 	if err != nil {
 		return nil, err
 	}
-	var payload struct {
-		Test struct {
-			HasTests bool `json:"hasTests"`
-		} `json:"test"`
-		LetterRequired        json.RawMessage `json:"letterRequired"`
-		AcceptAutoResponse    json.RawMessage `json:"acceptAutoResponse"`
-		ChatWritePossibility  string          `json:"chatWritePossibility"`
-		ResumeInconsistencies json.RawMessage `json:"resumeInconsistencies"`
-		NegotiationsLimit     bool            `json:"negotiationsLimitExceeded"`
-	}
-	if err := json.Unmarshal(resp.body, &payload); err != nil {
-		return nil, fmt.Errorf("hhapi: apply_popup %d: %w: %s", vacancyID, err, snippet(resp.body))
-	}
-	if payload.NegotiationsLimit {
-		return nil, &StatusError{Kind: ErrRateLimited, StatusCode: resp.status, URL: resp.finalURL, Chain: resp.chain}
-	}
-	meta := &ApplyMeta{
-		HasTests:              payload.Test.HasTests,
-		LetterRequired:        jsonBool(payload.LetterRequired),
-		AcceptAutoResponse:    jsonBool(payload.AcceptAutoResponse),
-		ChatWritePossibility:  payload.ChatWritePossibility,
-		ResumeInconsistencies: flattenInconsistencies(payload.ResumeInconsistencies),
+	meta, perr := parseApplyPopup(resp.body, vacancyID)
+	if perr != nil {
+		var se *StatusError
+		if errors.As(perr, &se) && errors.Is(se.Kind, ErrRateLimited) {
+			// Enrich the transport context the pure parser cannot know.
+			se.StatusCode = resp.status
+			se.URL = resp.finalURL
+			se.BodySnippet = snippet(resp.body)
+			se.Chain = resp.chain
+		}
+		return nil, perr
 	}
 	return meta, nil
 }
@@ -999,35 +934,6 @@ func jsonString(raw json.RawMessage) string {
 	return ""
 }
 
-// flattenInconsistencies converts the nested resumeInconsistencies block
-// into short human-readable strings ("TYPE: required X, actual Y").
-func flattenInconsistencies(raw json.RawMessage) []string {
-	root := obj(raw)
-	out := []string{}
-	for _, resBlock := range arr(root["resume"]) {
-		res := obj(resBlock)
-		inc := obj(res["inconsistencies"])
-		items := arr(inc["inconsistency"])
-		if items == nil {
-			items = arr(res["inconsistency"])
-		}
-		for _, item := range items {
-			m := obj(item)
-			typ := str(m, "type")
-			req := str(m, "required")
-			act := str(m, "actual")
-			s := typ
-			if req != "" || act != "" {
-				s += fmt.Sprintf(": required %s, actual %s", req, act)
-			}
-			if s != "" {
-				out = append(out, s)
-			}
-		}
-	}
-	return out
-}
-
 // --- Chatik methods ---
 
 func (c *Client) chatikURL(name, defaultPath string) string {
@@ -1035,6 +941,8 @@ func (c *Client) chatikURL(name, defaultPath string) string {
 }
 
 // ListChats implements hhapi.HHAPI: lists chatik conversations (one page).
+// The live payload carries per-chat applicant state and resource refs — see
+// parseChatsList.
 func (c *Client) ListChats(ctx context.Context, page int) ([]Chat, error) {
 	u, err := url.Parse(c.chatikURL(epChats, "/chatik/api/chats"))
 	if err != nil {
@@ -1052,34 +960,22 @@ func (c *Client) ListChats(ctx context.Context, page int) ([]Chat, error) {
 	if err != nil {
 		return nil, err
 	}
-	var payload struct {
-		Chats struct {
-			Items []json.RawMessage `json:"items"`
-		} `json:"chats"`
-		DisplayInfo map[string]json.RawMessage `json:"chatsDisplayInfo"`
+	return parseChatsList(resp.body)
+}
+
+// Counts implements hhapi.HHAPI: reads the vacancy-search counter shard.
+// query is the raw URL query string (e.g. `text=golang&area=1`); empty means
+// the global counter.
+func (c *Client) Counts(ctx context.Context, query string) (int, error) {
+	target := c.endpointURL(epCounts, c.eps.siteDefault("/shards/vacancy/counts"))
+	if q := strings.TrimPrefix(strings.TrimSpace(query), "?"); q != "" {
+		target += "?" + q
 	}
-	if jerr := json.Unmarshal(resp.body, &payload); jerr != nil {
-		return nil, fmt.Errorf("hhapi: chats: %w: %s", jerr, snippet(resp.body))
+	resp, err := c.getXHR(ctx, "counts", c.withPinnedHost(target), c.withPinnedHost(c.eps.searchPage))
+	if err != nil {
+		return 0, err
 	}
-	out := make([]Chat, 0, len(payload.Chats.Items))
-	for _, raw := range payload.Chats.Items {
-		m := obj(raw)
-		info := obj(payload.DisplayInfo[str(m, "id")])
-		last := obj(m["lastMessage"])
-		topic := obj(m["topic"])
-		chat := Chat{
-			ID:            str(m, "id", "chatId"),
-			TopicID:       firstNonEmpty(str(m, "topicId"), str(topic, "id"), str(obj(m["negotiation"]), "id")),
-			EmployerName:  firstNonEmpty(str(info, "title", "employerName", "name"), str(m, "employerName")),
-			Unread:        int(num(m, "unreadCount", "unread")),
-			LastMessageAt: timeFrom(last, "createDateTime", "createdAt", "sentAt"),
-		}
-		if vid := int64(num(m, "vacancyId")); vid != 0 {
-			chat.VacancyID = vid
-		}
-		out = append(out, chat)
-	}
-	return out, nil
+	return parseCounts(resp.body)
 }
 
 // ChatHistory implements hhapi.HHAPI: fetches one chat's message history.
@@ -1098,45 +994,7 @@ func (c *Client) ChatHistory(ctx context.Context, chatID string) ([]ChatMessage,
 	if err != nil {
 		return nil, err
 	}
-	var payload struct {
-		Chat struct {
-			CurrentParticipantID string `json:"currentParticipantId"`
-			Messages             struct {
-				Items []json.RawMessage `json:"items"`
-			} `json:"messages"`
-		} `json:"chat"`
-	}
-	if jerr := json.Unmarshal(resp.body, &payload); jerr != nil {
-		return nil, fmt.Errorf("hhapi: chat_data %s: %w: %s", chatID, jerr, snippet(resp.body))
-	}
-	self := payload.Chat.CurrentParticipantID
-	out := make([]ChatMessage, 0, len(payload.Chat.Messages.Items))
-	for _, raw := range payload.Chat.Messages.Items {
-		m := obj(raw)
-		typ := str(m, "type")
-		if typ != "" && typ != "SIMPLE" {
-			continue
-		}
-		// Workflow transitions with string ids are system events (rejection,
-		// offer, ...) — skip them; numeric ids reference a real message.
-		if wf := str(obj(m["workflowTransition"]), "id"); wf != "" {
-			continue
-		}
-		sender := str(m, "participantId", "authorParticipantId")
-		direction := "in"
-		if sender != "" && sender == self {
-			direction = "out"
-		}
-		display := obj(m["participantDisplay"])
-		out = append(out, ChatMessage{
-			ID:        str(m, "id", "messageId"),
-			Author:    str(display, "name", "fullName"),
-			Direction: direction,
-			Text:      str(m, "text"),
-			SentAt:    timeFrom(m, "createDateTime", "createdAt", "sentAt"),
-		})
-	}
-	return out, nil
+	return parseChatHistory(resp.body, chatID)
 }
 
 // SendMessage posts {chatId, idempotencyKey, text}. The idempotency key is

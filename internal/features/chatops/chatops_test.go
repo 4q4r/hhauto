@@ -1076,6 +1076,32 @@ func TestSyncStructuralRefusalRejectionWithoutAI(t *testing.T) {
 	}
 }
 
+// RULING R9 (live contracts): the chat list itself carries the applicant
+// state (negotiation_topics / workflowTransition, live enum "DISCARD") — the
+// structural rejection fires with no negotiations lookup at all.
+func TestSyncStructuralRefusalFromChatState(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) {
+		c.Features.ChatOps.AutoLeaveRejected = true
+	})
+	h.feat.LeaveDelay = func() time.Duration { return time.Minute }
+	msgAt := h.now.Add(-10 * time.Minute)
+	ch := chatik("chat1", 42, msgAt)
+	ch.ApplicantState = "DISCARD"
+	h.api.chats = []hhapi.Chat{ch}
+	h.api.history["chat1"] = []hhapi.ChatMessage{inMsg("mid1", "Спасибо, что откликнулись.", msgAt)}
+	// h.api.negotiations intentionally empty: the chat state alone decides.
+
+	if err := h.feat.HandleChatSync(t.Context(), syncTask()); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if h.run.classCalls != 0 {
+		t.Fatalf("structural refusal must bypass AI classification, classCalls=%d", h.run.classCalls)
+	}
+	if h.mirror("chat1") != "rejected" {
+		t.Fatalf("mirror = %q, want rejected", h.mirror("chat1"))
+	}
+}
+
 func TestSyncStructuralRefusalOnlyForMatchingVacancy(t *testing.T) {
 	h := newHarness(t, nil)
 	h.run.classCategory = "question"
