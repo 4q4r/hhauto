@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// Sentinel classification errors for the resolver.
 var (
 	ErrNoProviders = errors.New("captcha: no providers configured")
 	ErrAllFailed   = errors.New("captcha: all providers failed")
@@ -22,6 +23,7 @@ const (
 	TypeTurnstile = "turnstile"
 )
 
+// Challenge is a pending captcha task as reported by a provider.
 type Challenge struct {
 	Type     string // TypeImage | TypeHCaptcha | TypeTurnstile
 	ImageB64 string // for TypeImage
@@ -29,6 +31,7 @@ type Challenge struct {
 	PageURL  string
 }
 
+// Solution is the provider answer for one Challenge.
 type Solution struct {
 	Token      string
 	ProviderID string

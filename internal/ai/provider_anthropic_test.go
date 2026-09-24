@@ -24,7 +24,7 @@ const testValidAnthropicReply = `{
 }`
 
 func TestAnthropicValidReplyAndRequestShape(t *testing.T) {
-	f := newFakeServer(t, func(call int, r *http.Request, raw []byte) (int, map[string]string, string) {
+	f := newFakeServer(t, func(_ int, _ *http.Request, _ []byte) (int, map[string]string, string) {
 		return 200, nil, testValidAnthropicReply
 	})
 	p := testAnthropicProvider(t, f.srv.URL)
@@ -99,7 +99,7 @@ func TestAnthropicValidReplyAndRequestShape(t *testing.T) {
 }
 
 func TestAnthropicMaxTokensDefaultsWhenUnset(t *testing.T) {
-	f := newFakeServer(t, func(call int, r *http.Request, raw []byte) (int, map[string]string, string) {
+	f := newFakeServer(t, func(_ int, _ *http.Request, _ []byte) (int, map[string]string, string) {
 		return 200, nil, testValidAnthropicReply
 	})
 	p := testAnthropicProvider(t, f.srv.URL)
@@ -126,7 +126,7 @@ func TestAnthropicEffortMapping(t *testing.T) {
 	cases := map[string]any{"minimal": "low", "xhigh": "xhigh", "max": "max", "high": "high"}
 	for effort, want := range cases {
 		t.Run(effort, func(t *testing.T) {
-			f := newFakeServer(t, func(call int, r *http.Request, raw []byte) (int, map[string]string, string) {
+			f := newFakeServer(t, func(_ int, _ *http.Request, _ []byte) (int, map[string]string, string) {
 				return 200, nil, testValidAnthropicReply
 			})
 			p := testAnthropicProvider(t, f.srv.URL)
@@ -145,7 +145,7 @@ func TestAnthropicEffortMapping(t *testing.T) {
 }
 
 func TestAnthropicThinkingUnsupportedRetriesWithoutIt(t *testing.T) {
-	f := newFakeServer(t, func(call int, r *http.Request, raw []byte) (int, map[string]string, string) {
+	f := newFakeServer(t, func(call int, _ *http.Request, _ []byte) (int, map[string]string, string) {
 		if call == 1 {
 			return 400, nil, `{"type":"error","error":{"type":"invalid_request_error","message":"thinking.type.enabled is not supported by this model"}}`
 		}

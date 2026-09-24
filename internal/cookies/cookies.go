@@ -9,6 +9,7 @@ import (
 	"net/http"
 )
 
+// Sentinel errors for cookie-store lookups.
 var (
 	ErrNotFound = errors.New("cookies: not found")
 	ErrDecrypt  = errors.New("cookies: decrypt failed")

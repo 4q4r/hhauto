@@ -27,7 +27,7 @@ func (db *DB) MetricsSnapshot(ctx context.Context, day string) (map[string]int, 
 	if err != nil {
 		return nil, fmt.Errorf("store: MetricsSnapshot: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
 
 	out := make(map[string]int)
 	for rows.Next() {

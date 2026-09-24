@@ -352,39 +352,39 @@ func (rt *Runtime) registerFeatureHandlers(lift *autolift.Feature, apply *multia
 		rt.handlers[kind] = fn
 	}
 	if rt.Cfg.Features.AutoLift.Enabled {
-		set(queue.KindLift, func(ctx context.Context, tc *engine.TaskContext, task queue.Task) error {
+		set(queue.KindLift, func(ctx context.Context, _ *engine.TaskContext, task queue.Task) error {
 			return lift.HandleTask(ctx, task)
 		})
 	}
 	if rt.Cfg.Features.MultiApply.Enabled {
-		set(queue.KindApply, func(ctx context.Context, tc *engine.TaskContext, task queue.Task) error {
+		set(queue.KindApply, func(ctx context.Context, _ *engine.TaskContext, task queue.Task) error {
 			return apply.HandleTask(ctx, task)
 		})
 	}
 	if rt.Cfg.Features.ChatOps.Enabled {
-		set(queue.KindChatSync, func(ctx context.Context, tc *engine.TaskContext, task queue.Task) error {
+		set(queue.KindChatSync, func(ctx context.Context, _ *engine.TaskContext, task queue.Task) error {
 			return chat.HandleChatSync(ctx, task)
 		})
 	}
 	if rt.Cfg.Features.TestSolve.Enabled {
-		set(queue.KindSolveTest, func(ctx context.Context, tc *engine.TaskContext, task queue.Task) error {
+		set(queue.KindSolveTest, func(ctx context.Context, _ *engine.TaskContext, task queue.Task) error {
 			return solver.HandleSolveTest(ctx, task)
 		})
 	}
 	if rt.Cfg.Features.Contacts.Enabled {
-		set(queue.KindCollectContacts, func(ctx context.Context, tc *engine.TaskContext, task queue.Task) error {
+		set(queue.KindCollectContacts, func(ctx context.Context, _ *engine.TaskContext, task queue.Task) error {
 			return cont.HandleCollectContacts(ctx, task)
 		})
 	}
 	if rt.Cfg.Warmup.Enabled {
 		// warmup consumes KindWarmupPing; its enabled state is the
 		// top-level [warmup] toggle.
-		set(queue.KindWarmupPing, func(ctx context.Context, tc *engine.TaskContext, task queue.Task) error {
+		set(queue.KindWarmupPing, func(ctx context.Context, _ *engine.TaskContext, task queue.Task) error {
 			return warm.HandleScan(ctx, task)
 		})
 	}
 	if rt.Cfg.Features.EmailDupEnabled {
-		set(queue.KindSendEmail, func(ctx context.Context, tc *engine.TaskContext, task queue.Task) error {
+		set(queue.KindSendEmail, func(ctx context.Context, _ *engine.TaskContext, task queue.Task) error {
 			return mail.HandleSendEmail(ctx, task)
 		})
 	}
@@ -437,7 +437,7 @@ func scheduleFactory(name string, rt *Runtime) engine.TaskFactory {
 	now := func() time.Time { return time.Now() }
 	switch {
 	case name == "features.autolift":
-		return func(ctx context.Context, accountID string) (queue.Task, error) {
+		return func(_ context.Context, accountID string) (queue.Task, error) {
 			window := featurekit.LiftWindow(now())
 			return queue.Task{
 				AccountID: accountID, Kind: queue.KindLift,
@@ -447,7 +447,7 @@ func scheduleFactory(name string, rt *Runtime) engine.TaskFactory {
 			}, nil
 		}
 	case name == "chatops.poll":
-		return func(ctx context.Context, accountID string) (queue.Task, error) {
+		return func(_ context.Context, accountID string) (queue.Task, error) {
 			return queue.Task{
 				AccountID: accountID, Kind: queue.KindChatSync,
 				Priority: queue.PrioChats, DedupKey: "chatops-poll",
@@ -455,7 +455,7 @@ func scheduleFactory(name string, rt *Runtime) engine.TaskFactory {
 			}, nil
 		}
 	case name == "warmup.scan":
-		return func(ctx context.Context, accountID string) (queue.Task, error) {
+		return func(_ context.Context, accountID string) (queue.Task, error) {
 			return queue.Task{
 				AccountID: accountID, Kind: queue.KindWarmupPing,
 				Priority: queue.PrioWarmup, DedupKey: "warmup-scan",
@@ -468,7 +468,7 @@ func scheduleFactory(name string, rt *Runtime) engine.TaskFactory {
 		if !ok {
 			return nil
 		}
-		return func(ctx context.Context, _ string) (queue.Task, error) {
+		return func(_ context.Context, _ string) (queue.Task, error) {
 			return queue.Task{
 				AccountID: run.Account, Kind: queue.KindApply, RunID: runID,
 				DedupKey: "multiapply:" + runID, Priority: queue.PrioApply,
@@ -570,6 +570,8 @@ func (rt *Runtime) TaskContext(accountID string) (*engine.TaskContext, error) {
 func (rt *Runtime) Handlers() map[queue.TaskKind]engine.TaskHandler { return rt.handlers }
 
 // Schedules exposes the registered schedule bindings (status next-run).
+//
+//nolint:revive // sealed impl: schedBinding is a cli-internal wiring record; consumers live in this package
 func (rt *Runtime) Schedules() []schedBinding { return rt.schedules }
 
 // MarkEngineOwned records that engine.Run performed the graceful shutdown

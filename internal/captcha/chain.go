@@ -13,9 +13,10 @@ const (
 	EventBalance = "balance"
 )
 
-// CaptchaEvent is one audit observation about a provider attempt.
+// Event is one audit observation about a provider attempt.
+// (Unexported package prefix avoids the stutter captcha.Event.)
 // LatencyMS is the wall-clock duration of the attempt in milliseconds.
-type CaptchaEvent struct {
+type Event struct {
 	ProviderID string
 	Kind       string
 	OK         bool
@@ -24,7 +25,7 @@ type CaptchaEvent struct {
 
 type chainSolver struct {
 	providers []Solver
-	onEvent   func(CaptchaEvent)
+	onEvent   func(Event)
 }
 
 // NewChain returns a Chain that solves through providers in the given order.
@@ -35,7 +36,7 @@ type chainSolver struct {
 //
 // onEvent, when non-nil, is called exactly once per provider attempt with
 // the measured latency; a nil callback is allowed and disables auditing.
-func NewChain(providers []Solver, onEvent func(CaptchaEvent)) Chain {
+func NewChain(providers []Solver, onEvent func(Event)) Chain {
 	return &chainSolver{providers: providers, onEvent: onEvent}
 }
 
@@ -48,7 +49,7 @@ func (c *chainSolver) Solve(ctx context.Context, ch Challenge) (Solution, error)
 	for _, p := range c.providers {
 		start := time.Now()
 		sol, err := p.Solve(ctx, ch)
-		c.report(CaptchaEvent{
+		c.report(Event{
 			ProviderID: p.ID(),
 			Kind:       EventSolve,
 			OK:         err == nil,
@@ -68,7 +69,7 @@ func (c *chainSolver) Solve(ctx context.Context, ch Challenge) (Solution, error)
 	return Solution{}, fmt.Errorf("%w: tried %d provider(s), last error: %w", ErrAllFailed, len(c.providers), lastErr)
 }
 
-func (c *chainSolver) report(e CaptchaEvent) {
+func (c *chainSolver) report(e Event) {
 	if c.onEvent != nil {
 		c.onEvent(e)
 	}

@@ -50,16 +50,16 @@ type hhFake struct {
 	updated   time.Time // updated_at served after a successful touch
 }
 
-func newHHFake(t *testing.T, db *store.DB, resumes ...fakeResume) *hhFake {
+func newHHFake(t *testing.T, _ *store.DB, resumes ...fakeResume) *hhFake {
 	t.Helper()
 	f := &hhFake{t: t, resumes: resumes, updated: time.Now()}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /applicant/settings", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /applicant/settings", func(w http.ResponseWriter, _ *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: "tok_test", Path: "/"})
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = io.WriteString(w, xsrfPage)
 	})
-	mux.HandleFunc("GET /shards/applicant/resumes", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /shards/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		_, _ = io.WriteString(w, f.resumesJSON())
@@ -206,7 +206,7 @@ type fakeChain struct {
 	err    error
 }
 
-func (c *fakeChain) Solve(ctx context.Context, ch captcha.Challenge) (captcha.Solution, error) {
+func (c *fakeChain) Solve(_ context.Context, _ captcha.Challenge) (captcha.Solution, error) {
 	c.solves++
 	if c.err != nil {
 		return captcha.Solution{}, c.err

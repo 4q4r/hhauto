@@ -32,7 +32,7 @@ func newOnboardingCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "onboarding",
 		Short: "Interactive first-run wizard: config skeleton, account, cookies, session check, profile.md",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runOnboarding(cmd.Context(), outFor(cmd))
 		},
 	}
@@ -41,9 +41,8 @@ func newOnboardingCmd() *cobra.Command {
 // interactive abstracts terminal input (tests never drive it; the brief
 // keeps the wizard untested and the logic functions tested).
 type interactive struct {
-	in    *bufio.Reader
-	out   out
-	close func()
+	in  *bufio.Reader
+	out out
 }
 
 func newInteractive(o out) *interactive {

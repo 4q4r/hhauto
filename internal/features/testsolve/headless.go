@@ -23,6 +23,7 @@
 //
 // Screenshots are forbidden by policy: the artifacts of a run are the
 // serialized DOM and the answers JSON, stored on the assessment row.
+
 package testsolve
 
 import (
@@ -86,18 +87,18 @@ type FillRequest struct {
 type SubmitState int
 
 const (
-	// SubmitNotRequested: policy is human (or the run became unsure) —
-	// the form was filled but nothing was clicked.
+	// SubmitNotRequested means the policy is human (or the run became
+	// unsure) — the form was filled but nothing was clicked.
 	SubmitNotRequested SubmitState = iota
-	// SubmitClicked: policy auto, the submit control was clicked once.
+	// SubmitClicked means policy auto and the submit control was clicked once.
 	SubmitClicked
-	// SubmitAlreadyDone: the extsubmit intent was already settled — a
+	// SubmitAlreadyDone means the extsubmit intent was already settled — a
 	// previous run consumed it. NEVER clicked again.
 	SubmitAlreadyDone
-	// SubmitAlreadyPending: another run holds a live extsubmit intent.
+	// SubmitAlreadyPending means another run holds a live extsubmit intent.
 	SubmitAlreadyPending
-	// SubmitConsumed: the click answer was lost after dispatch; the intent
-	// was settled done so no replay can double-submit.
+	// SubmitConsumed means the click answer was lost after dispatch; the
+	// intent was settled done so no replay can double-submit.
 	SubmitConsumed
 )
 

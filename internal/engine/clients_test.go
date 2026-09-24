@@ -16,7 +16,7 @@ func TestBuildAPIClientsBuildsPerAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }() // test teardown
 	ck := &fakeCookies{loadOK: true}
 
 	cfg := &config.Config{}

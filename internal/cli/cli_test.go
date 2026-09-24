@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"hhauto/internal/store"
 )
 
 // runRoot executes the CLI with args against a fresh root command and
@@ -86,7 +88,7 @@ func TestReviewResolveAndIgnoreCmd(t *testing.T) {
 	if aerr != nil {
 		t.Fatal(aerr)
 	}
-	rt.Close()
+	_ = rt.Close() // test teardown
 
 	out, err := runRoot(t, "review", "resolve", "not-a-number", "--config", cfgPath)
 	if err == nil {
@@ -105,7 +107,7 @@ func TestReviewResolveAndIgnoreCmd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rt2.Close()
+	defer func() { _ = rt2.Close() }() // test teardown
 	open, oerr := rt2.DB.ReviewItemsOpen(newContext(), "main", 100)
 	if oerr != nil {
 		t.Fatal(oerr)
@@ -124,7 +126,7 @@ func TestReviewListCmd(t *testing.T) {
 	if _, err := rt.DB.ReviewItemsAdd(newContext(), "main", "offer_received", "seed", `{}`); err != nil {
 		t.Fatal(err)
 	}
-	rt.Close()
+	_ = rt.Close() // test teardown
 
 	out, err := runRoot(t, "review", "list", "--config", cfgPath)
 	if err != nil {
@@ -209,3 +211,67 @@ func TestAccountRemoveRequiresYes(t *testing.T) {
 func itoa(n int64) string {
 	return strconv.FormatInt(n, 10)
 }
+
+// stop arms the kill switch through the config's data_dir: the STOP file
+// must exist at engine.StopFilePath and the path must be echoed back.
+func TestStopCmdWritesKillSwitchFile(t *testing.T) {
+	cfgPath, dataDir := newFakeHHConfig(t)
+
+	out, err := runRoot(t, "stop", "--config", cfgPath)
+	if err != nil {
+		t.Fatalf("stop: %v\n%s", err, out)
+	}
+	stopPath := filepath.Join(dataDir, "STOP")
+	if _, serr := os.Stat(stopPath); serr != nil {
+		t.Fatalf("STOP file not written: %v", serr)
+	}
+	if !strings.Contains(out, stopPath) {
+		t.Fatalf("output must include the STOP path %q, got: %s", stopPath, out)
+	}
+}
+
+// ai compare aggregates ai_decisions per (prompt_ver, model) for the two
+// experiment keys over the period and prints the comparison table.
+func TestAICompareCmd(t *testing.T) {
+	cfgPath, _ := newFakeHHConfig(t)
+
+	rt, err := Build(newContext(), BuildOptions{ConfigPath: cfgPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := newContext()
+	must := func(d *store.AIDecision) {
+		t.Helper()
+		if aerr := rt.DB.AIDecisionsAdd(ctx, d); aerr != nil {
+			t.Fatal(aerr)
+		}
+	}
+	must(&store.AIDecision{AccountID: "main", Task: "vacancy_scoring", PromptVer: "v1", Model: "m1", NeedsHuman: true, Confidence: ptrF(0.6), LatencyMS: 400, CostUSD: 0.01})
+	must(&store.AIDecision{AccountID: "main", Task: "vacancy_scoring", PromptVer: "v1", Model: "m1", NeedsHuman: false, Confidence: ptrF(0.8), LatencyMS: 600, CostUSD: 0.01})
+	must(&store.AIDecision{AccountID: "main", Task: "vacancy_scoring", PromptVer: "v2", Model: "m1", NeedsHuman: false, LatencyMS: 100, CostUSD: 0.02})
+	if cerr := rt.Close(); cerr != nil {
+		t.Fatal(cerr)
+	}
+
+	out, err := runRoot(t, "ai", "compare", "v1", "v2", "--config", cfgPath)
+	if err != nil {
+		t.Fatalf("ai compare: %v\n%s", err, out)
+	}
+	for _, want := range []string{"v1", "v2", "m1", "NEEDS_HUMAN", "CONFIDENCE", "LATENCY", "COST"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q:\n%s", want, out)
+		}
+	}
+
+	jsonOut, err := runRoot(t, "ai", "compare", "v1", "v2", "--json", "--config", cfgPath)
+	if err != nil {
+		t.Fatalf("ai compare --json: %v\n%s", err, jsonOut)
+	}
+	for _, want := range []string{`"prompt_ver": "v1"`, `"prompt_ver": "v2"`, `"needs_human_pct": 50`} {
+		if !strings.Contains(jsonOut, want) {
+			t.Fatalf("json output missing %q:\n%s", want, jsonOut)
+		}
+	}
+}
+
+func ptrF(v float64) *float64 { return &v }

@@ -58,7 +58,7 @@ func (db *DB) AIDecisionsByEntity(ctx context.Context, accountID, task, entityTy
 	if err != nil {
 		return nil, fmt.Errorf("store: AIDecisionsByEntity: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
 
 	var out []AIDecision
 	for rows.Next() {
@@ -103,6 +103,52 @@ func (db *DB) AIDecisionsSumTokensDayAll(ctx context.Context, day string) (int, 
 		return 0, 0, fmt.Errorf("store: AIDecisionsSumTokensDayAll: %w", err)
 	}
 	return tokens, cost, nil
+}
+
+// AIExperimentGroup is one (prompt_ver, model) bucket of ai_decisions inside
+// the A/B comparison window (`hhauto ai compare`). The schema has no variant
+// column, so the two experiment keys are matched against prompt_ver or model.
+type AIExperimentGroup struct {
+	PromptVer     string
+	Model         string
+	Decisions     int
+	NeedsHuman    int
+	ConfidenceN   int     // decisions with a non-null confidence
+	ConfidenceSum float64 // sum over ConfidenceN
+	LatencyMS     int64
+	CostUSD       float64
+}
+
+// AIDecisionsExperimentGroups aggregates the ai_decisions created on/after
+// sinceDay ("YYYY-MM-DD", UTC prefix) whose prompt_ver or model matches one
+// of the two experiment keys, grouped by (prompt_ver, model).
+func (db *DB) AIDecisionsExperimentGroups(ctx context.Context, sinceDay string, keys [2]string) ([]AIExperimentGroup, error) {
+	rows, err := db.conn.QueryContext(ctx, `
+		SELECT COALESCE(prompt_ver, ''), COALESCE(model, ''), COUNT(*),
+		       COALESCE(SUM(needs_human), 0), COUNT(confidence),
+		       COALESCE(SUM(confidence), 0), COALESCE(SUM(latency_ms), 0),
+		       COALESCE(SUM(cost_usd), 0)
+		FROM ai_decisions
+		WHERE substr(created_at, 1, 10) >= ?
+		  AND (prompt_ver IN (?, ?) OR model IN (?, ?))
+		GROUP BY prompt_ver, model
+		ORDER BY prompt_ver, model`,
+		sinceDay, keys[0], keys[1], keys[0], keys[1])
+	if err != nil {
+		return nil, fmt.Errorf("store: AIDecisionsExperimentGroups: %w", err)
+	}
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
+
+	var out []AIExperimentGroup
+	for rows.Next() {
+		var g AIExperimentGroup
+		if err := rows.Scan(&g.PromptVer, &g.Model, &g.Decisions, &g.NeedsHuman,
+			&g.ConfidenceN, &g.ConfidenceSum, &g.LatencyMS, &g.CostUSD); err != nil {
+			return nil, fmt.Errorf("store: AIDecisionsExperimentGroups scan: %w", err)
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
 }
 
 func scanAIDecision(rs rowScanner) (*AIDecision, error) {

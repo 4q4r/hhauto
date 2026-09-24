@@ -117,7 +117,7 @@ func (r *redeliverer) Redeliver(ctx context.Context, item webhook.OutboxItem) er
 	if err != nil {
 		return fmt.Errorf("outbox redelivery %s: POST: %w", t.url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // body drained; close error is not actionable
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil

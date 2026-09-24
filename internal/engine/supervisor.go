@@ -348,7 +348,6 @@ func (s *supervisor) specWithDefaultTZ(spec scheduler.Spec) (scheduler.Spec, err
 		tz = s.deps.Cfg.General.Timezone
 	}
 	if tz == "" || strings.EqualFold(tz, "Local") {
-		tz = "Local"
 		return spec, nil
 	}
 	if _, err := time.LoadLocation(tz); err != nil {
@@ -826,10 +825,10 @@ func (s *supervisor) redeliverOne(ctx context.Context, item webhook.OutboxItem) 
 // delivery is best-effort by contract, but the payload is the operator's).
 func outboxBackoff(attempt int) time.Duration {
 	const base = time.Minute
-	const max = time.Hour
+	const maxDelay = time.Hour
 	d := base << uint(attempt-1)
-	if d <= 0 || d > max {
-		return max
+	if d <= 0 || d > maxDelay {
+		return maxDelay
 	}
 	return d
 }

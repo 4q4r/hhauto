@@ -36,6 +36,8 @@ func NewMemoryCache() *MemoryCache {
 	return &MemoryCache{entries: map[string]memoryEntry{}, now: time.Now}
 }
 
+// Get returns the cached verdict for key when present and unexpired; an
+// expired entry is dropped lazily. A miss is (nil, false, nil).
 func (c *MemoryCache) Get(_ context.Context, key string) (json.RawMessage, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -50,6 +52,7 @@ func (c *MemoryCache) Get(_ context.Context, key string) (json.RawMessage, bool,
 	return e.verdict, true, nil
 }
 
+// Set stores verdict under key for ttl; ttl <= 0 is a no-op.
 func (c *MemoryCache) Set(_ context.Context, key string, verdict json.RawMessage, ttl time.Duration) error {
 	if ttl <= 0 {
 		return nil

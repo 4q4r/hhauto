@@ -30,7 +30,7 @@ type fakeAPI struct {
 	calls  int
 }
 
-func (f *fakeAPI) EmployerRating(ctx context.Context, id int64) (*hhapi.EmployerRating, error) {
+func (f *fakeAPI) EmployerRating(_ context.Context, _ int64) (*hhapi.EmployerRating, error) {
 	f.calls++
 	if f.err != nil {
 		return nil, f.err

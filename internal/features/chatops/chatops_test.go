@@ -597,7 +597,7 @@ func TestSyncLeaveAmbiguousReconcilesNextCycle(t *testing.T) {
 	}
 	// leave fires and the mutation outcome is unknown
 	h.now = h.now.Add(time.Hour)
-	h.api.leaveErr = func(chatik string, call int) error {
+	h.api.leaveErr = func(_ string, _ int) error {
 		return &hhapi.AmbiguousError{Err: errors.New("conn reset")}
 	}
 	h.api.chats = []hhapi.Chat{chatik("chat1", 0, msgAt)}

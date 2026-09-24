@@ -13,6 +13,8 @@ import (
 // TaskName enumerates the 8 AI tasks.
 type TaskName string
 
+// The eight task names as they appear in config [ai.tasks] and the
+// ai_decisions ledger.
 const (
 	TaskVacancyScoring TaskName = "vacancy_scoring"
 	TaskCoverLetter    TaskName = "cover_letter"

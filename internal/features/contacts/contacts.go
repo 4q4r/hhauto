@@ -1,3 +1,6 @@
+// Package contacts implements the employer-contact collection feature
+// (WF6): employer cards and chat profiles are normalized, merged and stored
+// as deduplicated contact rows feeding emaildup.
 package contacts
 
 import (
@@ -65,7 +68,7 @@ func (f *Feature) Enabled() bool { return f.Cfg.Features.Contacts.Enabled }
 // multiapply enqueues KindCollectContacts after every APPLY and chatops
 // enqueues it when a chat reveals an employer — there is nothing to seed on
 // a schedule, so this only retains the queue handle.
-func (f *Feature) RegisterTasks(ctx context.Context, q queue.Queue, _ *scheduler.Registry) error {
+func (f *Feature) RegisterTasks(_ context.Context, q queue.Queue, _ *scheduler.Registry) error {
 	f.Queue = q
 	return nil
 }
@@ -137,7 +140,7 @@ type SendPayloadAlias = emaildup.SendPayload
 // the mandated entry point for T10/T12): api.EmployerContacts is normalized
 // (E.164 phones, lowercase emails), merged with any previously stored row and
 // deduplicated by the store UNIQUE(account, employer, source).
-func CollectForVacancy(ctx context.Context, db *store.DB, api hhapi.HHAPI, runner ai.Runner,
+func CollectForVacancy(ctx context.Context, db *store.DB, api hhapi.HHAPI, _ ai.Runner,
 	accountID string, employerID, vacancyID int64) (Collected, error) {
 	if db == nil {
 		return Collected{}, errors.New("contacts: db is nil")

@@ -41,16 +41,16 @@ func ParseJitterRange(s string) (time.Duration, time.Duration, error) {
 	return mn, mx, nil
 }
 
-// JitterDuration draws uniformly from [min, max]. A nil rnd or a degenerate
-// range returns min (0 when both are zero) — never panics.
-func JitterDuration(min, max time.Duration, rnd *rand.Rand) time.Duration {
-	if max <= min {
-		return min
+// JitterDuration draws uniformly from [lo, hi]. A nil rnd or a degenerate
+// range returns lo (0 when both are zero) — never panics.
+func JitterDuration(lo, hi time.Duration, rnd *rand.Rand) time.Duration {
+	if hi <= lo {
+		return lo
 	}
 	if rnd == nil {
-		return min
+		return lo
 	}
-	return min + time.Duration(rnd.Int63n(int64(max-min+1)))
+	return lo + time.Duration(rnd.Int63n(int64(hi-lo+1)))
 }
 
 // durationUnit returns the trailing unit suffix of a duration string

@@ -70,12 +70,12 @@ func (c httpJSONClient) postBody(ctx context.Context, method, endpoint string, b
 	return c.roundTrip(ctx, req)
 }
 
-func (c httpJSONClient) roundTrip(ctx context.Context, req *http.Request) ([]byte, error) {
+func (c httpJSONClient) roundTrip(_ context.Context, req *http.Request) ([]byte, error) {
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("captcha: %s %s: %w", req.Method, redactedHost(req.URL.String()), err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // body consumed below; close error is not actionable
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {

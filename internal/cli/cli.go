@@ -60,6 +60,7 @@ func newRootCmd() *cobra.Command {
 		newOnboardingCmd(),
 		newAccountCmd(),
 		newRunCmd(),
+		newStopCmd(),
 		newStatusCmd(),
 		newFunnelCmd(),
 		newVacanciesCmd(),

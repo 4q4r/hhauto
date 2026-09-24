@@ -37,7 +37,7 @@ func (db *DB) WebhookOutboxDue(ctx context.Context, now time.Time, limit int) ([
 	if err != nil {
 		return nil, fmt.Errorf("store: WebhookOutboxDue: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
 
 	var out []OutboxItem
 	for rows.Next() {

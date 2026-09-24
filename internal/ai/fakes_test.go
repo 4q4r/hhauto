@@ -35,7 +35,7 @@ func (l *fakeLedger) Add(rec *DecisionRecord) error {
 	return nil
 }
 
-func (l *fakeLedger) SumTokensDay(day string) (int, float64) {
+func (l *fakeLedger) SumTokensDay(_ string) (int, float64) {
 	if l.dayTokens != nil {
 		l.mu.Lock()
 		defer l.mu.Unlock()
@@ -58,7 +58,7 @@ type scriptedProvider struct {
 	lastUser string
 }
 
-func (s *scriptedProvider) Complete(ctx context.Context, req Request) (Response, error) {
+func (s *scriptedProvider) Complete(_ context.Context, req Request) (Response, error) {
 	s.mu.Lock()
 	s.calls++
 	saved := req

@@ -22,7 +22,7 @@ func TestBuildWiringAndRunOnceDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	defer rt.Close()
+	defer func() { _ = rt.Close() }() // test teardown
 
 	// Features registered; the three enabled ones present.
 	names := map[string]bool{}
@@ -107,7 +107,7 @@ func TestRunOnceRespectsDryRunFlagFromCommand(t *testing.T) {
 	if !rt.Cfg.General.DryRun {
 		t.Fatal("--dry-run did not propagate into the config copy before feature construction")
 	}
-	rt.Close()
+	_ = rt.Close() // test teardown
 }
 
 func TestStatusJSON(t *testing.T) {
@@ -116,7 +116,7 @@ func TestStatusJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rt.Close()
+	defer func() { _ = rt.Close() }() // test teardown
 
 	old := flags.json
 	flags.json = true
@@ -144,7 +144,7 @@ func TestFunnelReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rt.Close()
+	defer func() { _ = rt.Close() }() // test teardown
 
 	// Seed one day of funnel counters.
 	day := audit.Day()
@@ -182,7 +182,7 @@ func TestStatusNextRunPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rt.Close()
+	defer func() { _ = rt.Close() }() // test teardown
 	if len(rt.Schedules()) == 0 {
 		t.Fatal("no schedules registered for next-run preview")
 	}

@@ -496,7 +496,7 @@ func TestHandleSolveTestPacerWaitsBeforeFetch(t *testing.T) {
 // errors, nothing is fetched from the foreign host, and the abort is
 // recorded as a phishing suspect (permanent, not requeued).
 func TestHandleSolveTestRedirectToForeignHostAborts(t *testing.T) {
-	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	foreign := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("foreign host must never be fetched")
 	}))
 	defer foreign.Close()

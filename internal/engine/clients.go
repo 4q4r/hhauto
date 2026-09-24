@@ -61,8 +61,8 @@ func BuildAPIClients(ctx context.Context, cfg *config.Config, reg proxy.Registry
 		if ckStore != nil {
 			client.SetPersister(cookiePersister{store: ckStore}, id)
 			cks, err := ckStore.Load(ctx, id)
-			switch {
-			case err == nil:
+			switch err {
+			case nil:
 				if lerr := client.LoadCookies(ctx, cks); lerr != nil {
 					return nil, fmt.Errorf("engine: account %s: load cookies: %w", id, lerr)
 				}

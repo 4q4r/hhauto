@@ -43,7 +43,7 @@ func (db *DB) PingQueueDue(ctx context.Context, now time.Time, limit int) ([]Pin
 	if err != nil {
 		return nil, fmt.Errorf("store: PingQueueDue: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
 
 	var out []PingJob
 	for rows.Next() {

@@ -96,16 +96,21 @@ type ModelProfiles struct {
 	noTemp map[string]bool
 }
 
+// NewModelProfiles builds an empty model-profile registry.
 func NewModelProfiles() *ModelProfiles {
 	return &ModelProfiles{noTemp: map[string]bool{}}
 }
 
+// TemperatureUnsupported reports whether the model rejects the temperature
+// parameter (learned from a provider rejection and cached in-process).
 func (p *ModelProfiles) TemperatureUnsupported(model string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.noTemp[model]
 }
 
+// SetTemperatureUnsupported records that the model rejects the temperature
+// parameter.
 func (p *ModelProfiles) SetTemperatureUnsupported(model string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -270,7 +275,7 @@ func (b *baseProvider) once(ctx context.Context, model, url string, headers map[
 	if err != nil {
 		return nil, &APIError{ProviderID: b.id, Dialect: b.dialect, Model: model, Message: err.Error(), Retryable: true}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // body consumed below; close error is not actionable
 	data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if resp.StatusCode == http.StatusTooManyRequests {
 		e := &APIError{
@@ -402,10 +407,12 @@ func NewBoundProvider(p Provider, model string) (Provider, error) {
 	return &BoundProvider{inner: mc, model: model}, nil
 }
 
+// Complete implements the ai Runner surface for a model-bound provider.
 func (b *BoundProvider) Complete(ctx context.Context, req Request) (Response, error) {
 	return b.inner.completeModel(ctx, b.model, req)
 }
 
+// Dialect returns the wrapped provider's wire dialect.
 func (b *BoundProvider) Dialect() string {
 	if d, ok := b.inner.(interface{ Dialect() string }); ok {
 		return d.Dialect()
@@ -427,15 +434,6 @@ func effortAllowedOpenAI(effort string) bool {
 // openAIHeaders are the shared auth headers of both OpenAI dialects.
 func openAIHeaders(key string) map[string]string {
 	return map[string]string{"Authorization": "Bearer " + key}
-}
-
-// withTemperature returns the request temperature, or 0 when the parameter
-// must be omitted (config 0 means "provider default").
-func withTemperature(req Request, model string, profiles *ModelProfiles) (float64, bool) {
-	if req.Temperature <= 0 || profiles.TemperatureUnsupported(model) {
-		return 0, false
-	}
-	return req.Temperature, true
 }
 
 // schemaNameFor returns the strict-mode schema name for a task; OpenAI

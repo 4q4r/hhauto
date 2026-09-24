@@ -24,7 +24,7 @@ type OpenAIResponsesProvider struct {
 
 // NewOpenAIResponsesProvider builds the dialect adapter for one provider config.
 func NewOpenAIResponsesProvider(id string, cfg config.AIProvider, opts ...Option) (*OpenAIResponsesProvider, error) {
-	base, err := newBaseProvider(id, cfg, DialectOpenAIResponses, providerDeps(opts2deps(opts)))
+	base, err := newBaseProvider(id, cfg, DialectOpenAIResponses, opts2deps(opts))
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +180,7 @@ func (p *OpenAIResponsesProvider) parseReply(model string, body []byte, start ti
 }
 
 // Complete implements Provider; use NewBoundProvider to fix the model name.
-func (p *OpenAIResponsesProvider) Complete(ctx context.Context, req Request) (Response, error) {
+func (p *OpenAIResponsesProvider) Complete(_ context.Context, _ Request) (Response, error) {
 	return Response{}, fmt.Errorf("ai: openai-responses provider %q is not bound to a model; wrap it with NewBoundProvider", p.base.id)
 }
 

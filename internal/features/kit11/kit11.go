@@ -156,16 +156,16 @@ func IsWeekend(t time.Time) bool {
 	return t.Weekday() == time.Saturday || t.Weekday() == time.Sunday
 }
 
-// HumanizedDelay returns a random duration in [min, max] (inclusive bounds
+// HumanizedDelay returns a random duration in [lo, hi] (inclusive bounds
 // on the second granularity) used to disguise mechanical timing.
-func HumanizedDelay(min, max time.Duration, rnd *rand.Rand) time.Duration {
-	if max <= min {
-		return min
+func HumanizedDelay(lo, hi time.Duration, rnd *rand.Rand) time.Duration {
+	if hi <= lo {
+		return lo
 	}
 	if rnd == nil {
 		rnd = rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 1))
 	}
-	return min + time.Duration(rnd.Int64N(int64(max-min)+int64(time.Second)))
+	return lo + time.Duration(rnd.Int64N(int64(hi-lo)+int64(time.Second)))
 }
 
 // Day renders the UTC day bucket ("YYYY-MM-DD") used by MetricsIncr.
@@ -187,7 +187,16 @@ func CollectQueuedMarker(employerID int64) string {
 
 // RenderProfile builds the trusted candidate-context prompt block for an
 // account (resume snapshot + profile.md + stored facts) via internal/profile.
+// The accounts row is ensured first: the resume write-through inserts rows
+// whose FOREIGN KEY points at accounts(id), and a chatops/testsolve boot can
+// run before the first multiapply has created the row (T14 finding).
 func RenderProfile(ctx context.Context, cfg config.Config, accountID string, db *store.DB, api hhapi.HHAPI) (string, error) {
+	if db == nil {
+		return "", errors.New("kit11: db is nil")
+	}
+	if err := db.AccountsUpsert(ctx, store.Account{ID: accountID}); err != nil {
+		return "", fmt.Errorf("kit11: ensure account row for %s: %w", accountID, err)
+	}
 	p, err := profile.LoadUserContext(ctx, cfg, accountID, db, api)
 	if err != nil {
 		return "", fmt.Errorf("kit11: render profile for %s: %w", accountID, err)

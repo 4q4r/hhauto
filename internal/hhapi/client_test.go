@@ -107,7 +107,7 @@ func (env *testEnv) serve(mux *http.ServeMux, serverTag, method, pattern string,
 // serveSettings registers the settings fixture with session cookies
 // (xsrf + DDoS-Guard sentinel), as hh.ru would set them.
 func (env *testEnv) serveSettings() {
-	env.serve(env.mux1, "1", "GET", "/applicant/settings", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux1, "1", "GET", "/applicant/settings", func(w http.ResponseWriter, _ *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: "tok_abc123", Path: "/"})
 		http.SetCookie(w, &http.Cookie{Name: "__ddg8", Value: "geo-sentinel", Path: "/"})
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -285,7 +285,7 @@ func TestErrorMappingTable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			env := newTestEnv(t)
-			env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, r *http.Request) {
+			env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(tc.status)
 				_, _ = w.Write([]byte(tc.body))
 			})
@@ -305,7 +305,7 @@ func TestErrorMappingTable(t *testing.T) {
 func TestGETRetriesOn5xxThenSucceeds(t *testing.T) {
 	env := newTestEnv(t)
 	calls := 0
-	env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
 		calls++
 		if calls < 3 {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -331,7 +331,7 @@ func TestGETRetriesOn5xxThenSucceeds(t *testing.T) {
 func TestGETRetriesOn429HonoringRetryAfter(t *testing.T) {
 	env := newTestEnv(t)
 	calls := 0
-	env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
 		calls++
 		if calls == 1 {
 			w.Header().Set("Retry-After", "1")
@@ -356,7 +356,7 @@ func TestApplyPOSTIsNeverRetriedOnGatewayErrors(t *testing.T) {
 	for _, status := range []int{502, 504} {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			env := newTestEnv(t)
-			env.serve(env.mux1, "1", "POST", "/applicant/vacancy_response/popup", func(w http.ResponseWriter, r *http.Request) {
+			env.serve(env.mux1, "1", "POST", "/applicant/vacancy_response/popup", func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(status)
 			})
 			c := env.client()
@@ -376,7 +376,7 @@ func TestApplyPOSTIsNeverRetriedOnGatewayErrors(t *testing.T) {
 
 func TestApplyPOSTValidationErrorNotAmbiguous(t *testing.T) {
 	env := newTestEnv(t)
-	env.serve(env.mux1, "1", "POST", "/applicant/vacancy_response/popup", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux1, "1", "POST", "/applicant/vacancy_response/popup", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_, _ = w.Write([]byte(`{"error":{"required":"letter"}}`))
 	})
@@ -395,7 +395,7 @@ func TestApplyPOSTValidationErrorNotAmbiguous(t *testing.T) {
 
 func TestApplyNegotiationsLimit(t *testing.T) {
 	env := newTestEnv(t)
-	env.serve(env.mux1, "1", "POST", "/applicant/vacancy_response/popup", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux1, "1", "POST", "/applicant/vacancy_response/popup", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"success":false,"negotiationsLimitExceeded":true}`))
 	})
 	c := env.client()
@@ -412,7 +412,7 @@ func TestApplyRedirectToLimitPage(t *testing.T) {
 	env.serve(env.mux1, "1", "POST", "/applicant/vacancy_response/popup", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/applicant/negotiations-limit-exceeded?from=popup", http.StatusFound)
 	})
-	env.serve(env.mux1, "1", "GET", "/applicant/negotiations-limit-exceeded", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux1, "1", "GET", "/applicant/negotiations-limit-exceeded", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`<html><body>negotiations-limit-exceeded</body></html>`))
 	})
 	c := env.client()
@@ -431,7 +431,7 @@ func TestTouchCaptchaRedirect302(t *testing.T) {
 	env.serve(env.mux1, "1", "POST", "/applicant/resumes/touch", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/captcha/challenge", http.StatusFound)
 	})
-	env.serve(env.mux1, "1", "GET", "/captcha/challenge", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux1, "1", "GET", "/captcha/challenge", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(readFixture(t, "captcha_page.html"))
 	})
 	c := env.client()
@@ -445,7 +445,7 @@ func TestTouchCaptchaRedirect302(t *testing.T) {
 
 func TestTouchCaptchaJSONVerdict(t *testing.T) {
 	env := newTestEnv(t)
-	env.serve(env.mux1, "1", "POST", "/applicant/resumes/touch", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux1, "1", "POST", "/applicant/resumes/touch", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"hhcaptcha":{"isBot":true}}`))
 	})
 	c := env.client()
@@ -526,10 +526,10 @@ func TestRedirectPinsRegionalHost(t *testing.T) {
 		target := env.srv2.URL + "/search/vacancy?" + r.URL.RawQuery
 		http.Redirect(w, r, target, http.StatusFound)
 	})
-	env.serve(env.mux2, "2", "GET", "/search/vacancy", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux2, "2", "GET", "/search/vacancy", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(readFixture(t, "search.html"))
 	})
-	env.serve(env.mux2, "2", "GET", "/vacancy/777001", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux2, "2", "GET", "/vacancy/777001", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(readFixture(t, "vacancy.html"))
 	})
 	c := env.client()
@@ -653,7 +653,7 @@ func TestSearchModeNormalAndWide(t *testing.T) {
 
 func TestSuitableVacanciesFromSSR(t *testing.T) {
 	env := newTestEnv(t)
-	env.serve(env.mux1, "1", "GET", "/applicant/resumes", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux1, "1", "GET", "/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(readFixture(t, "resume_page.html"))
 	})
 	c := env.client()
@@ -676,7 +676,7 @@ func TestVacancyCardAndEmployerFromSSR(t *testing.T) {
 		}
 		_, _ = w.Write(readFixture(t, "vacancy.html"))
 	})
-	env.serve(env.mux1, "1", "GET", "/employer/9001", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux1, "1", "GET", "/employer/9001", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(readFixture(t, "employer.html"))
 	})
 	c := env.client()
@@ -759,7 +759,7 @@ func TestApplyPopupMeta(t *testing.T) {
 
 func TestNegotiationsFromSSR(t *testing.T) {
 	env := newTestEnv(t)
-	env.serve(env.mux1, "1", "GET", "/applicant/negotiations", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux1, "1", "GET", "/applicant/negotiations", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(readFixture(t, "negotiations.html"))
 	})
 	c := env.client()
@@ -827,7 +827,7 @@ func TestListChatsAndHistory(t *testing.T) {
 func TestSendMessageRetriesWithStableIdempotencyKey(t *testing.T) {
 	env := newTestEnv(t)
 	calls := 0
-	env.serve(env.mux1, "1", "POST", "/chatik/api/send", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux1, "1", "POST", "/chatik/api/send", func(w http.ResponseWriter, _ *http.Request) {
 		calls++
 		if calls < 3 {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -868,7 +868,7 @@ func TestSendMessageRetriesWithStableIdempotencyKey(t *testing.T) {
 
 func TestSendMessage5xxStaysAmbiguousAfterRetries(t *testing.T) {
 	env := newTestEnv(t)
-	env.serve(env.mux1, "1", "POST", "/chatik/api/send", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux1, "1", "POST", "/chatik/api/send", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
 	})
 	c := env.client()
@@ -887,7 +887,7 @@ func TestSendMessage5xxStaysAmbiguousAfterRetries(t *testing.T) {
 
 func TestLeaveChat(t *testing.T) {
 	env := newTestEnv(t)
-	env.serve(env.mux1, "1", "POST", "/chatik/api/participant_action", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux1, "1", "POST", "/chatik/api/participant_action", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{}`))
 	})
 	c := env.client()

@@ -60,12 +60,15 @@ func startFakeSocks5(t *testing.T, wantUser, wantPass string, failAuth bool, rel
 			wg.Add(1)
 			go func(c net.Conn) {
 				defer wg.Done()
-				defer c.Close()
+				defer func() { _ = c.Close() }() // test teardown
 				handleFakeSocks5(t, c, wantUser, wantPass, failAuth, relayTo, ch)
 			}(conn)
 		}
 	}()
-	return ln.Addr().String(), ch, func() { ln.Close(); wg.Wait() }
+	return ln.Addr().String(), ch, func() {
+		_ = ln.Close() // test teardown
+		wg.Wait()
+	}
 }
 
 func handleFakeSocks5(t *testing.T, c net.Conn, wantUser, wantPass string, failAuth bool, relayTo string, reqs chan<- socksRequest) {
@@ -191,11 +194,11 @@ func handleFakeSocks5(t *testing.T, c net.Conn, wantUser, wantPass string, failA
 
 	upstream, err := net.Dial("tcp", relayTo)
 	if err != nil {
-		c.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		_, _ = c.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0}) // broken client: writes are best-effort
 		return
 	}
-	defer upstream.Close()
-	c.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}) // success
+	defer func() { _ = upstream.Close() }()                          // test teardown
+	_, _ = c.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}) // success
 	relayBoth(c, r, upstream)
 }
 
@@ -204,26 +207,12 @@ func handleFakeSocks5(t *testing.T, c net.Conn, wantUser, wantPass string, failA
 // goroutine leaks on wg.Wait.
 func relayBoth(c net.Conn, clientR io.Reader, upstream net.Conn) {
 	go func() {
-		io.Copy(upstream, clientR)
-		upstream.Close()
+		_, _ = io.Copy(upstream, clientR) // relay: teardown errors are not actionable
+		_ = upstream.Close()
 	}()
-	io.Copy(c, upstream)
-	c.Close()
-	upstream.Close()
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
+	_, _ = io.Copy(c, upstream)
+	_ = c.Close()
+	_ = upstream.Close()
 }
 
 // startFakeConnectProxy runs a minimal HTTP CONNECT proxy. With
@@ -252,12 +241,15 @@ func startFakeConnectProxy(t *testing.T, wantUser, wantPass string, deny bool, t
 			wg.Add(1)
 			go func(c net.Conn) {
 				defer wg.Done()
-				defer c.Close()
+				defer func() { _ = c.Close() }() // test teardown
 				handleFakeConnect(t, c, wantUser, wantPass, deny, quiet, ch)
 			}(conn)
 		}
 	}()
-	return ln.Addr().String(), ch, func() { ln.Close(); wg.Wait() }
+	return ln.Addr().String(), ch, func() {
+		_ = ln.Close() // test teardown
+		wg.Wait()
+	}
 }
 
 func handleFakeConnect(t *testing.T, c net.Conn, wantUser, wantPass string, deny, quiet bool, seen chan<- string) {
@@ -275,7 +267,7 @@ func handleFakeConnect(t *testing.T, c net.Conn, wantUser, wantPass string, deny
 		if !quiet {
 			t.Errorf("connect proxy: bad request line %q", line)
 		}
-		c.Write([]byte("HTTP/1.1 400 Bad Request\r\n\r\n"))
+		_, _ = c.Write([]byte("HTTP/1.1 400 Bad Request\r\n\r\n")) // best-effort reply to a broken client
 		return
 	}
 	target := fields[1]
@@ -298,16 +290,16 @@ func handleFakeConnect(t *testing.T, c net.Conn, wantUser, wantPass string, deny
 		want = "Basic " + base64.StdEncoding.EncodeToString([]byte(wantUser+":"+wantPass))
 	}
 	if deny || auth != want {
-		c.Write([]byte("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n"))
+		_, _ = c.Write([]byte("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n")) // best-effort reply
 		return
 	}
 	upstream, err := net.Dial("tcp", target)
 	if err != nil {
-		c.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+		_, _ = c.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n")) // best-effort reply
 		return
 	}
-	defer upstream.Close()
-	c.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+	defer func() { _ = upstream.Close() }()                               // test teardown
+	_, _ = c.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")) // best-effort reply
 	relayBoth(c, r, upstream)
 }
 
@@ -328,12 +320,15 @@ func startEchoTarget(t *testing.T) (addr string, stop func()) {
 				return
 			}
 			go func(c net.Conn) {
-				io.Copy(c, c)
-				c.Close()
+				_, _ = io.Copy(c, c) // echo server for the tunnel test
+				_ = c.Close()
 			}(conn)
 		}
 	}()
-	return ln.Addr().String(), func() { ln.Close(); wg.Wait() }
+	return ln.Addr().String(), func() {
+		_ = ln.Close() // test teardown
+		wg.Wait()
+	}
 }
 
 // testCA is a throwaway certificate authority for TLS-proxy tests. The
@@ -518,7 +513,7 @@ func TestSocks5DialThroughFakeServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DialContext: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }() // test teardown
 
 	select {
 	case req := <-reqs:
@@ -535,7 +530,7 @@ func TestSocks5DialThroughFakeServer(t *testing.T) {
 		t.Fatal("fake socks5 server saw no request")
 	}
 
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second)) // best-effort guard against a hung tunnel
 	if _, err := conn.Write([]byte("ping")); err != nil {
 		t.Fatalf("write through tunnel: %v", err)
 	}
@@ -565,7 +560,7 @@ func TestSocks5AuthFailureIsError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if conn, err := d.DialContext(ctx, "tcp", "127.0.0.1:1"); err == nil {
-		conn.Close()
+		_ = conn.Close() // unexpected success: close and fail the test below
 		t.Fatal("DialContext through rejecting socks5 server = nil error, want error")
 	}
 }
@@ -593,7 +588,7 @@ func TestHTTPConnectProxy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DialContext: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }() // test teardown
 
 	select {
 	case got := <-seen:
@@ -604,7 +599,7 @@ func TestHTTPConnectProxy(t *testing.T) {
 		t.Fatal("fake CONNECT proxy saw no request")
 	}
 
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second)) // best-effort guard against a hung tunnel
 	if _, err := conn.Write([]byte("pong")); err != nil {
 		t.Fatalf("write through tunnel: %v", err)
 	}
@@ -634,7 +629,7 @@ func TestHTTPConnectProxyBadCredentialsRejected(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if conn, err := d.DialContext(ctx, "tcp", "127.0.0.1:1"); err == nil {
-		conn.Close()
+		_ = conn.Close() // unexpected success: close and fail the test below
 		t.Fatal("DialContext with bad proxy credentials = nil error, want error (407)")
 	}
 }
@@ -668,7 +663,7 @@ func TestHTTPSProxyTLSVerification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DialContext through https proxy with valid cert: %v", err)
 	}
-	conn.Close()
+	_ = conn.Close() // positive case done; teardown
 
 	// Negative 1: trusted CA but wrong name — hostname verification is on.
 	badName := ca.issueCert(t, "other.example", nil)
@@ -685,7 +680,7 @@ func TestHTTPSProxyTLSVerification(t *testing.T) {
 		t.Fatalf("Dialer(n1): %v", err)
 	}
 	if conn, err := dN1.DialContext(ctx, "tcp", target); err == nil {
-		conn.Close()
+		_ = conn.Close() // unexpected success: close and fail the test below
 		t.Fatal("DialContext with mismatched cert name = nil error, want hostname verification error")
 	}
 
@@ -705,7 +700,7 @@ func TestHTTPSProxyTLSVerification(t *testing.T) {
 		t.Fatalf("Dialer(n2): %v", err)
 	}
 	if conn, err := dN2.DialContext(ctx, "tcp", target); err == nil {
-		conn.Close()
+		_ = conn.Close() // unexpected success: close and fail the test below
 		t.Fatal("DialContext with untrusted certificate = nil error, want chain verification error")
 	}
 }
@@ -734,7 +729,7 @@ func TestPassEnvResolvesPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DialContext with PassEnv creds: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }() // test teardown
 	select {
 	case req := <-reqs:
 		if req.user != "carol" || req.pass != "from-env" {

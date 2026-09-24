@@ -57,7 +57,7 @@ func (db *DB) AssessmentsListByAccount(ctx context.Context, accountID string) ([
 	if err != nil {
 		return nil, fmt.Errorf("store: AssessmentsListByAccount: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
 
 	var out []Assessment
 	for rows.Next() {

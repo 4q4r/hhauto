@@ -74,7 +74,7 @@ func newEnv(t *testing.T, opt func(*envOptions)) *e2eEnv {
 	dir := t.TempDir()
 
 	var cfg strings.Builder
-	cfg.WriteString(fmt.Sprintf(`
+	fmt.Fprintf(&cfg, `
 [general]
 data_dir = "%s"
 timezone = "UTC"
@@ -168,7 +168,7 @@ model_profile = "fast"
 		resumeID,
 		ai.URL(),
 		e2eModel,
-	))
+	)
 	cfg.WriteString(o.extraTOML)
 
 	cfgPath := filepath.Join(dir, "hhauto.toml")
@@ -229,7 +229,7 @@ func (env *e2eEnv) runEngine() (context.CancelFunc, <-chan error) {
 	}
 	apis, err := rt.AllAPIs()
 	if err != nil {
-		rt.Close()
+		_ = rt.Close() // teardown on the failure path
 		cancel()
 		env.t.Fatalf("rt.AllAPIs: %v", err)
 	}

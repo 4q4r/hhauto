@@ -319,16 +319,16 @@ func oneLine(s string) string {
 	return strings.ReplaceAll(s, "\n", " ")
 }
 
-// clipLine trims s and clips it to max runes (append an ellipsis when
-// cut). max <= 0 disables clipping.
-func clipLine(s string, max int) string {
+// clipLine trims s and clips it to limit runes (append an ellipsis when
+// cut). limit <= 0 disables clipping.
+func clipLine(s string, limit int) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return ""
 	}
-	if max > 0 {
-		if r := []rune(s); len(r) > max {
-			return strings.TrimRight(string(r[:max]), " \t") + "…"
+	if limit > 0 {
+		if r := []rune(s); len(r) > limit {
+			return strings.TrimRight(string(r[:limit]), " \t") + "…"
 		}
 	}
 	return s

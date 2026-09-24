@@ -22,7 +22,7 @@ func newTask(accountID string, prio Priority, dedupKey string) Task {
 
 func TestPriorityThenFIFO(t *testing.T) {
 	q := New()
-	defer q.Close(context.Background(), 0)
+	defer func() { _ = q.Close(context.Background(), 0) }() // test teardown
 
 	// Enqueue out of priority order; equal priorities must stay FIFO.
 	for _, prio := range []Priority{PrioLift, PrioChats, PrioHealth, PrioChats, PrioApply} {
@@ -52,7 +52,7 @@ func TestPriorityThenFIFO(t *testing.T) {
 
 func TestAccountsAreIsolated(t *testing.T) {
 	q := New()
-	defer q.Close(context.Background(), 0)
+	defer func() { _ = q.Close(context.Background(), 0) }() // test teardown
 
 	if err := q.Enqueue(context.Background(), newTask("a", PrioApply, "")); err != nil {
 		t.Fatalf("Enqueue a: %v", err)
@@ -128,7 +128,7 @@ func TestDedupIsQueuedScopedNoOp(t *testing.T) {
 
 func TestTaskIDIsULIDWhenEmpty(t *testing.T) {
 	q := New()
-	defer q.Close(context.Background(), 0)
+	defer func() { _ = q.Close(context.Background(), 0) }() // test teardown
 	ctx := context.Background()
 
 	if err := q.Enqueue(ctx, newTask("a", PrioApply, "")); err != nil {
@@ -156,7 +156,7 @@ func TestTaskIDIsULIDWhenEmpty(t *testing.T) {
 
 func TestDequeueBlocksAndRespectsContext(t *testing.T) {
 	q := New()
-	defer q.Close(context.Background(), 0)
+	defer func() { _ = q.Close(context.Background(), 0) }() // test teardown
 	ctx := context.Background()
 
 	// Blocked Dequeue wakes up when a task arrives.
@@ -278,12 +278,6 @@ func (g *syncGuard) add(d int) {
 	g.mu.Unlock()
 }
 
-func (g *syncGuard) val() int {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.n
-}
-
 func TestConcurrentProducersConsumers(t *testing.T) {
 	q := New()
 	ctx := context.Background()
@@ -375,7 +369,7 @@ func TestDedupKeyReusableAfterPop(t *testing.T) {
 	// (AccountID,Kind,DedupKey) is free again, a re-Enqueue must queue a
 	// fresh task.
 	q := New()
-	defer q.Close(context.Background(), 0)
+	defer func() { _ = q.Close(context.Background(), 0) }() // test teardown
 	ctx := context.Background()
 
 	if err := q.Enqueue(ctx, newTask("a", PrioApply, "vac-9")); err != nil {
@@ -553,7 +547,7 @@ func TestConcurrentEnqueueDequeueCloseStorm(t *testing.T) {
 
 func TestConcurrentDedupEnqueuesProduceExactlyOne(t *testing.T) {
 	q := New()
-	defer q.Close(context.Background(), 0)
+	defer func() { _ = q.Close(context.Background(), 0) }() // test teardown
 	ctx := context.Background()
 
 	var wg sync.WaitGroup

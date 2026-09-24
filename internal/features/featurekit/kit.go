@@ -36,13 +36,13 @@ type ChainFor func(accountID string) (captcha.Chain, bool)
 type IntentStep int
 
 const (
-	// IntentProceed: a fresh pending intent was created; run the side effect.
+	// IntentProceed means a fresh pending intent was created; run the side effect.
 	IntentProceed IntentStep = iota
-	// IntentSkipPending: an identical intent is still in flight — skip.
+	// IntentSkipPending means an identical intent is still in flight — skip.
 	IntentSkipPending
-	// IntentReconcileFirst: the intent already completed — the caller must
-	// verify the real (server-side) state before doing anything; the store
-	// refuses to re-arm a done key.
+	// IntentReconcileFirst means the intent already completed — the caller
+	// must verify the real (server-side) state before doing anything; the
+	// store refuses to re-arm a done key.
 	IntentReconcileFirst
 )
 

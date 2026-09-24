@@ -83,7 +83,7 @@ type sleepRecorder struct {
 	durations []time.Duration
 }
 
-func (s *sleepRecorder) fn(ctx context.Context, d time.Duration) error {
+func (s *sleepRecorder) fn(_ context.Context, d time.Duration) error {
 	s.mu.Lock()
 	s.durations = append(s.durations, d)
 	s.mu.Unlock()
@@ -132,7 +132,7 @@ func testChatProvider(t *testing.T, base string, opts ...Option) *OpenAIChatProv
 // --- openai-chat ----------------------------------------------------------
 
 func TestOpenAIChatValidReplyAndRequestShape(t *testing.T) {
-	f := newFakeServer(t, func(call int, r *http.Request, raw []byte) (int, map[string]string, string) {
+	f := newFakeServer(t, func(_ int, _ *http.Request, _ []byte) (int, map[string]string, string) {
 		return http.StatusOK, nil, testValidChatReply
 	})
 	p := testChatProvider(t, f.srv.URL)
@@ -156,7 +156,7 @@ func TestOpenAIChatValidReplyAndRequestShape(t *testing.T) {
 }
 
 func TestOpenAIChatCompleteModelBindsModelAndParams(t *testing.T) {
-	f := newFakeServer(t, func(call int, r *http.Request, raw []byte) (int, map[string]string, string) {
+	f := newFakeServer(t, func(_ int, _ *http.Request, _ []byte) (int, map[string]string, string) {
 		return http.StatusOK, nil, testValidChatReply
 	})
 	p := testChatProvider(t, f.srv.URL)
@@ -218,7 +218,7 @@ func TestOpenAIChatCompleteModelBindsModelAndParams(t *testing.T) {
 }
 
 func TestOpenAIChatTemperatureUnsupportedDropsParamAndRemembers(t *testing.T) {
-	f := newFakeServer(t, func(call int, r *http.Request, raw []byte) (int, map[string]string, string) {
+	f := newFakeServer(t, func(_ int, _ *http.Request, raw []byte) (int, map[string]string, string) {
 		if strings.Contains(string(raw), `"temperature"`) {
 			return http.StatusBadRequest, nil, `{"error":{"message":"temperature is not supported with this model","type":"invalid_request_error","param":"temperature","code":"unsupported_parameter"}}`
 		}
@@ -252,7 +252,7 @@ func TestOpenAIChatTemperatureUnsupportedDropsParamAndRemembers(t *testing.T) {
 }
 
 func TestOpenAIChat429HonorsRetryAfter(t *testing.T) {
-	f := newFakeServer(t, func(call int, r *http.Request, raw []byte) (int, map[string]string, string) {
+	f := newFakeServer(t, func(call int, _ *http.Request, _ []byte) (int, map[string]string, string) {
 		if call == 1 {
 			return http.StatusTooManyRequests, map[string]string{"Retry-After": "2"}, `{"error":{"message":"rate limited"}}`
 		}
@@ -274,7 +274,7 @@ func TestOpenAIChat429HonorsRetryAfter(t *testing.T) {
 }
 
 func TestOpenAIChat5xxBackoffFullJitter(t *testing.T) {
-	f := newFakeServer(t, func(call int, r *http.Request, raw []byte) (int, map[string]string, string) {
+	f := newFakeServer(t, func(call int, _ *http.Request, _ []byte) (int, map[string]string, string) {
 		if call < 3 {
 			return http.StatusInternalServerError, nil, `{"error":{"message":"boom"}}`
 		}
@@ -303,7 +303,7 @@ func TestOpenAIChat5xxBackoffFullJitter(t *testing.T) {
 }
 
 func TestOpenAIChatExhaustedRetriesReturnsAPIError(t *testing.T) {
-	f := newFakeServer(t, func(call int, r *http.Request, raw []byte) (int, map[string]string, string) {
+	f := newFakeServer(t, func(_ int, _ *http.Request, _ []byte) (int, map[string]string, string) {
 		return http.StatusBadGateway, nil, `{"error":{"message":"upstream"}}`
 	})
 	sleeps := &sleepRecorder{}

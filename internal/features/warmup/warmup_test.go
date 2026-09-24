@@ -449,8 +449,6 @@ func afterPipe(s string) string {
 	return s
 }
 
-type hhapiAmbiguous struct{ hhapi.AmbiguousError }
-
 // Wave-3 review #4: the pacer must be waited on before the ping mutation;
 // chats that are skipped (window/weekend) must not touch the pacer.
 func TestScanPacerWaitsBeforeSendOnly(t *testing.T) {

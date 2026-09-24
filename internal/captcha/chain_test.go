@@ -36,7 +36,7 @@ func (f *fakeSolver) Solve(ctx context.Context, _ Challenge) (Solution, error) {
 	return f.sol, nil
 }
 
-func (f *fakeSolver) Balance(ctx context.Context) (float64, error) {
+func (f *fakeSolver) Balance(_ context.Context) (float64, error) {
 	if f.balErr != nil {
 		return 0, f.balErr
 	}
@@ -154,11 +154,11 @@ func TestChainContextTimeoutFailsAll(t *testing.T) {
 
 func TestChainEventsEmittedInOrder(t *testing.T) {
 	var mu sync.Mutex
-	var events []CaptchaEvent
+	var events []Event
 
 	first := &fakeSolver{id: "a", err: errors.New("boom")}
 	second := &fakeSolver{id: "b", sol: Solution{Token: "tok-b"}}
-	chain := NewChain([]Solver{first, second}, func(e CaptchaEvent) {
+	chain := NewChain([]Solver{first, second}, func(e Event) {
 		mu.Lock()
 		defer mu.Unlock()
 		events = append(events, e)

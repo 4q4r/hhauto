@@ -63,6 +63,8 @@ var _ KillSwitch = (*fsKillSwitch)(nil)
 // NewKillSwitch builds a kill switch watching path (normally
 // StopFilePath(cfg.General.DataDir)). A nil-able path disables the fs
 // channel: only Stop() and ctx cancellation trip the switch.
+//
+//nolint:revive // sealed impl: callers hold the KillSwitch interface; StopCh is an engine-internal extension
 func NewKillSwitch(path string) *fsKillSwitch {
 	return &fsKillSwitch{
 		path:   path,

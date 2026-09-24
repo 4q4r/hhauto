@@ -27,7 +27,7 @@ const testValidResponsesReply = `{
 }`
 
 func TestOpenAIResponsesValidReplyAndRequestShape(t *testing.T) {
-	f := newFakeServer(t, func(call int, r *http.Request, raw []byte) (int, map[string]string, string) {
+	f := newFakeServer(t, func(_ int, _ *http.Request, _ []byte) (int, map[string]string, string) {
 		return 200, nil, testValidResponsesReply
 	})
 	p := testResponsesProvider(t, f.srv.URL)
@@ -86,7 +86,7 @@ func TestOpenAIResponsesValidReplyAndRequestShape(t *testing.T) {
 }
 
 func TestOpenAIResponsesNoMessageItemFails(t *testing.T) {
-	f := newFakeServer(t, func(call int, r *http.Request, raw []byte) (int, map[string]string, string) {
+	f := newFakeServer(t, func(_ int, _ *http.Request, _ []byte) (int, map[string]string, string) {
 		return 200, nil, `{"id":"r","model":"m","output":[{"type":"reasoning","summary":[]}],"usage":{}}`
 	})
 	p := testResponsesProvider(t, f.srv.URL)
@@ -97,7 +97,7 @@ func TestOpenAIResponsesNoMessageItemFails(t *testing.T) {
 }
 
 func TestOpenAIResponsesMultipleTextPartsConcatenated(t *testing.T) {
-	f := newFakeServer(t, func(call int, r *http.Request, raw []byte) (int, map[string]string, string) {
+	f := newFakeServer(t, func(_ int, _ *http.Request, _ []byte) (int, map[string]string, string) {
 		return 200, nil, `{"id":"r","model":"m","output":[{"type":"message","role":"assistant","content":[
 			{"type":"output_text","text":"{\"a\":"},{"type":"output_text","text":"1}"}
 		]}],"usage":{"input_tokens":1,"output_tokens":2}}`

@@ -310,7 +310,7 @@ func (c *Client) attempt(ctx context.Context, spec requestSpec) (*response, erro
 	if err != nil {
 		return nil, err
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }() // body consumed below; close error is not actionable
 	body, err := io.ReadAll(io.LimitReader(httpResp.Body, maxBodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("hhapi: read body: %w", err)
@@ -456,6 +456,7 @@ func (c *Client) getXHR(ctx context.Context, op, target, referer string) (*respo
 
 // --- HHAPI: reads ---
 
+// ListResumes implements hhapi.HHAPI: fetches and parses the resume list shard.
 func (c *Client) ListResumes(ctx context.Context) ([]Resume, error) {
 	resp, err := c.getXHR(ctx, "list_resumes", c.endpointURL(epResumes, c.eps.siteDefault("/shards/applicant/resumes")), c.withPinnedHost(c.eps.site+"/applicant/resumes"))
 	if err != nil {
@@ -590,6 +591,8 @@ func vacancyFromItem(raw json.RawMessage) Vacancy {
 	return v
 }
 
+// SearchVacancies implements hhapi.HHAPI: runs one SSR search page and parses
+// the embedded HH-Lux-InitialState payload.
 func (c *Client) SearchVacancies(ctx context.Context, q SearchQuery) (VacancyPage, error) {
 	target := c.searchURL(q)
 	resp, err := c.getDoc(ctx, "search_vacancies", target, c.withPinnedHost(c.eps.site+"/"))
@@ -678,6 +681,7 @@ func (c *Client) searchURL(q SearchQuery) string {
 	return c.withPinnedHost(c.eps.searchPage) + "?" + v.Encode()
 }
 
+// VacancyCard implements hhapi.HHAPI: fetches one vacancy card by id.
 func (c *Client) VacancyCard(ctx context.Context, id int64) (*Vacancy, error) {
 	target := c.endpointURL(epVacancyCard, c.eps.siteDefault("/vacancy")) + "/" + strconv.FormatInt(id, 10)
 	referer := c.withPinnedHost(c.eps.searchPage)
@@ -702,6 +706,7 @@ func (c *Client) VacancyCard(ctx context.Context, id int64) (*Vacancy, error) {
 	return &v, nil
 }
 
+// EmployerCard implements hhapi.HHAPI: fetches one employer card by id.
 func (c *Client) EmployerCard(ctx context.Context, id int64) (*Employer, error) {
 	target := c.endpointURL(epEmployerCard, c.eps.siteDefault("/employer")) + "/" + strconv.FormatInt(id, 10)
 	resp, err := c.getDoc(ctx, "employer_card", target, c.withPinnedHost(c.eps.site+"/"))
@@ -724,6 +729,8 @@ func (c *Client) EmployerCard(ctx context.Context, id int64) (*Employer, error) 
 	}, nil
 }
 
+// EmployerRating implements hhapi.HHAPI: reads the employer's rating widget
+// (score, recommendation share, review counts).
 func (c *Client) EmployerRating(ctx context.Context, id int64) (*EmployerRating, error) {
 	base := c.endpointURL(epEmployerRating, c.eps.siteDefault("/employer_reviews/proxy_components/small_widget"))
 	u, err := url.Parse(base)
@@ -767,6 +774,7 @@ func (c *Client) EmployerRating(ctx context.Context, id int64) (*EmployerRating,
 	return rating, nil
 }
 
+// Negotiations implements hhapi.HHAPI: lists the applicant negotiations.
 func (c *Client) Negotiations(ctx context.Context, page int) ([]Negotiation, error) {
 	u, err := url.Parse(c.withPinnedHost(c.endpointURL(epNegotiations, c.eps.siteDefault("/applicant/negotiations"))))
 	if err != nil {
@@ -813,6 +821,8 @@ func (c *Client) Negotiations(ctx context.Context, page int) ([]Negotiation, err
 
 // --- HHAPI: mutations ---
 
+// TouchResume implements hhapi.HHAPI: bumps resume activity so hh ranks the
+// resume as recently updated.
 func (c *Client) TouchResume(ctx context.Context, resumeHash string) error {
 	resp, err := c.doMutation(ctx, func() requestSpec {
 		form := url.Values{}
@@ -839,6 +849,8 @@ func (c *Client) TouchResume(ctx context.Context, resumeHash string) error {
 	return nil
 }
 
+// ApplyPopup implements hhapi.HHAPI: fetches the response-popup metadata
+// (form hints and already-applied state) before an apply.
 func (c *Client) ApplyPopup(ctx context.Context, vacancyID int64) (*ApplyMeta, error) {
 	base := c.endpointURL(epApplyPopup, c.eps.siteDefault("/applicant/vacancy_response/popup"))
 	u, err := url.Parse(base)
@@ -878,6 +890,8 @@ func (c *Client) ApplyPopup(ctx context.Context, vacancyID int64) (*ApplyMeta, e
 	return meta, nil
 }
 
+// Apply implements hhapi.HHAPI: submits the vacancy response with the
+// idempotency key; AmbiguousError on transport loss after send.
 func (c *Client) Apply(ctx context.Context, req ApplyRequest) (NegotiationRef, error) {
 	resp, err := c.doMutation(ctx, func() requestSpec {
 		form := url.Values{}
@@ -1020,6 +1034,7 @@ func (c *Client) chatikURL(name, defaultPath string) string {
 	return c.eps.resolve(name, c.eps.chatikDefault(defaultPath))
 }
 
+// ListChats implements hhapi.HHAPI: lists chatik conversations (one page).
 func (c *Client) ListChats(ctx context.Context, page int) ([]Chat, error) {
 	u, err := url.Parse(c.chatikURL(epChats, "/chatik/api/chats"))
 	if err != nil {
@@ -1067,6 +1082,7 @@ func (c *Client) ListChats(ctx context.Context, page int) ([]Chat, error) {
 	return out, nil
 }
 
+// ChatHistory implements hhapi.HHAPI: fetches one chat's message history.
 func (c *Client) ChatHistory(ctx context.Context, chatID string) ([]ChatMessage, error) {
 	u, err := url.Parse(c.chatikURL(epChatData, "/chatik/api/chat_data"))
 	if err != nil {
