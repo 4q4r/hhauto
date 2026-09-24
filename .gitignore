@@ -5,6 +5,7 @@
 *.db-shm
 /.hhauto/
 /artifacts/
+/dist/
 *.log
 coverage.out
 .env

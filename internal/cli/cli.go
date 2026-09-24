@@ -15,6 +15,7 @@ import (
 var (
 	buildVersion = "dev"
 	buildCommit  = "none"
+	buildDate    = "unknown"
 )
 
 type globalFlags struct {
@@ -32,8 +33,8 @@ func defaultConfigPath() string {
 }
 
 // Execute runs the CLI and returns the process exit code.
-func Execute(version, commit string) int {
-	buildVersion, buildCommit = version, commit
+func Execute(version, commit, date string) int {
+	buildVersion, buildCommit, buildDate = version, commit, date
 	root := newRootCmd()
 	if err := root.Execute(); err != nil {
 		return 1

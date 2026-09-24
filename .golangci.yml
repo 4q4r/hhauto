@@ -1,0 +1,23 @@
+# golangci-lint config (Task 15). Schema: https://golangci-lint.run/usage/configuration/
+# Format `version: "2"` matches golangci-lint v2.x (formatters live in their own section).
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    # `gosimple` requested by spec, but golangci-lint v2 removed it as a
+    # standalone linter: its S-checks are part of staticcheck's default
+    # check set ("all"), so staticcheck below already covers gosimple.
+    - ineffassign
+    - misspell
+    - unconvert
+    - revive
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
