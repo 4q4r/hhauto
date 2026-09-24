@@ -357,6 +357,15 @@ func TestScanDryRunSendsNothing(t *testing.T) {
 	if ladder != 0 {
 		t.Fatalf("dry-run must not advance ladder, got %d", ladder)
 	}
+	// Wave-3 review #7: the dry-run intent must NOT stay pending — after
+	// switching dry-run off, the same stage send goes through.
+	h.feat.Cfg.General.DryRun = false
+	if err := h.feat.HandleScan(t.Context(), scanTask()); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.api.sent) != 1 {
+		t.Fatalf("dry-run must abandon its intent, sends after re-enable=%v", h.api.sent)
+	}
 }
 
 func TestScanAmbiguousReconcilesByReadingState(t *testing.T) {
@@ -441,3 +450,32 @@ func afterPipe(s string) string {
 }
 
 type hhapiAmbiguous struct{ hhapi.AmbiguousError }
+
+// Wave-3 review #4: the pacer must be waited on before the ping mutation;
+// chats that are skipped (window/weekend) must not touch the pacer.
+func TestScanPacerWaitsBeforeSendOnly(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.Warmup.ActiveHours = "08:00-22:00" })
+	calls := 0
+	h.feat.Pacer = pacerFunc(func(context.Context, string) error { calls++; return nil })
+	seedChat(t, h, "chat1", h.now.Add(-25*time.Hour))
+
+	h.now = mkTime(2026, time.September, 23, 23, 30) // outside active hours
+	if err := h.feat.HandleScan(t.Context(), scanTask()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatalf("no mutation expected outside the window, pacer calls=%d", calls)
+	}
+
+	h.now = mkTime(2026, time.September, 23, 12, 0)
+	if err := h.feat.HandleScan(t.Context(), scanTask()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || len(h.api.sent) != 1 {
+		t.Fatalf("pacer must wait before the ping, calls=%d sent=%v", calls, h.api.sent)
+	}
+}
+
+type pacerFunc func(ctx context.Context, accountID string) error
+
+func (f pacerFunc) Wait(ctx context.Context, accountID string) error { return f(ctx, accountID) }

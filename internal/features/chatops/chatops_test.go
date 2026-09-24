@@ -36,15 +36,23 @@ type sentMsg struct {
 
 type fakeAPI struct {
 	hhapiStub
-	chats      []hhapi.Chat
-	pages      [][]hhapi.Chat // multi-page mode: ListChats serves these in order
-	history    map[string][]hhapi.ChatMessage
-	sent       []sentMsg
-	sendErr    func(chatik, key, text string) error
-	left       []string
-	leaveErr   func(chatik string, call int) error
-	leaveCalls map[string]int
-	vacancies  map[int64]hhapi.Vacancy
+	chats        []hhapi.Chat
+	pages        [][]hhapi.Chat // multi-page mode: ListChats serves these in order
+	history      map[string][]hhapi.ChatMessage
+	sent         []sentMsg
+	sendErr      func(chatik, key, text string) error
+	left         []string
+	leaveErr     func(chatik string, call int) error
+	leaveCalls   map[string]int
+	vacancies    map[int64]hhapi.Vacancy
+	negotiations []hhapi.Negotiation
+}
+
+func (f *fakeAPI) Negotiations(_ context.Context, page int) ([]hhapi.Negotiation, error) {
+	if page > 1 {
+		return nil, nil
+	}
+	return f.negotiations, nil
 }
 
 func (f *fakeAPI) ListChats(_ context.Context, page int) ([]hhapi.Chat, error) {
@@ -103,6 +111,7 @@ type fakeRunner struct {
 	replyInj      bool
 	answers       []aiAnswer
 	testNeeds     bool
+	testConf      float64 // batch verdict confidence (default 0.9)
 	links         []map[string]any
 	classCalls    int
 	calls         []ai.TaskName
@@ -145,8 +154,12 @@ func (f *fakeRunner) Run(_ context.Context, _ string, _, _ string, _ string, tas
 		for _, a := range f.answers {
 			ans = append(ans, map[string]any{"question": a.Q, "answer": a.A, "based_on_profile": false})
 		}
+		conf := f.testConf
+		if conf == 0 {
+			conf = 0.9
+		}
 		b, _ := json.Marshal(map[string]any{
-			"confidence": 0.9, "needs_human": f.testNeeds, "needs_human_reason": nil,
+			"confidence": conf, "needs_human": f.testNeeds, "needs_human_reason": nil,
 			"injection_suspected": false, "answers": ans,
 		})
 		return b, ai.Decision{Task: task}, nil
@@ -892,5 +905,174 @@ func TestSyncMultiPageListChats(t *testing.T) {
 	}
 	if _, ok, _ := h.db.FeatureStateGet(t.Context(), featureName, "acc", "state:chat2"); !ok {
 		t.Fatal("chat2 from page 2 not synced")
+	}
+}
+
+// --- Wave-3 review fixes ---
+
+// countingPacer counts Wait calls; nil-pacer runs must never call it.
+type countingPacer struct{ calls int }
+
+func (p *countingPacer) Wait(context.Context, string) error { p.calls++; return nil }
+
+// RULING R9: a structurally refused negotiation is the PRIMARY rejection
+// signal — the rejection branch runs without any AI classification call.
+func TestSyncStructuralRefusalRejectionWithoutAI(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) {
+		c.Features.ChatOps.AutoLeaveRejected = true
+		c.Features.ChatOps.RejectionMinConf = 0.8
+	})
+	h.feat.LeaveDelay = func() time.Duration { return time.Minute }
+	msgAt := h.now.Add(-10 * time.Minute)
+	h.api.chats = []hhapi.Chat{chatik("chat1", 42, msgAt)}
+	h.api.history["chat1"] = []hhapi.ChatMessage{inMsg("mid1", "Спасибо, что откликнулись.", msgAt)}
+	h.api.negotiations = []hhapi.Negotiation{{ID: "n1", VacancyID: 42, EmployerID: 777, State: "refused"}}
+
+	if err := h.feat.HandleChatSync(t.Context(), syncTask()); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if h.run.classCalls != 0 {
+		t.Fatalf("structural refusal must bypass AI classification, classCalls=%d", h.run.classCalls)
+	}
+	if h.mirror("chat1") != "rejected" {
+		t.Fatalf("mirror = %q, want rejected", h.mirror("chat1"))
+	}
+	// deferred leave still fires on the gates
+	h.now = h.now.Add(2 * time.Hour)
+	if err := h.feat.HandleChatSync(t.Context(), syncTask()); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.api.left) != 1 {
+		t.Fatalf("leave expected after structural rejection, left=%v", h.api.left)
+	}
+}
+
+func TestSyncStructuralRefusalOnlyForMatchingVacancy(t *testing.T) {
+	h := newHarness(t, nil)
+	h.run.classCategory = "question"
+	h.run.reply = nil
+	msgAt := h.now.Add(-10 * time.Minute)
+	h.api.chats = []hhapi.Chat{chatik("chat1", 42, msgAt)}
+	h.api.history["chat1"] = []hhapi.ChatMessage{inMsg("mid1", "Вопрос?", msgAt)}
+	// refusal is for ANOTHER vacancy
+	h.api.negotiations = []hhapi.Negotiation{{ID: "n1", VacancyID: 999, State: "refused"}}
+
+	if err := h.feat.HandleChatSync(t.Context(), syncTask()); err != nil {
+		t.Fatal(err)
+	}
+	if h.run.classCalls != 1 {
+		t.Fatalf("AI classification must still run, classCalls=%d", h.run.classCalls)
+	}
+	if h.mirror("chat1") == "rejected" {
+		t.Fatal("foreign vacancy refusal must not reject this chat")
+	}
+}
+
+// Wave-3 review #4: the pacer must be waited on before every hh mutation
+// (SendMessage and LeaveChat).
+func TestSyncPacerWaitsBeforeMutations(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) {
+		c.Features.ChatOps.AutoLeaveRejected = true
+		c.Features.ChatOps.RejectionMinConf = 0.8
+	})
+	reply := "Ответ"
+	h.run.reply = &reply
+	h.run.replyConf = 0.95
+	p := &countingPacer{}
+	h.feat.Pacer = p
+	h.feat.LeaveDelay = func() time.Duration { return time.Minute }
+
+	msgAt := h.now.Add(-10 * time.Minute)
+	h.api.chats = []hhapi.Chat{chatik("chat1", 0, msgAt)}
+	h.api.history["chat1"] = []hhapi.ChatMessage{inMsg("mid1", "Вопрос?", msgAt)}
+	if err := h.feat.HandleChatSync(t.Context(), syncTask()); err != nil {
+		t.Fatal(err)
+	}
+	if p.calls != 1 {
+		t.Fatalf("pacer must wait before the reply send, calls=%d", p.calls)
+	}
+
+	// rejection with auto-leave: classification + leave mutation
+	h.run.classCategory = "rejection"
+	h.run.classConf = 0.93
+	h.api.history["chat1"] = []hhapi.ChatMessage{inMsg("mid2", "Отказ.", msgAt)}
+	if err := h.feat.HandleChatSync(t.Context(), syncTask()); err != nil {
+		t.Fatal(err)
+	}
+	before := p.calls
+	h.now = h.now.Add(2 * time.Hour)
+	if err := h.feat.HandleChatSync(t.Context(), syncTask()); err != nil {
+		t.Fatal(err)
+	}
+	if p.calls == before {
+		t.Fatal("pacer must wait before LeaveChat")
+	}
+}
+
+// Wave-3 review #9: classification confidence below 0.75 → review, no
+// auto-routing.
+func TestSyncClassificationLowConfidenceBlocksRouting(t *testing.T) {
+	h := newHarness(t, nil)
+	h.run.classConf = 0.5
+	h.run.classCategory = "question"
+	h.run.replyConf = 0.95
+	reply := "Ответ"
+	h.run.reply = &reply
+	msgAt := h.now.Add(-10 * time.Minute)
+	h.api.chats = []hhapi.Chat{chatik("chat1", 0, msgAt)}
+	h.api.history["chat1"] = []hhapi.ChatMessage{inMsg("mid1", "Вопрос?", msgAt)}
+
+	if err := h.feat.HandleChatSync(t.Context(), syncTask()); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.api.sent) != 0 {
+		t.Fatal("low-confidence classification must block auto-reply")
+	}
+	items, _ := h.db.ReviewItemsOpen(t.Context(), "acc", 10)
+	found := false
+	for _, it := range items {
+		if it.Kind == "ai_low_confidence" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected ai_low_confidence review, got %+v", items)
+	}
+}
+
+// Wave-3 review #9: answer confidence gates — single-question batches
+// (choice) need ≥0.75, multi-question batches ≥0.85.
+func TestSyncTestAnswersConfidenceThresholds(t *testing.T) {
+	// single question, conf 0.8 → fine
+	h := newHarness(t, nil)
+	h.run.classCategory = "test_assignment"
+	h.run.testConf = 0.8
+	h.run.answers = []aiAnswer{{"Вопрос 1?", "Ответ 1"}}
+	msgAt := h.now.Add(-10 * time.Minute)
+	h.api.chats = []hhapi.Chat{chatik("chat1", 0, msgAt)}
+	h.api.history["chat1"] = []hhapi.ChatMessage{inMsg("mid1", "1. Вопрос 1?", msgAt)}
+	if err := h.feat.HandleChatSync(t.Context(), syncTask()); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.api.sent) != 1 {
+		t.Fatalf("single-question conf 0.8 must submit, sent=%v", h.api.sent)
+	}
+
+	// two questions, conf 0.8 → below the 0.85 multi gate → unsure, not submitted
+	h2 := newHarness(t, nil)
+	h2.run.classCategory = "test_assignment"
+	h2.run.testConf = 0.8
+	h2.run.answers = []aiAnswer{{"Вопрос 1?", "Ответ 1"}, {"Вопрос 2?", "Ответ 2"}}
+	h2.api.chats = []hhapi.Chat{chatik("chat1", 0, msgAt)}
+	h2.api.history["chat1"] = []hhapi.ChatMessage{inMsg("mid1", "1. Вопрос 1?\n2. Вопрос 2?", msgAt)}
+	if err := h2.feat.HandleChatSync(t.Context(), syncTask()); err != nil {
+		t.Fatal(err)
+	}
+	if len(h2.api.sent) != 0 {
+		t.Fatalf("multi-question conf 0.8 must not submit, sent=%v", h2.api.sent)
+	}
+	rows, _ := h2.db.AssessmentsListByAccount(t.Context(), "acc")
+	if len(rows) != 1 || rows[0].Status != "escalated" {
+		t.Fatalf("expected escalated assessment, got %+v", rows)
 	}
 }

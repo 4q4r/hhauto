@@ -3,12 +3,14 @@ package emaildup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -98,6 +100,7 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 		DB:     db,
 		Notify: h.wh,
 		Sender: h.sender,
+		Queue:  queue.New(),
 		API:    func(string) (hhapi.HHAPI, error) { return nil, errors.New("no api in this test") },
 		PDF: func(context.Context, string, string) ([]byte, error) {
 			if h.pdfErr != nil {
@@ -119,6 +122,7 @@ func sendTask(email string, employer, vacancy int64) queue.Task {
 	return queue.Task{
 		AccountID: "acc",
 		Kind:      queue.KindSendEmail,
+		DedupKey:  fmt.Sprintf("email:acc:%d:%d", employer, vacancy),
 		Payload: SendPayload{
 			AccountID:    "acc",
 			EmployerID:   employer,
@@ -189,7 +193,7 @@ func TestHandleSendEmailHappyPath(t *testing.T) {
 		t.Fatal("per-employer marker not set")
 	}
 	// intent done
-	if _, err := h.db.IntentsBegin(t.Context(), "email:777:42", "pending", "x"); !errors.Is(err, store.ErrIntentDone) {
+	if _, err := h.db.IntentsBegin(t.Context(), "email:acc:777:42", "pending", "x"); !errors.Is(err, store.ErrIntentDone) {
 		t.Fatalf("intent must be done, got %v", err)
 	}
 }
@@ -368,7 +372,7 @@ func TestTransientRetriesThenReview(t *testing.T) {
 		t.Fatalf("expected email_send_failed review, got %+v", items)
 	}
 	// intent failed → a later manual re-trigger is possible
-	if _, err := h.db.IntentsBegin(t.Context(), "email:777:42", "pending", "x"); err != nil {
+	if _, err := h.db.IntentsBegin(t.Context(), "email:acc:777:42", "pending", "x"); err != nil {
 		t.Fatalf("failed intent must allow re-begin, got %v", err)
 	}
 }
@@ -385,7 +389,7 @@ func TestDryRunSendsNothing(t *testing.T) {
 	if len(h.sender.calls) != 0 {
 		t.Fatal("dry-run must not send")
 	}
-	if _, err := h.db.IntentsBegin(t.Context(), "email:777:42", "pending", "x"); !errors.Is(err, store.ErrIntentDone) {
+	if _, err := h.db.IntentsBegin(t.Context(), "email:acc:777:42", "pending", "x"); !errors.Is(err, store.ErrIntentDone) {
 		t.Fatalf("dry-run must mark the intent done, got %v", err)
 	}
 }
@@ -491,5 +495,89 @@ func TestMessageIDAndBuildMessage(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("rendered message missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// --- Wave-3 review fixes ---
+
+type countingPacer struct{ calls int }
+
+func (p *countingPacer) Wait(context.Context, string) error { p.calls++; return nil }
+
+// #4: pacer waits before every send attempt (1 initial + Retries).
+func TestSendEmailPacerWaitsPerAttempt(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) {
+		c.Email.From = "me@example.com"
+		c.Email.Retries = 2
+	})
+	p := &countingPacer{}
+	h.feat.Pacer = p
+	h.sender.err = func(int) error { return transientErr{} }
+	seedContact(t, h)
+
+	if err := h.feat.HandleSendEmail(t.Context(), sendTask("hr@romashka.ru", 777, 42)); err != nil {
+		t.Fatal(err)
+	}
+	if p.calls != 3 {
+		t.Fatalf("pacer calls = %d, want 3 (one per attempt)", p.calls)
+	}
+}
+
+// #5: transient failures re-enqueue the same dedup key (the queue released
+// it after dequeue) so the task is not lost.
+func TestTransientRequeuesTask(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.Email.From = "me@example.com" })
+	h.sender.err = func(int) error { return transientErr{} }
+	seedContact(t, h)
+
+	if err := h.feat.HandleSendEmail(t.Context(), sendTask("hr@romashka.ru", 777, 42)); err != nil {
+		t.Fatal(err)
+	}
+	if n := h.feat.Queue.Len("acc"); n != 1 {
+		t.Fatalf("transient failure must requeue the task, len=%d", n)
+	}
+	if got, ok := h.feat.Queue.Dequeue(t.Context(), "acc"); ok && got.DedupKey != "email:acc:777:42" {
+		t.Fatalf("requeued dedup key = %q", got.DedupKey)
+	}
+}
+
+// #8: lazy sender initialization is race-safe (sync.Once); under -race two
+// goroutines must receive the same error and the same instance.
+func TestSenderForConcurrent(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.Email.From = "me@example.com" })
+	h.feat.Sender = nil // force the lazy path
+	h.feat.Cfg.Email.SMTPHost = "smtp.example.com"
+	h.feat.Cfg.Email.PassEnv = "SOME_PASS_ENV"
+	h.feat.Cfg.Email.Username = "user"
+
+	const n = 8
+	errs := make([]error, n)
+	send := make([]Sender, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			s, err := h.feat.senderFor()
+			errs[i], send[i] = err, s
+		}(i)
+	}
+	wg.Wait()
+	for i := range n {
+		if errs[i] != nil || send[i] == nil || send[i] != send[0] {
+			t.Fatalf("goroutine %d: err=%v same=%v", i, errs[i], send[i] == send[0])
+		}
+	}
+}
+
+// #10: the intent key includes the account id (multi-account correctness).
+func TestIntentKeyIncludesAccount(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.Email.From = "me@example.com" })
+	seedContact(t, h)
+	if err := h.feat.HandleSendEmail(t.Context(), sendTask("hr@romashka.ru", 777, 42)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.IntentsBegin(t.Context(), "email:acc:777:42", "pending", "x"); !errors.Is(err, store.ErrIntentDone) {
+		t.Fatalf("intent key must be email:<acc>:<emp>:<vac>, got %v", err)
 	}
 }

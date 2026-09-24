@@ -83,6 +83,11 @@ func (f *Feature) HandleCollectContacts(ctx context.Context, task queue.Task) er
 	collected, err := CollectForVacancy(ctx, f.DB, api, f.AI, p.AccountID, p.EmployerID, p.VacancyID)
 	if err != nil {
 		if kit11.IsTransient(err) {
+			// Wave-3 review #5: the queue released the dedup key after
+			// dequeue — re-enqueue the same task so it is not lost, and
+			// clear the chatops marker so a future sync may re-enqueue too.
+			f.clearCollectMarker(ctx, p.AccountID, p.EmployerID)
+			f.requeue(ctx, task)
 			return err
 		}
 		return fmt.Errorf("contacts: collect %d: %w", p.EmployerID, err)
@@ -468,6 +473,25 @@ func toStrings(v any) []string {
 		return out
 	default:
 		return nil
+	}
+}
+
+// requeue puts the task back with its original dedup key (no-op when the
+// queue handle is not wired).
+func (f *Feature) requeue(ctx context.Context, task queue.Task) {
+	if f.Queue == nil {
+		return
+	}
+	if err := f.Queue.Enqueue(ctx, task); err != nil {
+		f.log().Warn("contacts: requeue failed", "task", task.ID, "err", err)
+	}
+}
+
+// clearCollectMarker resets the chatops "already enqueued" marker for the
+// employer (chatops reads it before enqueueing a collect task).
+func (f *Feature) clearCollectMarker(ctx context.Context, accountID string, employerID int64) {
+	if err := f.DB.FeatureStateSet(ctx, "chatops", accountID, kit11.CollectQueuedMarker(employerID), ""); err != nil {
+		f.log().Warn("contacts: clear collect marker failed", "employer", employerID, "err", err)
 	}
 }
 
