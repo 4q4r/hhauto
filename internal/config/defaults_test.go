@@ -91,7 +91,18 @@ func TestApplyDefaultsPreservesExplicitAccountValues(t *testing.T) {
 func TestApplyDefaultsChatOpsAutoReplyOn(t *testing.T) {
 	c := &Config{}
 	applyDefaults(c)
-	if !c.Features.ChatOps.AutoReply {
+	if c.Features.ChatOps.AutoReply == nil || !*c.Features.ChatOps.AutoReply {
 		t.Fatal("features.chatops.auto_reply_enabled: got false, want default true (owner decision #6)")
+	}
+}
+
+// R1 pattern: an explicit false must survive applyDefaults (the old plain
+// bool was overwritten with true unconditionally — a dead toggle).
+func TestApplyDefaultsRespectsExplicitAutoReplyFalse(t *testing.T) {
+	v := false
+	c := &Config{Features: Features{ChatOps: ChatOps{AutoReply: &v}}}
+	applyDefaults(c)
+	if c.Features.ChatOps.AutoReply == nil || *c.Features.ChatOps.AutoReply {
+		t.Fatal("explicit auto_reply_enabled=false was overwritten with the default true")
 	}
 }

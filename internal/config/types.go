@@ -190,13 +190,13 @@ type TestSolve struct {
 // ChatOps configures chat reading, replies and auto-leave.
 type ChatOps struct {
 	Enabled           bool     `toml:"enabled"`
-	AutoReply         bool     `toml:"auto_reply_enabled"`
+	AutoReply         *bool    `toml:"auto_reply_enabled"` // default true; explicit false respected (R1)
 	RejectionMinConf  float64  `toml:"rejection_min_confidence"`
 	AutoLeaveRejected bool     `toml:"auto_leave_rejected"` // default false
 	LeaveFarewell     string   `toml:"leave_farewell_template"`
 	DoNotLeave        []string `toml:"do_not_leave"`
 	PollInterval      string   `toml:"poll_interval"`
-	QABaseEnabled     bool     `toml:"qa_base"`
+	QABaseEnabled     bool     `toml:"qa_base"` // reserved: not implemented in v1; Validate rejects true
 }
 
 // InterviewDetect configures interview-link detection in chats.

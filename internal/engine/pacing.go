@@ -128,27 +128,11 @@ func parseWindow(s string) window {
 }
 
 func parseWindowStrict(s string) (window, error) {
-	startS, endS, ok := strings.Cut(s, "-")
-	if !ok {
-		return window{}, fmt.Errorf("engine: bad active window %q: want \"HH:MM-HH:MM\"", s)
-	}
-	start, err := parseClock(startS)
-	if err != nil {
-		return window{}, fmt.Errorf("engine: bad active window %q: %w", s, err)
-	}
-	end, err := parseClock(endS)
+	start, end, err := config.ParseActiveWindow(s)
 	if err != nil {
 		return window{}, fmt.Errorf("engine: bad active window %q: %w", s, err)
 	}
 	return window{start: start, end: end, present: true}, nil
-}
-
-func parseClock(s string) (time.Duration, error) {
-	t, err := time.Parse("15:04", strings.TrimSpace(s))
-	if err != nil {
-		return 0, fmt.Errorf("bad clock time %q: %w", s, err)
-	}
-	return time.Duration(t.Hour())*time.Hour + time.Duration(t.Minute())*time.Minute, nil
 }
 
 // activeAt reports whether a moment inside day `at` falls into the window.

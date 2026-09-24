@@ -72,7 +72,10 @@ func applyDefaults(c *Config) {
 		c.Review.SLADefaultHours = 24
 	}
 
-	c.Features.ChatOps.AutoReply = true // owner decision #6: auto-reply is ON by default
+	if c.Features.ChatOps.AutoReply == nil {
+		v := true
+		c.Features.ChatOps.AutoReply = &v // owner decision #6: auto-reply is ON by default
+	}
 
 	if c.Forms.Mode == "" {
 		c.Forms.Mode = "draft_only"

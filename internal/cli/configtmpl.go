@@ -118,7 +118,7 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # rejection_min_confidence = 0.8
 # auto_leave_rejected = false           # WF7: off by default
 # poll_interval = "5m"
-# qa_base = false
+# qa_base = false                       # зарезервировано: не реализовано в v1 (true = ошибка старта)
 [features.interview]
 # enabled = false                       # interview/offer detection inside chatops
 [features.contacts]
