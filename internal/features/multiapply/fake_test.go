@@ -46,6 +46,8 @@ type applyEnv struct {
 	applyBodies []string
 	negPages    [][]hhapi.Negotiation
 	negFail     bool
+	negScript   []negAct // per-read script (1st read → negScript[0], …); empty → legacy fields
+	negReads    int
 	ratings     map[int64]*hhapi.EmployerRating
 	ratingErr   map[int64]error
 	ratingReqs  map[int64]int
@@ -137,9 +139,20 @@ func newApplyEnv(t *testing.T) *applyEnv {
 	})
 	mux.HandleFunc("GET /applicant/negotiations", func(w http.ResponseWriter, r *http.Request) {
 		e.mu.Lock()
+		read := e.negReads + 1
+		e.negReads = read
+		script := append([]negAct(nil), e.negScript...)
 		pages := append([][]hhapi.Negotiation(nil), e.negPages...)
 		fail := e.negFail
 		e.mu.Unlock()
+		if read <= len(script) {
+			if script[read-1].fail {
+				http.Error(w, "negotiations down", http.StatusInternalServerError)
+				return
+			}
+			pages = [][]hhapi.Negotiation{script[read-1].pages}
+			fail = false
+		}
 		if fail {
 			http.Error(w, "negotiations down", http.StatusInternalServerError)
 			return
@@ -193,6 +206,12 @@ func newApplyEnv(t *testing.T) *applyEnv {
 	}
 	e.api = c
 	return e
+}
+
+// negAct is one scripted negotiations read: fixed pages or a failure.
+type negAct struct {
+	pages []hhapi.Negotiation
+	fail  bool
 }
 
 type respErr struct {
@@ -289,14 +308,19 @@ func (n *fakeNotifier) Emit(ev webhook.Event) {
 func (n *fakeNotifier) Close(ctx context.Context) error { return nil }
 
 func (n *fakeNotifier) has(t string) bool {
+	return n.count(t) > 0
+}
+
+func (n *fakeNotifier) count(t string) int {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	c := 0
 	for _, ev := range n.events {
 		if ev.Type == t {
-			return true
+			c++
 		}
 	}
-	return false
+	return c
 }
 
 type fakeAIRunner struct {
@@ -352,6 +376,7 @@ type harness struct {
 	profile profile.Profile
 	q       queue.Queue
 	reg     *scheduler.Registry
+	noChain bool // build the feature without a captcha chain
 }
 
 func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
@@ -378,11 +403,15 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 
 func (h *harness) feature(t *testing.T) *Feature {
 	t.Helper()
+	chainFor := func(string) (captcha.Chain, bool) { return h.chain, true }
+	if h.noChain {
+		chainFor = nil
+	}
 	return New(Options{
 		Config:   h.cfg,
 		DB:       h.db,
 		APIFor:   func(string) (hhapi.HHAPI, error) { return h.api, nil },
-		ChainFor: func(string) (captcha.Chain, bool) { return h.chain, true },
+		ChainFor: chainFor,
 		Runner:   h.runner,
 		ProfileFor: func(context.Context, string) (profile.Profile, error) {
 			return h.profile, nil

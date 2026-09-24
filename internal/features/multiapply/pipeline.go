@@ -75,9 +75,10 @@ func (f *Feature) processVacancy(ctx context.Context, runID string, run config.R
 		}
 	}
 
-	// F5: dedup — recorded application, native auto-responder.
+	// F5: dedup — recorded application (dry_run survey rows never block a
+	// live apply), native auto-responder.
 	key := featurekit.DedupKey(accountID, resumeHash, v.ID)
-	if app, err := f.opt.DB.ApplicationsGetByDedupKey(ctx, key); err == nil && app != nil {
+	if app, err := f.opt.DB.ApplicationsGetByDedupKeyLive(ctx, key); err == nil && app != nil {
 		return "", "already_applied"
 	}
 	if f.opt.Config.Features.MultiApply.DedupNativeResp {
@@ -111,6 +112,18 @@ func (f *Feature) processVacancy(ctx context.Context, runID string, run config.R
 		}
 	}
 
+	// F7: daily quotas — cheap DB checks run BEFORE the expensive popup
+	// request (Wave 3 review fix 1).
+	if run.MaxPerDay > 0 && f.countToday(ctx, accountID, runID) >= run.MaxPerDay {
+		return "run_quota", ""
+	}
+	if f.accountCountToday(ctx, accountID) >= f.accountCap(accountID) {
+		return "account_cap", ""
+	}
+	if f.employerToday(ctx, accountID, v.EmployerID) >= perEmployerDailyCap {
+		return "", "employer_daily_cap"
+	}
+
 	// F6.5: feasibility from the apply popup.
 	meta, err := api.ApplyPopup(ctx, v.ID)
 	if err != nil {
@@ -131,17 +144,6 @@ func (f *Feature) processVacancy(ctx context.Context, runID string, run config.R
 	}
 	if meta.ChatWritePossibility == "DISABLED" {
 		return "", "chat_disabled"
-	}
-
-	// F7: daily quotas.
-	if run.MaxPerDay > 0 && f.countToday(ctx, accountID, runID) >= run.MaxPerDay {
-		return "run_quota", ""
-	}
-	if f.accountCountToday(ctx, accountID) >= f.accountCap(accountID) {
-		return "account_cap", ""
-	}
-	if f.employerToday(ctx, accountID, v.EmployerID) >= perEmployerDailyCap {
-		return "", "employer_daily_cap"
 	}
 
 	// F8: apply.
@@ -212,14 +214,27 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 
 	_, err = f.sendApply(ctx, api, v, resumeHash, letter)
 	if errors.Is(err, hhapi.ErrCaptcha) {
-		chain, ok := f.opt.ChainFor(accountID)
-		if ok && chain != nil {
-			if _, serr := chain.Solve(ctx, captchaChallenge()); serr != nil {
-				f.log.Warn("multiapply: captcha solve failed", "vacancy", v.ID, "err", serr)
-			} else {
-				f.incr(ctx, "apply.captcha_retry")
-				_, err = f.sendApply(ctx, api, v, resumeHash, letter)
+		if f.captchaExhausted(ctx, accountID) {
+			// Circuit breaker open: skip without another Solve call; the
+			// day-scoped key resets tomorrow. Abandon so a later pass can
+			// re-attack the vacancy once the chain is healthy again.
+			if aerr := featurekit.AbandonIntent(ctx, f.opt.DB, claim); aerr != nil {
+				f.log.Error("multiapply: intent abandon failed", "err", aerr)
 			}
+			return "", "captcha_exhausted"
+		}
+		var chain captcha.Chain
+		var ok bool
+		if f.opt.ChainFor != nil {
+			chain, ok = f.opt.ChainFor(accountID)
+		}
+		if !ok || chain == nil {
+			f.tripCaptchaBreaker(ctx, accountID, "captcha challenge with no provider chain configured")
+		} else if _, serr := chain.Solve(ctx, captchaChallenge()); serr != nil {
+			f.tripCaptchaBreaker(ctx, accountID, "captcha solve failed: "+serr.Error())
+		} else {
+			f.incr(ctx, "apply.captcha_retry")
+			_, err = f.sendApply(ctx, api, v, resumeHash, letter)
 		}
 	}
 	if err == nil {
@@ -263,6 +278,22 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 			if retryErr == nil {
 				f.recordApplied(ctx, runID, accountID, resumeHash, v, claim2, letter, "apply.ok")
 				return "", ""
+			}
+			// A second ambiguity inside the sanctioned retry is handled
+			// symmetrically with the first: resolve by reading, never a
+			// silent "failed" (Wave 3 review fix 7).
+			var amb2 *hhapi.AmbiguousError
+			if errors.As(retryErr, &amb2) {
+				found2, rerr2 := f.reconcileNegotiations(ctx, api, v.ID)
+				if rerr2 == nil && found2 {
+					f.recordApplied(ctx, runID, accountID, resumeHash, v, claim2, letter, "apply.reconciled")
+					return "", ""
+				}
+				f.review(ctx, accountID, "apply_ambiguous",
+					"second ambiguous outcome; negotiations empty or unreadable",
+					fmt.Sprintf(`{"vacancy_id":%d,"run":%q}`, v.ID, runID))
+				f.incr(ctx, "apply.ambiguous_review")
+				return "", "" // intent stays pending: parked for a human
 			}
 			_ = featurekit.FinishIntent(ctx, f.opt.DB, claim2, retryErr)
 			f.createApplication(ctx, runID, accountID, resumeHash, v, "failed", letter, retryErr.Error())
@@ -349,10 +380,23 @@ func (f *Feature) recordApplied(ctx context.Context, runID, accountID, resumeHas
 func (f *Feature) createApplication(ctx context.Context, runID, accountID, resumeHash string,
 	v hhapi.Vacancy, status, letter, failReason string,
 ) {
+	appKey := featurekit.DedupKey(accountID, resumeHash, v.ID)
+	// A dry_run survey row for the same vacancy is upgraded in place —
+	// ApplicationsCreate would fail on the UNIQUE dedup_key (Wave 3 fix 2).
+	if existing, err := f.opt.DB.ApplicationsGetByDedupKey(ctx, appKey); err == nil && existing != nil {
+		var reason *string
+		if failReason != "" {
+			reason = &failReason
+		}
+		if err := f.opt.DB.ApplicationsMarkStatus(ctx, existing.ID, status, reason); err != nil {
+			f.log.Error("multiapply: application upgrade failed", "vacancy", v.ID, "status", status, "err", err)
+		}
+		return
+	}
 	app := store.Application{
 		AccountID: accountID, RunID: runID, HhResumeID: resumeHash,
 		VacancyID: v.ID, EmployerID: v.EmployerID,
-		DedupKey: featurekit.DedupKey(accountID, resumeHash, v.ID),
+		DedupKey: appKey,
 		Status:   status,
 		Letter:   strPtr(letter),
 	}
@@ -562,6 +606,40 @@ func employerKey(accountID string, employerID int64, day string) string {
 	return "emp:" + strconv.FormatInt(employerID, 10) + ":" + day
 }
 
+// --- captcha circuit breaker (Wave 3 review fix 3) ---
+
+// captchaBreakerKey is the day-scoped feature_state flag: once set, further
+// captcha challenges in the same task are skipped without Solve calls until
+// the next day.
+func captchaBreakerKey(accountID, day string) string {
+	return "captcha:exhausted:" + accountID + ":" + day
+}
+
+// captchaExhausted reports whether the breaker is open for today.
+func (f *Feature) captchaExhausted(ctx context.Context, accountID string) bool {
+	v, ok, err := f.opt.DB.FeatureStateGet(ctx, feature, accountID, captchaBreakerKey(accountID, f.dayUTC()))
+	return err == nil && ok && v == "1"
+}
+
+// tripCaptchaBreaker opens the breaker for today: persists the flag, adds a
+// review item and emits EvCaptchaExhausted once.
+func (f *Feature) tripCaptchaBreaker(ctx context.Context, accountID, reason string) {
+	if err := f.opt.DB.FeatureStateSet(ctx, feature, accountID, captchaBreakerKey(accountID, f.dayUTC()), "1"); err != nil {
+		f.log.Error("multiapply: breaker flag write failed", "account", accountID, "err", err)
+	}
+	f.review(ctx, accountID, "captcha_exhausted", reason, "{}")
+	if f.opt.Notifier != nil {
+		f.opt.Notifier.Emit(webhook.Event{
+			Type:      webhook.EvCaptchaExhausted,
+			AccountID: accountID,
+			Time:      f.opt.Now(),
+			Message:   "Цепочка капчи исчерпана на сегодня: " + reason,
+			Payload:   map[string]any{"account_id": accountID, "reason": reason},
+		})
+	}
+	f.log.Warn("multiapply: captcha breaker tripped", "account", accountID, "reason", reason)
+}
+
 // captchaChallenge builds the challenge handed to the provider chain; the
 // exact hh challenge type is not parsed from the page, so the image type
 // with the resume page URL is the conservative default.
@@ -637,11 +715,10 @@ func (f *Feature) resolveResumeHash(ctx context.Context, accountID string, api h
 	return "", errors.New("no published searchable resume")
 }
 
-// resumeLiftable mirrors the autolift published+searchable filter; hh wraps
-// the status so the display name can surface first.
+// resumeLiftable mirrors the autolift published+searchable filter via the
+// shared featurekit helper (Wave 3 review fix 6).
 func resumeLiftable(r store.Resume) bool {
-	s := strings.ToLower(strings.TrimSpace(r.Status))
-	return s == "published" || s == "опубликовано"
+	return featurekit.ResumeLiftable(r.Status)
 }
 
 // loadProfile returns the injected profile or the default file/fact loader.

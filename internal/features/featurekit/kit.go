@@ -140,6 +140,19 @@ func fragment(s string, i int) string {
 	return s[start:end]
 }
 
+// ResumeLiftable reports whether a resume status means "published": hh
+// wraps status objects so either the dictionary id ("published") or the
+// Russian display name ("Опубликовано") may surface first. Shared by
+// autolift and multiapply (single source of truth, Wave 3 review fix 6).
+func ResumeLiftable(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "published", "опубликовано":
+		return true
+	default:
+		return false
+	}
+}
+
 // --- Key builders ---
 
 // DedupKey hashes account|resume|vacancy into a stable 32-hex-char key for
