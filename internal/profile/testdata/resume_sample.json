@@ -1,0 +1,52 @@
+{
+    "id": "f0e1d2c3b4a5968778695a4b3c2d1e0fabcdef01",
+    "title": "Senior Go-разработчик",
+    "status": { "id": "published", "name": "опубликовано" },
+    "first_name": "Иван",
+    "last_name": "Иванов",
+    "age": 29,
+    "gender": { "id": "male", "name": "Мужской" },
+    "area": { "id": "1", "name": "Москва", "url": "https://hh.ru/areas/1" },
+    "metro": { "id": "6.41", "name": "Калужская" },
+    "salary": { "amount": 350000, "currency": "RUR" },
+    "employments": [
+        { "id": "full", "name": "Полная занятость" },
+        { "id": "remote", "name": "Удаленная работа" }
+    ],
+    "schedules": [
+        { "id": "fullDay", "name": "Полный день" },
+        { "id": "flexible", "name": "Гибкий график" }
+    ],
+    "relocation": {
+        "type": { "id": "no_relocation", "name": "не готов к переезду" },
+        "area": [ { "id": "2", "name": "Санкт-Петербург" } ]
+    },
+    "business_trip_readiness": { "id": "occasionally", "name": "Редкие командировки" },
+    "total_experience": { "months": 84 },
+    "experience": [
+        {
+            "position": "Ведущий Go-разработчик",
+            "start": "2021-03-01",
+            "end": null,
+            "company": "ООО «Ромашка»",
+            "area": { "id": "1", "name": "Москва" },
+            "description": "Разработка биллинг-сервиса на Go и PostgreSQL. Команда из 6 человек."
+        },
+        {
+            "position": "Backend-разработчик",
+            "start": "2018-06-01",
+            "end": "2021-02-28",
+            "company": "АО «Василёк»",
+            "area": { "id": "1", "name": "Москва" },
+            "description": "Python/Django, миграция сервисов на Go."
+        }
+    ],
+    "skills": "Опыт highload, Kafka, Kubernetes.",
+    "skill_set": ["Go", "PostgreSQL", "Kafka", "Docker", "Kubernetes"],
+    "language": [
+        { "id": "rus", "name": "Русский", "level": { "id": "native", "name": "родной" } },
+        { "id": "eng", "name": "Английский", "level": { "id": "b2", "name": "B2 — Средне-продвинутый" } }
+    ],
+    "updated_at": "2026-09-20T12:00:00+0300",
+    "alternate_url": "https://hh.ru/resume/f0e1d2c3b4a5968778695a4b3c2d1e0fabcdef01"
+}
