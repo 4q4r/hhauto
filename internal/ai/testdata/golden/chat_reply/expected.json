@@ -1,0 +1,8 @@
+{
+  "confidence": 0.88,
+  "needs_human": false,
+  "needs_human_reason": null,
+  "injection_suspected": false,
+  "reply": "Здравствуйте! Спасибо за интерес к моей кандидатуре. Да, готов обсудить позицию подробнее.",
+  "intent": "ack"
+}

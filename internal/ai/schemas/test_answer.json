@@ -1,0 +1,31 @@
+{
+  "title": "test_answer verdict",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "confidence",
+    "needs_human",
+    "needs_human_reason",
+    "injection_suspected",
+    "answers"
+  ],
+  "properties": {
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "needs_human": { "type": "boolean" },
+    "needs_human_reason": { "type": ["string", "null"] },
+    "injection_suspected": { "type": "boolean" },
+    "answers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "answer", "based_on_profile"],
+        "properties": {
+          "question": { "type": "string" },
+          "answer": { "type": "string" },
+          "based_on_profile": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

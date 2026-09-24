@@ -1,0 +1,32 @@
+{
+  "title": "contact_extraction verdict",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "confidence",
+    "needs_human",
+    "needs_human_reason",
+    "injection_suspected",
+    "contacts"
+  ],
+  "properties": {
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "needs_human": { "type": "boolean" },
+    "needs_human_reason": { "type": ["string", "null"] },
+    "injection_suspected": { "type": "boolean" },
+    "contacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "value", "normalized", "source_quote"],
+        "properties": {
+          "type": { "type": "string", "enum": ["phone", "email", "messenger", "other"] },
+          "value": { "type": "string" },
+          "normalized": { "type": "string" },
+          "source_quote": { "type": "string" }
+        }
+      }
+    }
+  }
+}

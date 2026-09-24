@@ -1,0 +1,22 @@
+{
+  "title": "message_classification verdict",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "confidence",
+    "needs_human",
+    "needs_human_reason",
+    "injection_suspected",
+    "category"
+  ],
+  "properties": {
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "needs_human": { "type": "boolean" },
+    "needs_human_reason": { "type": ["string", "null"] },
+    "injection_suspected": { "type": "boolean" },
+    "category": {
+      "type": "string",
+      "enum": ["rejection", "invitation", "test_assignment", "question", "offer", "spam", "other"]
+    }
+  }
+}

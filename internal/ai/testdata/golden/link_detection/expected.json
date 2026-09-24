@@ -1,0 +1,13 @@
+{
+  "confidence": 0.75,
+  "needs_human": false,
+  "needs_human_reason": null,
+  "injection_suspected": false,
+  "links": [
+    {
+      "url": "https://hr.unicorn-team.example/apply/assistant",
+      "kind": "ats",
+      "risk": "medium"
+    }
+  ]
+}

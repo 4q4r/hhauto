@@ -1,0 +1,27 @@
+{
+  "title": "vacancy_scoring verdict",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "confidence",
+    "needs_human",
+    "needs_human_reason",
+    "injection_suspected",
+    "score",
+    "band",
+    "reasons",
+    "used_facts",
+    "missing_data"
+  ],
+  "properties": {
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "needs_human": { "type": "boolean" },
+    "needs_human_reason": { "type": ["string", "null"] },
+    "injection_suspected": { "type": "boolean" },
+    "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "band": { "type": "string", "enum": ["strong", "ok", "gray", "weak"] },
+    "reasons": { "type": "array", "items": { "type": "string" } },
+    "used_facts": { "type": "array", "items": { "type": "string" } },
+    "missing_data": { "type": "array", "items": { "type": "string" } }
+  }
+}

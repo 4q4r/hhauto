@@ -1,0 +1,10 @@
+{
+  "task": "link_detection",
+  "input": {
+    "urls": ["https://hr.unicorn-team.example/apply/assistant"],
+    "context": {
+      "source": "vacancy_description",
+      "around": "Заполните анкету по ссылке, это обязательный шаг отбора."
+    }
+  }
+}
