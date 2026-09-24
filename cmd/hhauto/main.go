@@ -1,22 +1,20 @@
+// hhauto — hh.ru automation CLI (docs/PLAN.md). The command tree and
+// wiring live in internal/cli; this stub only carries the release-stamped
+// version and delegates.
 package main
 
 import (
-	"fmt"
 	"os"
+
+	"hhauto/internal/cli"
 )
 
-// Bootstrap stub — replaced by internal/cli wiring in the CLI task.
-// Version is injected at release time via -ldflags.
+// Injected at release time via -ldflags.
 var (
 	version = "dev"
 	commit  = "none"
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "version" {
-		fmt.Printf("hhauto %s (%s)\n", version, commit)
-		return
-	}
-	fmt.Println("hhauto: implementation in progress — see docs/PLAN.md")
-	os.Exit(1)
+	os.Exit(cli.Execute(version, commit))
 }
