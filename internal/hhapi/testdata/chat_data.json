@@ -1,0 +1,30 @@
+{
+  "chat": {
+    "currentParticipantId": "p2",
+    "messages": {
+      "items": [
+        {
+          "id": "m1",
+          "type": "SIMPLE",
+          "text": "Здравствуйте!",
+          "participantId": "p1",
+          "createDateTime": "2026-09-24T09:00:00+03:00"
+        },
+        {
+          "id": "m2",
+          "type": "SIMPLE",
+          "text": "Готов к собеседованию",
+          "participantId": "p2",
+          "createDateTime": "2026-09-24T09:05:00+03:00"
+        },
+        {
+          "id": "m3",
+          "type": "WORKFLOW",
+          "text": "auto",
+          "participantId": "p2",
+          "workflowTransition": { "id": "reject" }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "chats": {
+    "items": [
+      {
+        "id": "555001",
+        "unreadCount": 1,
+        "lastMessage": { "createDateTime": "2026-09-24T09:00:00+03:00" }
+      }
+    ],
+    "hasNextPage": false,
+    "perPage": 20
+  },
+  "chatsDisplayInfo": { "555001": { "title": "Corp LLC" } }
+}

@@ -1,0 +1,15 @@
+{
+  "resumes": [
+    {
+      "hash": "resume_hash_1",
+      "title": "Go-разработчик",
+      "updated_at": "2026-09-24T10:00:00+0300",
+      "_attributes": {
+        "percent": 92,
+        "status": { "id": "published", "name": "Опубликовано" },
+        "isSearchable": true,
+        "canPublishOrUpdate": true
+      }
+    }
+  ]
+}
