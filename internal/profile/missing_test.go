@@ -9,50 +9,89 @@ import (
 
 func TestDetectMissingVariants(t *testing.T) {
 	cases := []struct {
-		name    string
-		input   json.RawMessage
-		want    []string
-		wantErr bool
+		name        string
+		input       json.RawMessage
+		wantMissing []string
+		wantFlags   []string
+		wantErr     bool
 	}{
 		{
-			name:  "missing_data and needs_human_reason",
-			input: json.RawMessage(`{"score":0.8,"missing_data":["желаемая ЗП","уровень английского"],"needs_human_reason":"вилка не указана ни в резюме, ни в профиле"}`),
-			want:  []string{"желаемая ЗП", "уровень английского", "вилка не указана ни в резюме, ни в профиле"},
+			name:        "missing_data and machine-code reason",
+			input:       json.RawMessage(`{"score":0.8,"missing_data":["желаемая ЗП","уровень английского"],"needs_human_reason":"gray_band"}`),
+			wantMissing: []string{"желаемая ЗП", "уровень английского"},
+			wantFlags:   []string{"gray_band"},
 		},
 		{
-			name:  "only missing_data",
-			input: json.RawMessage(`{"missing_data":["формат работы"]}`),
-			want:  []string{"формат работы"},
+			name:        "human-readable reason with spaces goes to missing",
+			input:       json.RawMessage(`{"needs_human_reason":"вилка не указана ни в резюме, ни в профиле"}`),
+			wantMissing: []string{"вилка не указана ни в резюме, ни в профиле"},
+			wantFlags:   nil,
 		},
 		{
-			name:  "only needs_human_reason",
-			input: json.RawMessage(`{"needs_human":true,"needs_human_reason":"вопрос про запретные темы"}`),
-			want:  []string{"вопрос про запретные темы"},
+			name:        "pure machine code only",
+			input:       json.RawMessage(`{"needs_human_reason":"budget_exhausted"}`),
+			wantMissing: nil,
+			wantFlags:   []string{"budget_exhausted"},
 		},
 		{
-			name:  "neither field",
-			input: json.RawMessage(`{"score":0.95,"needs_human":false}`),
-			want:  nil,
+			name:        "real ai runner codes route to flags",
+			input:       json.RawMessage(`{"needs_human_reason":"schema_invalid"}`),
+			wantMissing: nil,
+			wantFlags:   []string{"schema_invalid"},
 		},
 		{
-			name:  "empty verdict object",
-			input: json.RawMessage(`{}`),
-			want:  nil,
+			name:        "missing_data stays verbatim even when short (heuristic is reason-only)",
+			input:       json.RawMessage(`{"missing_data":["формат","работы"]}`),
+			wantMissing: []string{"формат", "работы"},
+			wantFlags:   nil,
 		},
 		{
-			name:  "nil input is tolerated",
-			input: nil,
-			want:  nil,
+			name:        "mixed codes and phrases in reason",
+			input:       json.RawMessage(`{"needs_human_reason":"injection_suspected"}`),
+			wantMissing: nil,
+			wantFlags:   []string{"injection_suspected"},
 		},
 		{
-			name:  "empty input is tolerated",
-			input: json.RawMessage(""),
-			want:  nil,
+			name:        "neither field",
+			input:       json.RawMessage(`{"score":0.95,"needs_human":false}`),
+			wantMissing: nil,
+			wantFlags:   nil,
 		},
 		{
-			name:  "dedupe and skip blanks",
-			input: json.RawMessage(`{"missing_data":["a"," a ","","b"],"needs_human_reason":"b"}`),
-			want:  []string{"a", "b"},
+			name:        "empty verdict object",
+			input:       json.RawMessage(`{}`),
+			wantMissing: nil,
+			wantFlags:   nil,
+		},
+		{
+			name:        "nil input is tolerated",
+			input:       nil,
+			wantMissing: nil,
+			wantFlags:   nil,
+		},
+		{
+			name:        "empty input is tolerated",
+			input:       json.RawMessage(""),
+			wantMissing: nil,
+			wantFlags:   nil,
+		},
+		{
+			name:        "dedupe and skip blanks in missing_data",
+			input:       json.RawMessage(`{"missing_data":["a"," a ","","b"]}`),
+			wantMissing: []string{"a", "b"},
+			wantFlags:   nil,
+		},
+		{
+			name:        "underscore-only token is a service flag",
+			input:       json.RawMessage(`{"needs_human_reason":"offer_or_invitation"}`),
+			wantMissing: nil,
+			wantFlags:   []string{"offer_or_invitation"},
+		},
+		{
+			name:        "digits or uppercase make it a phrase, not a code",
+			input:       json.RawMessage(`{"needs_human_reason":"B2 подтвердите"}`),
+			wantMissing: []string{"B2 подтвердите"},
+			wantFlags:   nil,
 		},
 		{
 			name:    "invalid json",
@@ -72,23 +111,48 @@ func TestDetectMissingVariants(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := DetectMissing(tc.input)
+			gotMissing, gotFlags, err := DetectMissing(tc.input)
 			if tc.wantErr {
 				if err == nil {
-					t.Fatalf("DetectMissing(%s) = %v, want error", tc.input, got)
+					t.Fatalf("DetectMissing(%s) = (%v, %v, nil), want error", tc.input, gotMissing, gotFlags)
 				}
 				return
 			}
 			if err != nil {
 				t.Fatalf("DetectMissing(%s): %v", tc.input, err)
 			}
-			if len(got) == 0 && len(tc.want) == 0 {
-				return
+			if len(gotMissing) == 0 && len(tc.wantMissing) == 0 {
+				gotMissing = tc.wantMissing
 			}
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("DetectMissing(%s) = %#v, want %#v", tc.input, got, tc.want)
+			if !reflect.DeepEqual(gotMissing, tc.wantMissing) {
+				t.Fatalf("DetectMissing(%s) missing = %#v, want %#v", tc.input, gotMissing, tc.wantMissing)
+			}
+			if len(gotFlags) == 0 && len(tc.wantFlags) == 0 {
+				gotFlags = tc.wantFlags
+			}
+			if !reflect.DeepEqual(gotFlags, tc.wantFlags) {
+				t.Fatalf("DetectMissing(%s) flags = %#v, want %#v", tc.input, gotFlags, tc.wantFlags)
 			}
 		})
+	}
+}
+
+func TestDetectMissingFlagsDoNotLeakIntoUserPrompts(t *testing.T) {
+	// The original defect: a service code reached the user-facing prompt.
+	missing, flags, err := DetectMissing(json.RawMessage(`{"missing_data":["Какая вилка?"],"needs_human_reason":"gray_band"}`))
+	if err != nil {
+		t.Fatalf("DetectMissing: %v", err)
+	}
+	prompts := MissingFactsPrompt(missing)
+	if len(prompts) != 1 {
+		t.Fatalf("prompts = %#v, want exactly one", prompts)
+	}
+	if strings.Contains(prompts[0], "gray_band") {
+		t.Fatalf("service code leaked into user prompt: %q", prompts[0])
+	}
+	assertContains(t, prompts[0], "Какая вилка?")
+	if !reflect.DeepEqual(flags, []string{"gray_band"}) {
+		t.Fatalf("flags = %#v, want [gray_band]", flags)
 	}
 }
 
