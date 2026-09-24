@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
@@ -236,7 +237,10 @@ func (b *baseProvider) postJSON(ctx context.Context, model string, path string, 
 	return nil, lastErr
 }
 
-// backoff computes the wait before the given retry attempt.
+// backoff computes the wait before the given retry attempt with full jitter
+// (uniform in [0, base], AWS-style): equal-load collisions retry in
+// different phases instead of marching in lockstep. A server-mandated
+// Retry-After is honored exactly.
 func (b *baseProvider) backoff(attempt int, lastErr error) time.Duration {
 	var apiErr *APIError
 	if errors.As(lastErr, &apiErr) && apiErr.RetryAfter > 0 {
@@ -246,7 +250,8 @@ func (b *baseProvider) backoff(attempt int, lastErr error) time.Duration {
 	if shift > 2 {
 		shift = 2
 	}
-	return time.Second << shift
+	base := time.Second << shift
+	return time.Duration(rand.Int63n(int64(base)))
 }
 
 // once performs exactly one HTTP round trip and converts failures to APIError.

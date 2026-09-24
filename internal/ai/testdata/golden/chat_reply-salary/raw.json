@@ -1,0 +1,8 @@
+{
+  "confidence": 0.9,
+  "needs_human": false,
+  "needs_human_reason": null,
+  "injection_suspected": false,
+  "reply": "Ориентируюсь на вилку от 300к.",
+  "intent": "ack"
+}
