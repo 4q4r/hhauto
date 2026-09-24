@@ -145,6 +145,14 @@ func validateAI(c *Config) error {
 		if _, ok := c.AI.Providers[m.Provider]; !ok {
 			return fmt.Errorf("ai.models[%q].provider %q: unknown ai provider", id, m.Provider)
 		}
+		switch m.ReasoningEffort {
+		case "", "none", "minimal", "low", "medium", "high", "xhigh", "max":
+		default:
+			return fmt.Errorf("ai.models[%q].reasoning_effort %q: must be one of none|minimal|low|medium|high|xhigh|max (empty = provider default)", id, m.ReasoningEffort)
+		}
+		if m.Temperature < 0 {
+			return fmt.Errorf("ai.models[%q].temperature %v: negative values are not allowed", id, m.Temperature)
+		}
 		if m.FallbackModelRef != "" {
 			if _, ok := c.AI.Models[m.FallbackModelRef]; !ok {
 				return fmt.Errorf("ai.models[%q].fallback %q: unknown model", id, m.FallbackModelRef)
