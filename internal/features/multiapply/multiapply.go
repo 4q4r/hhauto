@@ -20,6 +20,7 @@ import (
 	"hhauto/internal/hhapi"
 	"hhauto/internal/profile"
 	"hhauto/internal/queue"
+	"hhauto/internal/review"
 	"hhauto/internal/scheduler"
 	"hhauto/internal/store"
 	"hhauto/internal/webhook"
@@ -52,8 +53,14 @@ type Options struct {
 	ProfileFor func(ctx context.Context, accountID string) (profile.Profile, error)
 	Pacer      featurekit.Pacer
 	Notifier   webhook.Notifier
-	Now        func() time.Time
-	Log        *slog.Logger
+	// Review is the review-queue fan-out (dedup + needs_human webhook).
+	// nil = storage-only adds (unwired tests).
+	Review review.Reviewer
+	// Stopped reports the kill switch. nil = never stopped (unwired tests).
+	// Checked between vacancies inside one run.
+	Stopped func(ctx context.Context) bool
+	Now     func() time.Time
+	Log     *slog.Logger
 }
 
 // RunPayload is the typed queue payload for KindApply run tasks.
@@ -152,7 +159,15 @@ func (f *Feature) incr(ctx context.Context, key string) {
 	}
 }
 
+// review records a review item via the wired reviewer (dedup + needs_human
+// webhook fan-out); unwired (tests) it degrades to storage-only adds.
 func (f *Feature) review(ctx context.Context, accountID, kind, reason, payload string) {
+	if f.opt.Review != nil {
+		if _, err := f.opt.Review.Add(ctx, accountID, kind, reason, payload); err != nil {
+			f.log.Error("multiapply: review item add failed", "kind", kind, "err", err)
+		}
+		return
+	}
 	if _, err := f.opt.DB.ReviewItemsAdd(ctx, accountID, kind, reason, payload); err != nil {
 		f.log.Error("multiapply: review item add failed", "kind", kind, "err", err)
 	}
@@ -206,6 +221,14 @@ func (f *Feature) RunProfile(ctx context.Context, runID string) error {
 
 	batch := map[int64]bool{}
 	for _, v := range vacancies {
+		if f.opt.Stopped != nil && f.opt.Stopped(ctx) {
+			// Kill switch: the vacancy processed last has fully settled
+			// (its intents are closed); the rest of the batch is not
+			// started. The engine shuts down gracefully around this.
+			f.log.Info("multiapply: kill switch tripped — stopping the vacancy batch",
+				"run", runID, "account", accountID)
+			return nil
+		}
 		stop, skip := f.processVacancy(ctx, runID, run, accountID, api, prof, resumeHash, v, batch)
 		switch {
 		case stop != "":

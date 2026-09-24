@@ -33,6 +33,26 @@ type Service struct {
 	log    *slog.Logger
 }
 
+// Reviewer is the account-level fan-out face features consume: one Add per
+// needs-human decision, backed by the service's open-item dedup and the
+// EvNeedsHuman webhook fan-out.
+type Reviewer interface {
+	Add(ctx context.Context, accountID, kind, reason, payload string) (int64, error)
+}
+
+// storeReviewer binds the service to one store.
+type storeReviewer struct {
+	s  *Service
+	db *store.DB
+}
+
+func (r storeReviewer) Add(ctx context.Context, accountID, kind, reason, payload string) (int64, error) {
+	return r.s.Add(ctx, r.db, accountID, kind, reason, payload)
+}
+
+// For returns the Reviewer adapter of this service over db.
+func (s *Service) For(db *store.DB) Reviewer { return storeReviewer{s: s, db: db} }
+
 // New builds a review service.
 func New(notify webhook.Notifier, log *slog.Logger) *Service {
 	if log == nil {

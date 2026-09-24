@@ -204,9 +204,10 @@ func (f *Feature) HandleSendEmail(ctx context.Context, task queue.Task) error {
 	messageID := fmt.Sprintf("hhauto-%s@%s", intentID, domainOf(f.Cfg.Email.From))
 
 	if f.Cfg.General.DryRun {
-		if err := f.DB.IntentsMarkDone(ctx, intentID); err != nil {
-			return err
-		}
+		// Dry-run leaves the intent re-armable (§6): done means "really
+		// mailed" — marking it done here made the real run take the
+		// ErrIntentDone repair path and record a sent-state without mail.
+		_ = f.DB.IntentsMarkAbandoned(ctx, intentID)
 		log.Info("emaildup: dry-run, send skipped", "to", email, "employer", p.EmployerID)
 		return nil
 	}

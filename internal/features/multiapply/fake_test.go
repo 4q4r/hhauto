@@ -311,6 +311,19 @@ func (n *fakeNotifier) has(t string) bool {
 	return n.count(t) > 0
 }
 
+// ofType returns the events of one type (single-goroutine test access).
+func (n *fakeNotifier) ofType(t string) []webhook.Event {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	var out []webhook.Event
+	for _, ev := range n.events {
+		if ev.Type == t {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
 func (n *fakeNotifier) count(t string) int {
 	n.mu.Lock()
 	defer n.mu.Unlock()

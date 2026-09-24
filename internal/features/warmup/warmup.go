@@ -27,6 +27,7 @@ import (
 	"hhauto/internal/features/kit11"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/queue"
+	"hhauto/internal/review"
 	"hhauto/internal/scheduler"
 	"hhauto/internal/store"
 	"hhauto/internal/webhook"
@@ -57,6 +58,10 @@ type Feature struct {
 	Log   *slog.Logger
 	Now   func() time.Time
 	Rnd   *rand.Rand
+
+	// Review is the review-queue fan-out (dedup + needs_human webhook).
+	// nil = storage-only adds with the legacy direct emit (unwired tests).
+	Review review.Reviewer
 }
 
 // Name implements features.Feature.
@@ -400,8 +405,16 @@ func (f *Feature) suppressOnce(ctx context.Context, accountID string, chat store
 }
 
 func (f *Feature) review(ctx context.Context, accountID, kind, chatikID, reason string) error {
-	if _, err := f.DB.ReviewItemsAdd(ctx, accountID, kind, reason,
-		mustJSON(map[string]any{"chat": chatikID})); err != nil {
+	payload := mustJSON(map[string]any{"chat": chatikID})
+	if f.Review != nil {
+		// Wired reviewer: dedup of open items + needs_human webhook fan-out
+		// (the homemade emit here had neither).
+		if _, err := f.Review.Add(ctx, accountID, kind, reason, payload); err != nil {
+			return fmt.Errorf("warmup: review add: %w", err)
+		}
+		return nil
+	}
+	if _, err := f.DB.ReviewItemsAdd(ctx, accountID, kind, reason, payload); err != nil {
 		return fmt.Errorf("warmup: review add: %w", err)
 	}
 	if f.Notify != nil {

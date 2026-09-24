@@ -681,6 +681,8 @@ func (s *supervisor) dispatch(ctx context.Context, accountID string, task queue.
 		Cfg:       s.deps.Cfg,
 		Log:       s.deps.Log,
 		AccountID: accountID,
+		Review:    s.review.For(s.deps.DB),
+		Stopped:   s.deps.KillSwitch.Tripped,
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -806,7 +808,7 @@ func (s *supervisor) redeliverOne(ctx context.Context, item webhook.OutboxItem) 
 			s.deps.Log.Error("engine: outbox mark failed", "id", item.ID, "err", merr)
 		}
 		s.deps.Log.Warn("engine: outbox redelivery failed; retrying with backoff",
-			"id", item.ID, "endpoint", item.EndpointID, "attempt", attempt, "next", delay.Round(time.Second), "err", err)
+			"id", item.ID, "endpoint", webhook.MaskEndpoint(item.EndpointID), "attempt", attempt, "next", delay.Round(time.Second), "err", err)
 		return
 	}
 	// The endpoint accepted the payload: the attempt counter resets NOW

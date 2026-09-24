@@ -48,6 +48,7 @@ import (
 	"hhauto/internal/profile"
 	"hhauto/internal/proxy"
 	"hhauto/internal/queue"
+	"hhauto/internal/review"
 	"hhauto/internal/scheduler"
 	"hhauto/internal/store"
 	"hhauto/internal/webhook"
@@ -103,6 +104,8 @@ type Runtime struct {
 	Kill     engine.KillSwitch
 
 	Feats *features.Registry
+
+	review *review.Service // review-queue fan-out source for features and TaskContext
 
 	schedules []schedBinding
 	handlers  map[queue.TaskKind]engine.TaskHandler
@@ -249,6 +252,7 @@ func Build(ctx context.Context, opts BuildOptions) (*Runtime, error) {
 
 	rt.Outbox = newStoreOutbox(rt.DB)
 	rt.Webhooks = webhook.New(webhookEndpointConfigs(cfg), rt.ProxyReg, rt.Outbox, rt.Log)
+	rt.review = review.New(rt.Webhooks, rt.Log)
 
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 	pacer := engine.NewPacer(cfg.Pacing, rnd)
@@ -301,6 +305,8 @@ func (rt *Runtime) buildFeatures() error {
 	dialerFor := rt.dialerFor
 
 	feats := &features.Registry{}
+	reviewer := rt.review.For(rt.DB)
+	stopped := func(ctx context.Context) bool { return rt.Kill != nil && rt.Kill.Tripped(ctx) }
 	lift := autolift.New(autolift.Options{
 		Config: *cfg, DB: rt.DB, APIFor: apiFor, ChainFor: chainFor,
 		Pacer: rt.Pacer, Log: rt.Log,
@@ -309,14 +315,17 @@ func (rt *Runtime) buildFeatures() error {
 	apply := multiapply.New(multiapply.Options{
 		Config: *cfg, DB: rt.DB, APIFor: apiFor, ChainFor: chainFor,
 		Runner: rt.AI, ProfileFor: rt.profileFor, Pacer: rt.Pacer,
-		Notifier: rt.Webhooks, Log: rt.Log,
+		Notifier: rt.Webhooks, Review: reviewer, Stopped: stopped, Log: rt.Log,
 	})
 	feats.Add(apply)
 	chat := chatops.New(*cfg, rt.DB, rt.AI, rt.Webhooks, kit11.APIResolver(rt.APIFor), rt.Log)
+	chat.Review = reviewer
+	chat.Stopped = stopped
 	feats.Add(chat)
 	solver := &testsolve.Solver{
 		Cfg: *cfg, DB: rt.DB, AI: rt.AI, Notify: rt.Webhooks,
 		Dialer: dialerFor, Log: rt.Log,
+		Review: reviewer, Stopped: stopped,
 	}
 	feats.Add(solver)
 	cont := &contacts.Feature{
@@ -327,6 +336,7 @@ func (rt *Runtime) buildFeatures() error {
 	warm := &warmup.Feature{
 		Cfg: *cfg, DB: rt.DB, AI: rt.AI, API: kit11.APIResolver(rt.APIFor),
 		Notify: rt.Webhooks, Log: rt.Log,
+		Review: reviewer,
 	}
 	feats.Add(warm)
 	mail := &emaildup.Feature{
@@ -562,6 +572,8 @@ func (rt *Runtime) TaskContext(accountID string) (*engine.TaskContext, error) {
 		DB: rt.DB, API: api, AI: rt.AI, Pacer: rt.Pacer,
 		Webhooks: rt.Webhooks, Captcha: rt.Captcha,
 		Cfg: rt.Cfg, Log: rt.Log, AccountID: accountID,
+		Review:  rt.review.For(rt.DB),
+		Stopped: rt.Kill.Tripped,
 	}, nil
 }
 

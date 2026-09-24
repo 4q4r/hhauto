@@ -12,6 +12,7 @@ import (
 	"hhauto/internal/config"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/queue"
+	"hhauto/internal/review"
 	"hhauto/internal/scheduler"
 	"hhauto/internal/store"
 	"hhauto/internal/webhook"
@@ -40,6 +41,13 @@ type TaskContext struct {
 	Log      *slog.Logger
 
 	AccountID string
+
+	// Review is the review-queue fan-out (dedup + needs_human webhook).
+	Review review.Reviewer
+	// Stopped reports the kill switch (all three channels); a cancelled
+	// ctx counts as tripped. Handlers check it between mutations inside
+	// one batch so a tripped switch stops the batch gracefully.
+	Stopped func(ctx context.Context) bool
 }
 
 // --- registration API (thread-safe) ---

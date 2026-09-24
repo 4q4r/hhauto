@@ -389,8 +389,8 @@ func TestDryRunSendsNothing(t *testing.T) {
 	if len(h.sender.calls) != 0 {
 		t.Fatal("dry-run must not send")
 	}
-	if _, err := h.db.IntentsBegin(t.Context(), "email:acc:777:42", "pending", "x"); !errors.Is(err, store.ErrIntentDone) {
-		t.Fatalf("dry-run must mark the intent done, got %v", err)
+	if _, err := h.db.IntentsBegin(t.Context(), "email:acc:777:42", "pending", "x"); err != nil {
+		t.Fatalf("dry-run must leave the intent re-armable (§6: done = really mailed), got %v", err)
 	}
 }
 
@@ -401,6 +401,30 @@ func TestDisabledFeatureNoop(t *testing.T) {
 	}
 	if len(h.sender.calls) != 0 {
 		t.Fatal("disabled emaildup must not send")
+	}
+}
+
+// Б2 regression: a dry-run pass must not consume the email intent — after
+// the switch to a real run the letter is actually delivered.
+func TestDryRunThenRealRunSendsEmail(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) {
+		c.Email.From = "me@example.com"
+		c.General.DryRun = true
+	})
+	seedContact(t, h)
+	if err := h.feat.HandleSendEmail(t.Context(), sendTask("hr@romashka.ru", 777, 42)); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.sender.calls) != 0 {
+		t.Fatalf("dry-run must not send: %+v", h.sender.calls)
+	}
+
+	h.feat.Cfg.General.DryRun = false
+	if err := h.feat.HandleSendEmail(t.Context(), sendTask("hr@romashka.ru", 777, 42)); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.sender.calls) != 1 {
+		t.Fatalf("real run after dry-run must send the email, calls = %d", len(h.sender.calls))
 	}
 }
 
