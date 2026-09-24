@@ -9,6 +9,7 @@ package profile
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -56,32 +57,57 @@ type aiVerdict struct {
 	NeedsHumanReason *string  `json:"needs_human_reason"`
 }
 
+// serviceCodeRe matches machine-oriented service codes — a single token of
+// lowercase latin letters and underscores ("gray_band", "budget_exhausted",
+// as emitted by the ai runner) — as opposed to human-readable phrases,
+// which contain spaces, digits, uppercase or non-latin letters.
+var serviceCodeRe = regexp.MustCompile(`^[a-z_]+$`)
+
 // DetectMissing extracts the missing_data[] items and the needs_human_reason
-// from an AI verdict. It is tolerant of absent fields: nil/empty input and
-// verdicts without these fields yield (nil, nil). Malformed JSON or wrong
-// field types surface as errors — a schema violation must not be swallowed.
-func DetectMissing(output json.RawMessage) ([]string, error) {
+// from an AI verdict.
+//
+// Returns:
+//   - missing: human-readable items for user-facing prompts (fed to
+//     MissingFactsPrompt);
+//   - flags:   service codes. needs_human_reason values that are a single
+//     ^[a-z_]+$ token are routed here instead of missing, so machine codes
+//     like "gray_band" never leak into user prompts; programmatic consumers
+//     (review flow) still see them.
+//
+// The heuristic applies to needs_human_reason only: missing_data items are
+// returned verbatim in missing — they are semantically missing facts, and
+// filtering them could hide real data.
+//
+// It is tolerant of absent fields: nil/empty input and verdicts without
+// these fields yield (nil, nil, nil). Malformed JSON or wrong field types
+// surface as errors — a schema violation must not be swallowed.
+func DetectMissing(output json.RawMessage) (missing []string, flags []string, err error) {
 	if len(output) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var v aiVerdict
 	if err := json.Unmarshal(output, &v); err != nil {
-		return nil, fmt.Errorf("profile: parse AI verdict: %w", err)
+		return nil, nil, fmt.Errorf("profile: parse AI verdict: %w", err)
 	}
-	out := make([]string, 0, len(v.MissingData)+1)
 	seen := make(map[string]bool, len(v.MissingData)+1)
-	add := func(s string) {
+	addMissing := func(s string) {
 		if s = strings.TrimSpace(s); s == "" || seen[s] {
 			return
 		}
 		seen[s] = true
-		out = append(out, s)
+		missing = append(missing, s)
 	}
 	for _, m := range v.MissingData {
-		add(m)
+		addMissing(m)
 	}
 	if v.NeedsHumanReason != nil {
-		add(*v.NeedsHumanReason)
+		if r := strings.TrimSpace(*v.NeedsHumanReason); r != "" {
+			if serviceCodeRe.MatchString(r) {
+				flags = append(flags, r)
+			} else {
+				addMissing(r)
+			}
+		}
 	}
-	return out, nil
+	return missing, flags, nil
 }
