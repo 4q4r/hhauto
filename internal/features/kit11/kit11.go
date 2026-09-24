@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"hhauto/internal/config"
+	"hhauto/internal/features/featurekit"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/profile"
 	"hhauto/internal/store"
@@ -50,9 +51,12 @@ func DetectLinks(text string) []string {
 	return out
 }
 
-// HasLink reports whether outgoing text contains any URL. This backs the
-// platform rule "no links in outgoing messages" (shadow-ban risk).
-func HasLink(text string) bool { return len(DetectLinks(text)) > 0 }
+// HasLink reports whether outgoing text violates the unified link/contact
+// ban (featurekit.NoLinksRule: http/https URLs, www hosts, t.me /
+// telegram.me links, @handles — the latter also covers email addresses).
+// This backs the platform rule "no links in outgoing messages"
+// (shadow-ban risk).
+func HasLink(text string) bool { return featurekit.NoLinksRule(text) != nil }
 
 // LinkHost returns the lowercased host of a detected link. www. is stripped;
 // a www.-link without scheme is normalized to http:// for parsing. An empty
@@ -172,6 +176,13 @@ func Day(t time.Time) string { return t.UTC().Format("2006-01-02") }
 // hourly counters without schema changes.
 func HourKey(prefix string, t time.Time) string {
 	return fmt.Sprintf("%s.h%02d", prefix, t.UTC().Hour())
+}
+
+// CollectQueuedMarker is the chatops feature_state key marking that a
+// collect_contacts task was already enqueued for an employer. contacts
+// clears the value on transient failure so chatops can re-enqueue later.
+func CollectQueuedMarker(employerID int64) string {
+	return fmt.Sprintf("collect:queued:%d", employerID)
 }
 
 // RenderProfile builds the trusted candidate-context prompt block for an

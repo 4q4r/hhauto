@@ -13,7 +13,9 @@ import (
 
 	"hhauto/internal/ai"
 	"hhauto/internal/config"
+	"hhauto/internal/features/kit11"
 	"hhauto/internal/hhapi"
+	"hhauto/internal/queue"
 	"hhauto/internal/store"
 )
 
@@ -234,5 +236,58 @@ func TestFeatureContract(t *testing.T) {
 	f.Cfg.Features.Contacts.Enabled = false
 	if f.Enabled() {
 		t.Fatal("enabled must follow config")
+	}
+}
+
+// --- Wave-3 review #5: transient failures must not lose event-driven tasks ---
+
+type transientAPI struct {
+	hhapiStub
+	calls int
+}
+
+func (f *transientAPI) EmployerContacts(_ context.Context, _ int64) ([]hhapi.Contact, error) {
+	f.calls++
+	return nil, hhapi.ErrRateLimited
+}
+
+func TestHandleCollectContactsTransientRequeuesAndClearsMarker(t *testing.T) {
+	db := newDB(t)
+	api := &transientAPI{}
+	q := queue.New()
+	f := &Feature{
+		Cfg:   config.Config{Features: config.Features{Contacts: config.Contacts{Enabled: true}}},
+		DB:    db,
+		API:   func(string) (hhapi.HHAPI, error) { return api, nil },
+		Queue: q,
+		Log:   slog.New(slog.DiscardHandler),
+		Now:   func() time.Time { return time.Unix(0, 0) },
+	}
+	task := queue.Task{
+		AccountID: "acc",
+		Kind:      queue.KindCollectContacts,
+		DedupKey:  "collect:acc:777",
+		Payload:   CollectPayload{AccountID: "acc", EmployerID: 777, VacancyID: 42},
+	}
+
+	// chatops has already marked the employer as enqueued
+	if err := db.FeatureStateSet(t.Context(), "chatops", "acc", kit11.CollectQueuedMarker(777), "1"); err != nil {
+		t.Fatal(err)
+	}
+
+	err := f.HandleCollectContacts(t.Context(), task)
+	if !errors.Is(err, hhapi.ErrRateLimited) {
+		t.Fatalf("transient error must surface, got %v", err)
+	}
+	if n := q.Len("acc"); n != 1 {
+		t.Fatalf("transient failure must requeue the task, len=%d", n)
+	}
+	if got, ok := q.Dequeue(t.Context(), "acc"); ok && got.DedupKey != "collect:acc:777" {
+		t.Fatalf("requeued dedup key = %q", got.DedupKey)
+	}
+	// the chatops marker is cleared so a later sync can re-enqueue
+	marker, _, err := db.FeatureStateGet(t.Context(), "chatops", "acc", kit11.CollectQueuedMarker(777))
+	if err != nil || marker != "" {
+		t.Fatalf("collect marker must be cleared, got %q err=%v", marker, err)
 	}
 }

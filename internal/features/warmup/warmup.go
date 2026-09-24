@@ -23,6 +23,7 @@ import (
 	"hhauto/internal/ai"
 	"hhauto/internal/config"
 	"hhauto/internal/features"
+	"hhauto/internal/features/featurekit"
 	"hhauto/internal/features/kit11"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/queue"
@@ -50,9 +51,12 @@ type Feature struct {
 	AI     ai.Runner
 	API    kit11.APIResolver
 	Notify webhook.Notifier
-	Log    *slog.Logger
-	Now    func() time.Time
-	Rnd    *rand.Rand
+	// Pacer spaces the ping mutation. nil = no-op; the engine wiring
+	// provides the account pacer (wave-3 review #4).
+	Pacer featurekit.Pacer
+	Log   *slog.Logger
+	Now   func() time.Time
+	Rnd   *rand.Rand
 }
 
 // Name implements features.Feature.
@@ -153,17 +157,6 @@ func (f *Feature) processChat(ctx context.Context, api hhapi.HHAPI, accountID st
 		return nil
 	}
 
-	// One ping_queue row per chat (UNIQUE chat_id+attempts): a ledger entry,
-	// not the ladder driver. Already present → the chat was pinged before.
-	if _, scheduled, err := f.DB.PingQueueSchedule(ctx, accountID, chat.ID, now, 1); err != nil {
-		return fmt.Errorf("warmup: schedule ping: %w", err)
-	} else if !scheduled && ladder == 0 {
-		// A row exists but the ladder says stage 1: a previous run already
-		// scheduled/sent a ping that this ladder lost track of — do not
-		// double-ping, repair the ladder instead.
-		return nil
-	}
-
 	text, err := f.pingText(ctx, accountID, chat, now)
 	if err != nil {
 		return err
@@ -185,8 +178,32 @@ func (f *Feature) processChat(ctx context.Context, api hhapi.HHAPI, accountID st
 	}
 
 	if f.Cfg.General.DryRun {
+		// Wave-3 review #7: a dry-run must not leave a pending intent —
+		// that would block the real send of this stage forever.
+		_ = f.DB.IntentsMarkAbandoned(ctx, intentID)
 		log.Info("warmup: dry-run, ping skipped", "chat", chat.ChatikChatID, "stage", stage, "text", text)
 		return nil
+	}
+
+	// One ping_queue row per chat (UNIQUE chat_id+attempts): a ledger entry,
+	// not the ladder driver. Already present → the chat was pinged before.
+	// Scheduled only on the real-send path so a dry-run leaves no row.
+	if _, scheduled, err := f.DB.PingQueueSchedule(ctx, accountID, chat.ID, now, 1); err != nil {
+		return fmt.Errorf("warmup: schedule ping: %w", err)
+	} else if !scheduled && ladder == 0 {
+		// A row exists but the ladder says stage 1: a previous run already
+		// scheduled/sent a ping that this ladder lost track of — do not
+		// double-ping, repair the ladder instead.
+		_ = f.DB.IntentsMarkAbandoned(ctx, intentID)
+		return nil
+	}
+
+	// Pacer before the ping mutation (wave-3 review #4).
+	if f.Pacer != nil {
+		if err := f.Pacer.Wait(ctx, accountID); err != nil {
+			_ = f.DB.IntentsMarkFailed(ctx, intentID)
+			return fmt.Errorf("warmup: pacer: %w", err)
+		}
 	}
 
 	sendErr := api.SendMessage(ctx, chat.ChatikChatID, intentID, text)

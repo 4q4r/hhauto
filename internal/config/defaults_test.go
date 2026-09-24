@@ -85,3 +85,13 @@ func TestApplyDefaultsPreservesExplicitAccountValues(t *testing.T) {
 		t.Errorf("custom.rps: got %v, want explicit 1.5", b.RPS)
 	}
 }
+
+// Owner decision #6: auto-reply defaults to ON ("everything is sent
+// immediately"); applyDefaults materializes the default for a minimal TOML.
+func TestApplyDefaultsChatOpsAutoReplyOn(t *testing.T) {
+	c := &Config{}
+	applyDefaults(c)
+	if !c.Features.ChatOps.AutoReply {
+		t.Fatal("features.chatops.auto_reply_enabled: got false, want default true (owner decision #6)")
+	}
+}

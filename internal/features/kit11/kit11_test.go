@@ -43,6 +43,21 @@ func TestHasLink(t *testing.T) {
 	}
 }
 
+// Wave-3 review #3: the outgoing rule is featurekit.NoLinksRule — t.me /
+// telegram.me links and @handles are banned in addition to URLs.
+func TestHasLinkBansTelegramHandles(t *testing.T) {
+	for _, in := range []string{
+		"напишите в t.me/durov",
+		"мой контакт telegram.me/durov",
+		"пишите на @durov",
+		"почта me@example.com",
+	} {
+		if !HasLink(in) {
+			t.Fatalf("HasLink(%q) = false, want true (unified NoLinksRule)", in)
+		}
+	}
+}
+
 func TestLinkHostAndAllowed(t *testing.T) {
 	h := LinkHost("https://docs.google.com/forms/d/e/x")
 	if h != "docs.google.com" {

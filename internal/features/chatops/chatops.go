@@ -25,6 +25,7 @@ import (
 	"hhauto/internal/config"
 	"hhauto/internal/features"
 	"hhauto/internal/features/contacts"
+	"hhauto/internal/features/featurekit"
 	"hhauto/internal/features/interview"
 	"hhauto/internal/features/kit11"
 	"hhauto/internal/features/testsolve"
@@ -45,6 +46,15 @@ const (
 	// ReplyMinConfidence is the auto-send confidence threshold for drafts
 	// when no dedicated config field exists.
 	ReplyMinConfidence = 0.8
+	// ClassMinConfidence gates auto-routing on the classification verdict:
+	// below this the message goes to review instead of any automated branch
+	// (wave-3 review #9).
+	ClassMinConfidence = 0.75
+	// answerChoiceMinConfidence / answerMultiMinConfidence gate test answers:
+	// single-question batches (choice) and multi-question batches (multiple)
+	// have different thresholds (wave-3 review #9).
+	answerChoiceMinConfidence = 0.75
+	answerMultiMinConfidence  = 0.85
 	// maxSyncPages bounds one ListChats pagination pass.
 	maxSyncPages = 10
 	// historyLimit is the per-chat message window synced/considered.
@@ -78,9 +88,12 @@ type Feature struct {
 	Notify webhook.Notifier
 	API    kit11.APIResolver
 	Queue  queue.Queue // set by RegisterTasks; used for solve_test/collect hand-offs
-	Log    *slog.Logger
-	Now    func() time.Time
-	Rnd    *rand.Rand
+	// Pacer spaces outgoing mutations (chat sends, leaves). nil = no-op;
+	// the engine wiring provides the account pacer.
+	Pacer featurekit.Pacer
+	Log   *slog.Logger
+	Now   func() time.Time
+	Rnd   *rand.Rand
 	// LeaveDelay overrides the humanized leave delay (tests).
 	LeaveDelay func() time.Duration
 	// Sleep overrides retry backoff (tests).
@@ -160,6 +173,7 @@ func (f *Feature) HandleChatSync(ctx context.Context, task queue.Task) error {
 		return fmt.Errorf("chatops: resolve api: %w", err)
 	}
 	accountID := p.AccountID
+	var negStates map[int64]string // RULING R9: negotiation state per vacancy, fetched at most once per sync pass
 
 	for page := 1; page <= maxSyncPages; page++ {
 		chats, err := api.ListChats(ctx, page)
@@ -169,8 +183,19 @@ func (f *Feature) HandleChatSync(ctx context.Context, task queue.Task) error {
 		if len(chats) == 0 {
 			break
 		}
+		if negStates == nil {
+			for _, c := range chats {
+				if c.VacancyID != 0 {
+					negStates, err = f.loadNegotiations(ctx, api)
+					if err != nil {
+						return err
+					}
+					break
+				}
+			}
+		}
 		for _, c := range chats {
-			if err := f.syncChat(ctx, api, accountID, c); err != nil {
+			if err := f.syncChat(ctx, api, accountID, c, negStates); err != nil {
 				if kit11.IsTransient(err) {
 					return err // abort the pass; the scheduler retries
 				}
@@ -181,8 +206,35 @@ func (f *Feature) HandleChatSync(ctx context.Context, task queue.Task) error {
 	return nil
 }
 
-// syncChat processes one chat end-to-end.
-func (f *Feature) syncChat(ctx context.Context, api hhapi.HHAPI, accountID string, c hhapi.Chat) error {
+// loadNegotiations fetches the account's negotiations (bounded pagination)
+// and maps vacancyID → state; the first occurrence wins. Returns a non-nil
+// map so the per-pass cache is fetched at most once.
+func (f *Feature) loadNegotiations(ctx context.Context, api hhapi.HHAPI) (map[int64]string, error) {
+	out := map[int64]string{}
+	for page := 1; page <= 3; page++ {
+		items, err := api.Negotiations(ctx, page)
+		if err != nil {
+			if page == 1 && (kit11.IsTransient(err) || kit11.IsAmbiguous(err)) {
+				return nil, err
+			}
+			break // negotiations are an enrichment: degrade, never fail the sync
+		}
+		if len(items) == 0 {
+			break
+		}
+		for _, n := range items {
+			if _, ok := out[n.VacancyID]; !ok {
+				out[n.VacancyID] = n.State
+			}
+		}
+	}
+	return out, nil
+}
+
+// syncChat processes one chat end-to-end. negStates is the per-pass
+// negotiation state cache (vacancyID → state) used for the structural
+// rejection signal (RULING R9).
+func (f *Feature) syncChat(ctx context.Context, api hhapi.HHAPI, accountID string, c hhapi.Chat, negStates map[int64]string) error {
 	mirror := f.mirrorState(ctx, accountID, c.ID)
 
 	// Pending auto-leave (WF7) runs before anything else: rejected chats are
@@ -287,14 +339,26 @@ func (f *Feature) syncChat(ctx context.Context, api hhapi.HHAPI, accountID strin
 
 	if inbound && mirror != stateEscalated && mirror != stateLeft {
 		target := newIn[len(newIn)-1]
-		verdict, err := f.classify(ctx, accountID, row, target)
-		if err != nil {
-			if kit11.IsTransient(err) {
-				return err
-			}
-			f.Log.Error("chatops: classification failed", "chat", c.ID, "err", err)
+		if negStates[derefI64(row.VacancyID)] == "refused" {
+			// RULING R9: the structural negotiation state is the PRIMARY
+			// rejection signal — no AI call, straight to the rejection
+			// branch (auto-leave gates still apply downstream).
+			f.handleRejection(ctx, accountID, row, classVerdict{
+				Category: "rejection",
+				Common:   ai.Common{Confidence: 1.0},
+			})
+			_ = f.DB.MetricsIncr(ctx, "chatops.rejection_structural", kit11.Day(f.now()))
+			mirror = stateRejected
 		} else {
-			f.route(ctx, api, accountID, row, target, verdict)
+			verdict, err := f.classify(ctx, accountID, row, target)
+			if err != nil {
+				if kit11.IsTransient(err) {
+					return err
+				}
+				f.Log.Error("chatops: classification failed", "chat", c.ID, "err", err)
+			} else {
+				f.route(ctx, api, accountID, row, target, verdict)
+			}
 		}
 	}
 
@@ -356,6 +420,18 @@ func (f *Feature) route(ctx context.Context, api hhapi.HHAPI, accountID string, 
 				Payload: map[string]any{"chat": chat.ChatikChatID, "category": v.Category},
 			})
 		}
+	}
+
+	// Wave-3 review #9: low classification confidence → review instead of
+	// auto-routing. Human-milestone branches (invitation/offer) still
+	// escalate — escalation STOPS automation, it does not add any.
+	lowConf := v.Confidence < ClassMinConfidence
+	if lowConf && (v.Category == "question" || v.Category == "test_assignment" || v.Category == "rejection") {
+		f.review(ctx, accountID, "ai_low_confidence", "classification confidence below auto-routing threshold",
+			map[string]any{"chat": chat.ChatikChatID, "message_id": msg.MessageID,
+				"category": v.Category, "confidence": v.Confidence})
+		_ = f.DB.MetricsIncr(ctx, "chatops.low_confidence", kit11.Day(f.now()))
+		return
 	}
 
 	switch v.Category {
@@ -675,6 +751,15 @@ func (f *Feature) answerQuestions(ctx context.Context, accountID string, questio
 		if verdict.NeedsHuman || verdict.InjectionSuspected {
 			unsure = true
 		}
+		// Wave-3 review #9: batch confidence gates — choice (one question)
+		// ≥0.75, multiple (several questions) ≥0.85.
+		threshold := answerChoiceMinConfidence
+		if len(qs) > 1 {
+			threshold = answerMultiMinConfidence
+		}
+		if verdict.Confidence < threshold {
+			unsure = true
+		}
 		for _, a := range verdict.Answers {
 			if strings.TrimSpace(a.Answer) == "" {
 				unsure = true
@@ -811,6 +896,11 @@ func (f *Feature) maybeLeave(ctx context.Context, api hhapi.HHAPI, accountID str
 		}
 	}
 
+	// Pacer before the leave mutation (wave-3 review #4).
+	if err := f.pace(ctx, accountID); err != nil {
+		_ = f.DB.IntentsMarkFailed(ctx, intentID)
+		return fmt.Errorf("chatops: pacer: %w", err)
+	}
 	leaveErr := api.LeaveChat(ctx, c.ID)
 	switch {
 	case leaveErr == nil || errors.Is(leaveErr, hhapi.ErrNotFound):
@@ -924,7 +1014,7 @@ func (f *Feature) contactsHook(ctx context.Context, api hhapi.HHAPI, accountID s
 	}
 
 	if f.Cfg.Features.Contacts.FromCard && f.Queue != nil {
-		marker := fmt.Sprintf("collect:queued:%d", employerID)
+		marker := kit11.CollectQueuedMarker(employerID)
 		if queued, _, err := f.DB.FeatureStateGet(ctx, featureName, accountID, marker); err == nil && queued == "" {
 			if err := f.Queue.Enqueue(ctx, queue.Task{
 				AccountID: accountID,
@@ -1046,6 +1136,11 @@ func (f *Feature) sendWithIntent(ctx context.Context, api hhapi.HHAPI, accountID
 
 	var sendErr error
 	for attempt := 0; attempt <= sendRetries; attempt++ {
+		// Pacer before EVERY mutation attempt (wave-3 review #4).
+		if err := f.pace(ctx, accountID); err != nil {
+			_ = f.DB.IntentsMarkFailed(ctx, intentID)
+			return sendFailed, fmt.Errorf("chatops: pacer: %w", err)
+		}
 		if attempt > 0 {
 			f.Sleep(sendBackoff * time.Duration(attempt))
 		}
@@ -1084,6 +1179,18 @@ func (f *Feature) sendWithIntent(ctx context.Context, api hhapi.HHAPI, accountID
 		map[string]any{"chat": chatikID, "intent": intentKey},
 		"sendfail:"+intentKey)
 	return sendFailed, sendErr
+}
+
+// pace waits on the injected pacer before a mutation. A nil pacer is a
+// no-op; a pacer error (typically ctx cancellation) aborts the mutation.
+func (f *Feature) pace(ctx context.Context, accountID string) error {
+	if f.Pacer == nil {
+		return nil
+	}
+	if err := f.Pacer.Wait(ctx, accountID); err != nil {
+		return fmt.Errorf("chatops: pacer wait: %w", err)
+	}
+	return nil
 }
 
 // textDelivered reconciles an ambiguous send by reading chat history.

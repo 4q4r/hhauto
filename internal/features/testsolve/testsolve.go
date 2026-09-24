@@ -30,6 +30,7 @@ import (
 	"hhauto/internal/ai"
 	"hhauto/internal/config"
 	"hhauto/internal/features"
+	"hhauto/internal/features/featurekit"
 	"hhauto/internal/features/kit11"
 	"hhauto/internal/proxy"
 	"hhauto/internal/queue"
@@ -43,6 +44,18 @@ const maxBatch = 5
 
 // defaultPageTimeout is used when forms.page_timeout_sec is unset.
 const defaultPageTimeout = 20 * time.Second
+
+// maxPageSize caps a fetched form page (wave-3 review #6).
+const maxPageSize = 2 << 20 // 2 MiB
+
+// maxRedirects bounds the redirect chain of one fetch.
+const maxRedirects = 4
+
+// Fetch-level sentinels (wave-3 review #6).
+var (
+	errRedirectBlocked = errors.New("testsolve: redirect to a non-allowed host blocked")
+	errPageTooLarge    = errors.New("testsolve: page exceeds the size limit")
+)
 
 // SolvePayload is the queue payload for queue.KindSolveTest.
 type SolvePayload struct {
@@ -70,8 +83,11 @@ type Solver struct {
 	// Dialer resolves the per-account proxy dialer; returning (nil, nil)
 	// means explicitly-direct. Used by the default Fetch.
 	Dialer func(accountID string) (proxy.Dialer, error)
-	Log    *slog.Logger
-	Now    func() time.Time
+	// Pacer is waited on before the page fetch (the testsolve "submit"
+	// action). nil = no-op (wave-3 review #4).
+	Pacer featurekit.Pacer
+	Log   *slog.Logger
+	Now   func() time.Time
 
 	// Fetch overrides page retrieval (tests). Signature: (ctx, accountID, url).
 	Fetch func(ctx context.Context, accountID, url string) ([]byte, error)
@@ -108,7 +124,9 @@ func (s *Solver) HandleSolveTest(ctx context.Context, task queue.Task) error {
 	log := s.log()
 
 	// 1. Anti-phishing gate: only allow-listed hosts are ever fetched.
-	host := hostOf(p.URL)
+	// URL.Host (host[:port]) is the key — consistent with the redirect
+	// policy below; default-port URLs carry the bare domain.
+	host := hostPortOf(p.URL)
 	if !kit11.HostAllowed(host, s.Cfg.Forms.AllowedDomains) {
 		return s.review(ctx, p.AccountID, "phishing_suspect", "testsolve: domain not allowed: "+host, p.URL)
 	}
@@ -128,9 +146,23 @@ func (s *Solver) HandleSolveTest(ctx context.Context, task queue.Task) error {
 		return nil
 	}
 
-	// 4. Fetch the page.
+	// 4. Fetch the page (pacer waited before the action — wave-3 review #4).
+	if s.Pacer != nil {
+		if err := s.Pacer.Wait(ctx, p.AccountID); err != nil {
+			return fmt.Errorf("testsolve: pacer: %w", err)
+		}
+	}
 	body, err := s.fetch(ctx, p.AccountID, p.URL)
 	if err != nil {
+		if errors.Is(err, errRedirectBlocked) {
+			// A redirect outside the allow-list is a security refusal:
+			// permanent, recorded, never requeued.
+			return s.review(ctx, p.AccountID, "phishing_suspect",
+				"testsolve: redirect to a non-allowed host — refused", p.URL)
+		}
+		// Transient fetch failure: re-enqueue the same dedup key — the queue
+		// released it after dequeue (wave-3 review #5).
+		s.requeue(ctx, task)
 		return fmt.Errorf("testsolve: fetch %s: %w", p.URL, err)
 	}
 	htmlText := string(body)
@@ -172,6 +204,7 @@ func (s *Solver) HandleSolveTest(ctx context.Context, task queue.Task) error {
 		end := min(start+maxBatch, len(form.Fields))
 		batchAnswers, batchUnsure, err := s.answerBatch(ctx, p.AccountID, form.Fields[start:end], profileText)
 		if err != nil {
+			s.requeue(ctx, task) // AI outage must not lose the task (#5)
 			return err
 		}
 		answers = append(answers, batchAnswers...)
@@ -320,6 +353,17 @@ func (s *Solver) review(ctx context.Context, accountID, kind, reason, url string
 	return nil
 }
 
+// requeue puts the task back with its original dedup key (no-op when the
+// queue handle is not wired).
+func (s *Solver) requeue(ctx context.Context, task queue.Task) {
+	if s.Queue == nil {
+		return
+	}
+	if err := s.Queue.Enqueue(ctx, task); err != nil {
+		s.log().Warn("testsolve: requeue failed", "task", task.ID, "err", err)
+	}
+}
+
 // fetch retrieves the form page through the default HTTP fetcher unless an
 // injected Fetch is set (tests).
 func (s *Solver) fetch(ctx context.Context, accountID, rawURL string) ([]byte, error) {
@@ -342,7 +386,24 @@ func (s *Solver) fetch(ctx context.Context, accountID, rawURL string) ([]byte, e
 	if dialer != nil {
 		tr.DialContext = dialer.DialContext
 	}
-	client := &http.Client{Transport: tr, Timeout: timeout}
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   timeout,
+		// Wave-3 review #6: every redirect target must stay on the
+		// allow-list — a bounce to a foreign host is refused. The check
+		// uses URL.Host (host[:port]) so different ports are different
+		// hosts; default-port URLs carry the bare domain and match the
+		// domain allow-list as usual.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxRedirects {
+				return fmt.Errorf("testsolve: stopped after %d redirects", maxRedirects)
+			}
+			if !kit11.HostAllowed(strings.ToLower(req.URL.Host), s.Cfg.Forms.AllowedDomains) {
+				return errRedirectBlocked
+			}
+			return nil
+		},
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -357,7 +418,14 @@ func (s *Solver) fetch(ctx context.Context, accountID, rawURL string) ([]byte, e
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("http %d", resp.StatusCode)
 	}
-	return readBody(resp)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxPageSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxPageSize {
+		return nil, errPageTooLarge
+	}
+	return data, nil
 }
 
 // setBrowserUA sets a generic browser User-Agent; external form sites
@@ -398,6 +466,15 @@ func hostOf(raw string) string {
 		return ""
 	}
 	return strings.ToLower(u.Hostname())
+}
+
+// hostPortOf is hostOf but keeps an explicit port ("example.com:8443").
+func hostPortOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Host)
 }
 
 func intPtr(v int64) *int64 {

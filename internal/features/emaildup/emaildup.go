@@ -11,12 +11,14 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wneessen/go-mail"
 
 	"hhauto/internal/config"
 	"hhauto/internal/features"
+	"hhauto/internal/features/featurekit"
 	"hhauto/internal/features/kit11"
 	"hhauto/internal/proxy"
 	"hhauto/internal/queue"
@@ -79,8 +81,16 @@ type Feature struct {
 	Now    func() time.Time
 	Sleep  func(time.Duration)
 	Dialer func(accountID string) (proxy.Dialer, error)
-	// Sender overrides SMTP transport (tests); lazily built from config when nil.
+	// Pacer spaces the SMTP send. nil = no-op (wave-3 review #4).
+	Pacer featurekit.Pacer
+	// Sender overrides SMTP transport (tests); lazily built from config
+	// when nil — exactly once, race-safe (wave-3 review #8).
 	Sender Sender
+
+	senderOnce    sync.Once // guards builtSender/senderInitErr (review #8)
+	builtSender   Sender
+	senderInitErr error
+
 	// PDF overrides resume-PDF retrieval (tests); default fetcher when nil.
 	PDF func(ctx context.Context, accountID, resumeHash string) ([]byte, error)
 }
@@ -171,8 +181,10 @@ func (f *Feature) HandleSendEmail(ctx context.Context, task queue.Task) error {
 		"resume_url":    ResumePDFURL(f.Cfg, p.ResumeHash),
 	})
 
-	// Idempotency intent BEFORE the side effect.
-	intentKey := fmt.Sprintf("email:%d:%d", p.EmployerID, p.VacancyID)
+	// Idempotency intent BEFORE the side effect. Wave-3 review #10 (RULING
+	// R8): the key includes the account id — multi-account correctness
+	// outranks the letter of docs/PLAN.md §6.
+	intentKey := fmt.Sprintf("email:%s:%d:%d", accountID, p.EmployerID, p.VacancyID)
 	intentID, err := f.DB.IntentsBegin(ctx, intentKey, "pending", email)
 	switch {
 	case errors.Is(err, store.ErrIntentDone):
@@ -217,6 +229,11 @@ func (f *Feature) HandleSendEmail(ctx context.Context, task queue.Task) error {
 	}
 	var sendErr error
 	for attempt := 0; attempt <= retries; attempt++ {
+		// Pacer before EVERY send attempt (wave-3 review #4).
+		if err := f.pace(ctx, accountID); err != nil {
+			_ = f.DB.IntentsMarkFailed(ctx, intentID)
+			return fmt.Errorf("emaildup: pacer: %w", err)
+		}
 		if attempt > 0 {
 			f.sleep(time.Duration(attempt) * 5 * time.Second)
 		}
@@ -250,8 +267,46 @@ func (f *Feature) HandleSendEmail(ctx context.Context, task queue.Task) error {
 			map[string]any{"employer_id": p.EmployerID, "email": email})
 		return nil
 	}
-	f.review(ctx, accountID, "email_send_failed", "emaildup: transient failures exhausted: "+sendErr.Error(),
-		map[string]any{"employer_id": p.EmployerID, "email": email})
+	// Transient failures exhausted: re-enqueue with the SAME dedup key — the
+	// queue released it after dequeue, so without this the task would be
+	// lost (wave-3 review #5). The intent is failed, so a re-run may begin
+	// a fresh send attempt; the human still sees a review (once).
+	f.requeue(ctx, task)
+	f.reviewOnce(ctx, accountID, "email_send_failed",
+		"emaildup: transient failures exhausted — task requeued",
+		map[string]any{"employer_id": p.EmployerID, "email": email},
+		"emailretry:"+intentKey)
+	return nil
+}
+
+// requeue puts the task back with its original dedup key (no-op when the
+// queue handle is not wired).
+func (f *Feature) requeue(ctx context.Context, task queue.Task) {
+	if f.Queue == nil {
+		return
+	}
+	if err := f.Queue.Enqueue(ctx, task); err != nil {
+		f.log().Warn("emaildup: requeue failed", "task", task.ID, "err", err)
+	}
+}
+
+// reviewOnce records a review item only when no marker exists yet.
+func (f *Feature) reviewOnce(ctx context.Context, accountID, kind, reason string, payload map[string]any, marker string) {
+	if exists, _, err := f.DB.FeatureStateGet(ctx, FeatureName, accountID, "marker:"+marker); err == nil && exists != "" {
+		return
+	}
+	_ = f.DB.FeatureStateSet(ctx, FeatureName, accountID, "marker:"+marker, "1")
+	f.review(ctx, accountID, kind, reason, payload)
+}
+
+// pace waits on the injected pacer before a mutation (nil = no-op).
+func (f *Feature) pace(ctx context.Context, accountID string) error {
+	if f.Pacer == nil {
+		return nil
+	}
+	if err := f.Pacer.Wait(ctx, accountID); err != nil {
+		return fmt.Errorf("emaildup: pacer wait: %w", err)
+	}
 	return nil
 }
 
@@ -538,16 +593,26 @@ func smtpPermanent(err error) bool {
 
 // --- small helpers ---
 
+// senderFor returns the injected Sender or builds the go-mail sender from
+// config exactly once (sync.Once — wave-3 review #8). The Once-owned fields
+// are written only inside Do, so late readers race with nothing; a
+// construction error is sticky: every caller receives the same error.
 func (f *Feature) senderFor() (Sender, error) {
 	if f.Sender != nil {
 		return f.Sender, nil
 	}
-	s, err := NewGoMailSender(f.Cfg.Email)
-	if err != nil {
-		return nil, err
+	f.senderOnce.Do(func() {
+		s, err := NewGoMailSender(f.Cfg.Email)
+		if err != nil {
+			f.senderInitErr = err
+			return
+		}
+		f.builtSender = s
+	})
+	if f.senderInitErr != nil {
+		return nil, f.senderInitErr
 	}
-	f.Sender = s
-	return s, nil
+	return f.builtSender, nil
 }
 
 func (f *Feature) sleep(d time.Duration) {

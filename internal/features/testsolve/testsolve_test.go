@@ -16,6 +16,7 @@ import (
 
 	"hhauto/internal/ai"
 	"hhauto/internal/config"
+	"hhauto/internal/hhapi"
 	"hhauto/internal/proxy"
 	"hhauto/internal/queue"
 	"hhauto/internal/store"
@@ -419,7 +420,7 @@ func TestHandleSolveTestDefaultFetcherUsesHTTP(t *testing.T) {
 	seedResume(t, db)
 	n := &fakeNotifier{}
 	s := solver(t, db, &fakeRunner{}, n, nil) // Fetch left nil → default fetcher
-	s.Cfg.Forms.AllowedDomains = append(s.Cfg.Forms.AllowedDomains, hostOf(srv.URL))
+	s.Cfg.Forms.AllowedDomains = append(s.Cfg.Forms.AllowedDomains, srv.URL[len("http://"):])
 	s.Dialer = func(string) (proxy.Dialer, error) { return nil, nil } // explicitly-direct
 
 	if err := s.HandleSolveTest(t.Context(), solveTask(srv.URL)); err != nil {
@@ -436,4 +437,111 @@ func deref(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// --- Wave-3 review fixes ---
+
+type pacerFunc func(ctx context.Context, accountID string) error
+
+func (f pacerFunc) Wait(ctx context.Context, accountID string) error { return f(ctx, accountID) }
+
+// #5: transient fetch failures re-enqueue the task (the queue released the
+// dedup key after dequeue) so event-driven work is not lost.
+func TestHandleSolveTestTransientRequeues(t *testing.T) {
+	db := newDB(t)
+	seedResume(t, db)
+	s := solver(t, db, &fakeRunner{}, &fakeNotifier{}, nil)
+	s.Queue = queue.New()
+	s.Fetch = func(context.Context, string, string) ([]byte, error) {
+		return nil, hhapi.ErrNetwork
+	}
+	task := solveTask(okFormURL)
+	task.DedupKey = "solve:acc:ext:abc"
+
+	if err := s.HandleSolveTest(t.Context(), task); err == nil {
+		t.Fatal("transient fetch error must surface")
+	}
+	if n := s.Queue.Len("acc"); n != 1 {
+		t.Fatalf("transient failure must requeue, len=%d", n)
+	}
+}
+
+// #4: the pacer is waited on before the fetch/submit action.
+func TestHandleSolveTestPacerWaitsBeforeFetch(t *testing.T) {
+	db := newDB(t)
+	seedResume(t, db)
+	calls := 0
+	s := solver(t, db, &fakeRunner{}, &fakeNotifier{}, func() (string, error) {
+		return mustRead(t, "form_ok.html"), nil
+	})
+	s.Pacer = pacerFunc(func(context.Context, string) error { calls++; return nil })
+
+	if err := s.HandleSolveTest(t.Context(), solveTask(okFormURL)); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("pacer must wait exactly once (before the fetch), calls=%d", calls)
+	}
+}
+
+// #6: a redirect to a host outside the allow-list is refused: the fetch
+// errors, nothing is fetched from the foreign host, and the abort is
+// recorded as a phishing suspect (permanent, not requeued).
+func TestHandleSolveTestRedirectToForeignHostAborts(t *testing.T) {
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("foreign host must never be fetched")
+	}))
+	defer foreign.Close()
+
+	home := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, foreign.URL, http.StatusFound)
+	}))
+	defer home.Close()
+
+	db := newDB(t)
+	seedResume(t, db)
+	n := &fakeNotifier{}
+	s := solver(t, db, &fakeRunner{}, n, nil)                                                  // default fetcher
+	s.Cfg.Forms.AllowedDomains = append(s.Cfg.Forms.AllowedDomains, home.URL[len("http://"):]) // host:port
+
+	err := s.HandleSolveTest(t.Context(), solveTask(home.URL))
+	if err != nil {
+		t.Fatalf("redirect block must be recorded as an abort, not an error: %v", err)
+	}
+	items, _ := db.ReviewItemsOpen(t.Context(), "acc", 10)
+	found := false
+	for _, it := range items {
+		if it.Kind == "phishing_suspect" && strings.Contains(it.Reason, "redirect") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected phishing_suspect review for the redirect, got %+v", items)
+	}
+	rows, _ := db.AssessmentsListByAccount(t.Context(), "acc")
+	if len(rows) != 0 {
+		t.Fatalf("no assessment on redirect abort, got %+v", rows)
+	}
+}
+
+// #6: oversized pages are refused.
+func TestHandleSolveTestPageSizeLimit(t *testing.T) {
+	big := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write(make([]byte, 3<<20))
+	}))
+	defer big.Close()
+
+	db := newDB(t)
+	seedResume(t, db)
+	s := solver(t, db, &fakeRunner{}, &fakeNotifier{}, nil)
+	s.Cfg.Forms.AllowedDomains = append(s.Cfg.Forms.AllowedDomains, big.URL[len("http://"):])
+
+	if err := s.HandleSolveTest(t.Context(), solveTask(big.URL)); err == nil {
+		t.Fatal("oversized page must be refused")
+	}
+	rows, _ := db.AssessmentsListByAccount(t.Context(), "acc")
+	if len(rows) != 0 {
+		t.Fatalf("no assessment for oversized page, got %+v", rows)
+	}
 }
