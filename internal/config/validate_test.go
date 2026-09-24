@@ -72,6 +72,39 @@ func TestValidateAcceptsValidWindowsAndTimezone(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsDisabledRunWithNoFields(t *testing.T) {
+	c := validConfig()
+	// A disabled run is inert: no requirements, no referential checks.
+	c.Runs["off"] = Run{Enabled: false, Account: "ghost", MaxPerDay: -5, MinMatchPct: -1}
+	if err := Validate(c); err != nil {
+		t.Fatalf("Validate(disabled empty run) = %v, want nil", err)
+	}
+}
+
+func TestValidateAcceptsValidAIChain(t *testing.T) {
+	c := validConfig()
+	c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat"}}
+	c.AI.Models = map[string]AIModel{
+		"m":  {Provider: "gpt"},
+		"m2": {Provider: "gpt", FallbackModelRef: "m"},
+	}
+	c.AI.Tasks = map[string]AITask{"cover": {ModelProfile: "m2"}}
+	if err := Validate(c); err != nil {
+		t.Fatalf("Validate(valid ai chain) = %v, want nil", err)
+	}
+}
+
+func TestValidateAcceptsValidWebhooks(t *testing.T) {
+	c := validConfig()
+	c.Webhook = map[string]Webhook{
+		"raw": {URL: "https://hooks.example/raw", Preset: "raw"},
+		"tg":  {URL: "https://api.telegram.org/botX/sendMessage", Preset: "telegram", ChatID: "42"},
+	}
+	if err := Validate(c); err != nil {
+		t.Fatalf("Validate(valid webhooks) = %v, want nil", err)
+	}
+}
+
 func TestValidateErrors(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -170,6 +203,120 @@ func TestValidateErrors(t *testing.T) {
 			name:    "negative storage busy_timeout_ms",
 			mutate:  func(c *Config) { c.Storage.BusyTimeoutMS = -5 },
 			wantErr: "negative",
+		},
+		{
+			name:    "negative pacing min_delay_seconds",
+			mutate:  func(c *Config) { c.Pacing.MinDelaySec = -1 },
+			wantErr: "negative",
+		},
+		{
+			name:    "negative schedule jitter_minutes",
+			mutate:  func(c *Config) { c.Schedule.JitterMinutes = -3 },
+			wantErr: "negative",
+		},
+		{
+			name: "negative ai provider timeout_seconds",
+			mutate: func(c *Config) {
+				c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat", TimeoutS: -10}}
+			},
+			wantErr: "negative",
+		},
+		{
+			name: "ai task references unknown model",
+			mutate: func(c *Config) {
+				c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat"}}
+				c.AI.Models = map[string]AIModel{"m": {Provider: "gpt"}}
+				c.AI.Tasks = map[string]AITask{"t": {ModelProfile: "ghost"}}
+			},
+			wantErr: "model_profile",
+		},
+		{
+			name: "ai task without model_profile",
+			mutate: func(c *Config) {
+				c.AI.Tasks = map[string]AITask{"t": {}}
+			},
+			wantErr: "model_profile",
+		},
+		{
+			name: "ai model references unknown provider",
+			mutate: func(c *Config) {
+				c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat"}}
+				c.AI.Models = map[string]AIModel{"m": {Provider: "ghost"}}
+			},
+			wantErr: "provider",
+		},
+		{
+			name: "ai model without provider",
+			mutate: func(c *Config) {
+				c.AI.Models = map[string]AIModel{"m": {}}
+			},
+			wantErr: "provider",
+		},
+		{
+			name: "ai model fallback references unknown model",
+			mutate: func(c *Config) {
+				c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat"}}
+				c.AI.Models = map[string]AIModel{"m": {Provider: "gpt", FallbackModelRef: "ghost"}}
+			},
+			wantErr: "fallback",
+		},
+		{
+			name: "webhook without url",
+			mutate: func(c *Config) {
+				c.Webhook = map[string]Webhook{"tg": {Preset: "raw"}}
+			},
+			wantErr: "url",
+		},
+		{
+			name: "webhook preset invalid",
+			mutate: func(c *Config) {
+				c.Webhook = map[string]Webhook{"tg": {URL: "https://x", Preset: "slack"}}
+			},
+			wantErr: "preset",
+		},
+		{
+			name: "telegram webhook without chat_id",
+			mutate: func(c *Config) {
+				c.Webhook = map[string]Webhook{"tg": {URL: "https://x", Preset: "telegram"}}
+			},
+			wantErr: "chat_id",
+		},
+		{
+			name: "webhook unknown proxy_ref",
+			mutate: func(c *Config) {
+				c.Webhook = map[string]Webhook{"tg": {URL: "https://x", Preset: "raw", ProxyRef: "ghost"}}
+			},
+			wantErr: "unknown proxy",
+		},
+		{
+			name: "duplicate webhook url",
+			mutate: func(c *Config) {
+				c.Webhook = map[string]Webhook{
+					"a": {URL: "https://same", Preset: "raw"},
+					"b": {URL: "https://same", Preset: "raw"},
+				}
+			},
+			wantErr: "duplicate",
+		},
+		{
+			name: "captcha key and key_env together",
+			mutate: func(c *Config) {
+				cp := c.Captcha["cap1"]
+				cp.Key = "plain"
+				cp.KeyEnv = "CAP_KEY"
+				c.Captcha["cap1"] = cp
+			},
+			wantErr: "key",
+		},
+		{
+			name: "proxy inline pass without pass_env",
+			mutate: func(c *Config) {
+				p := c.Proxy["p1"]
+				p.Pass = "plain"
+				p.PassEnv = ""
+				c.Proxy["p1"] = p
+			},
+			wantErr: "pass_env",
 		},
 		{
 			name:    "negative review sla_hours",

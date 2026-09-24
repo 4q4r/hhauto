@@ -14,7 +14,8 @@ import (
 //  1. {data_dir} placeholders are replaced with [general].data_dir;
 //  2. a leading "~" in string values is expanded to the home directory;
 //  3. ${ENV} placeholders are replaced (an unset variable is an error
-//     that names the variable).
+//     that names the variable). Expansion applies to the entire document,
+//     including TOML comments — a ${VAR} inside a comment is expanded too.
 //
 // After decoding, applyDefaults fills unset values and Validate enforces
 // referential integrity. Every stage fails fast with a contextual message.
