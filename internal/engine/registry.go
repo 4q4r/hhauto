@@ -1,0 +1,121 @@
+package engine
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"sync"
+
+	"hhauto/internal/ai"
+	"hhauto/internal/captcha"
+	"hhauto/internal/config"
+	"hhauto/internal/hhapi"
+	"hhauto/internal/queue"
+	"hhauto/internal/scheduler"
+	"hhauto/internal/store"
+	"hhauto/internal/webhook"
+)
+
+// TaskFactory builds the queue task for one schedule fire on one account.
+// The payload shape is feature-owned; the engine only carries the task.
+type TaskFactory func(ctx context.Context, accountID string) (queue.Task, error)
+
+// TaskHandler executes one dequeued task. The engine has already checked
+// the kill switch, session liveness and account pause; handlers call
+// TaskContext.Pacer.Wait themselves right before a mutation.
+type TaskHandler func(ctx context.Context, tc *TaskContext, task queue.Task) error
+
+// TaskContext is everything a handler may need for one task. The pacer is
+// deliberately NOT applied by the engine: only the handler knows which
+// steps are mutations, so it waits via tc.Pacer before each one.
+type TaskContext struct {
+	DB       *store.DB
+	API      hhapi.HHAPI
+	AI       ai.Runner
+	Pacer    Pacer
+	Webhooks webhook.Notifier
+	Captcha  captcha.Resolver
+	Cfg      *config.Config
+	Log      *slog.Logger
+
+	AccountID string
+}
+
+// --- registration API (thread-safe) ---
+//
+// Features cannot import engine (dependency direction cli→engine→features),
+// so the CLI wiring layer (T13) copies each enabled feature's schedule into
+// engine.RegisterSchedule together with a TaskFactory over the feature's
+// task constructors, and registers one TaskHandler per task kind. This
+// package-level registry is process-global by design: features and wiring
+// live in different packages.
+
+type scheduleBinding struct {
+	spec    scheduler.Spec
+	factory TaskFactory
+}
+
+var (
+	regMu       sync.RWMutex
+	scheduleReg = map[string]scheduleBinding{}
+	handlerReg  = map[queue.TaskKind]TaskHandler{}
+)
+
+// RegisterSchedule binds a named schedule to its task factory. The spec
+// must validate; re-registration replaces (idempotent wiring, test reloads).
+func RegisterSchedule(name string, spec scheduler.Spec, factory TaskFactory) error {
+	if name == "" {
+		return fmt.Errorf("engine: RegisterSchedule: empty name")
+	}
+	if err := spec.Validate(); err != nil {
+		return fmt.Errorf("engine: RegisterSchedule %s: %w", name, err)
+	}
+	if factory == nil {
+		return fmt.Errorf("engine: RegisterSchedule %s: nil factory", name)
+	}
+	regMu.Lock()
+	defer regMu.Unlock()
+	scheduleReg[name] = scheduleBinding{spec: spec, factory: factory}
+	return nil
+}
+
+// RegisterHandler binds a task kind to its executor. Re-registration
+// replaces.
+func RegisterHandler(kind queue.TaskKind, h TaskHandler) error {
+	if kind == "" {
+		return fmt.Errorf("engine: RegisterHandler: empty kind")
+	}
+	if h == nil {
+		return fmt.Errorf("engine: RegisterHandler %s: nil handler", kind)
+	}
+	regMu.Lock()
+	defer regMu.Unlock()
+	handlerReg[kind] = h
+	return nil
+}
+
+func registeredSchedules() map[string]scheduleBinding {
+	regMu.RLock()
+	defer regMu.RUnlock()
+	out := make(map[string]scheduleBinding, len(scheduleReg))
+	for k, v := range scheduleReg {
+		out[k] = v
+	}
+	return out
+}
+
+func registeredHandler(kind queue.TaskKind) (TaskHandler, bool) {
+	regMu.RLock()
+	defer regMu.RUnlock()
+	h, ok := handlerReg[kind]
+	return h, ok
+}
+
+// resetRegistrations clears both registries. Test isolation only: feature
+// wiring happens once per process in production.
+func resetRegistrations() {
+	regMu.Lock()
+	defer regMu.Unlock()
+	scheduleReg = map[string]scheduleBinding{}
+	handlerReg = map[queue.TaskKind]TaskHandler{}
+}
