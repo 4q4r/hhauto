@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -24,6 +23,7 @@ import (
 	"hhauto/internal/config"
 	"hhauto/internal/cookies"
 	"hhauto/internal/engine"
+	"hhauto/internal/features/testsolve"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/proxy"
 )
@@ -606,12 +606,9 @@ func probeSession(ctx context.Context, cfg *config.Config, id string) error {
 }
 
 func findChrome() (string, error) {
-	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"} {
-		if path, err := exec.LookPath(name); err == nil {
-			return path, nil
-		}
-	}
-	return "", fmt.Errorf("chrome не найден")
+	// T17: testsolve owns Chrome discovery (HHAUTO_CHROME_PATH override + PATH
+	// candidates); doctor reports the same answer the headless filler uses.
+	return testsolve.FindChrome()
 }
 
 // captchaBalance probes the provider's balance endpoint with the protocol

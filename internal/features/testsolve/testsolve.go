@@ -7,8 +7,9 @@
 // of at most 5 questions. The result is a DRAFT stored on the assessment row
 // plus a webhook — nothing is ever submitted from this package.
 //
-// headless mode (chromedp, isolated context without hh cookies) is a separate
-// wiring step (T13): this package returns an explicit stub error for it.
+// headless mode (chromedp, isolated throwaway profile without hh cookies)
+// is implemented by HeadlessFiller (headless.go): see Fill for the per-run
+// contract. draft_only remains the default mode.
 package testsolve
 
 import (
@@ -95,6 +96,10 @@ type Solver struct {
 	// Queue is retained by RegisterTasks (solve_test tasks are enqueued by
 	// chatops; nothing is seeded on a schedule).
 	Queue queue.Queue
+
+	// Filler executes headless runs when Forms.Mode=headless. nil selects
+	// the chromedp HeadlessFiller; tests inject a fake (no browser).
+	Filler Filler
 }
 
 // Compile-time conformance with the feature-module contract.
@@ -131,9 +136,9 @@ func (s *Solver) HandleSolveTest(ctx context.Context, task queue.Task) error {
 		return s.review(ctx, p.AccountID, "phishing_suspect", "testsolve: domain not allowed: "+host, p.URL)
 	}
 
-	// 2. headless is not implemented here by design (T13 wires chromedp).
+	// 2. headless delegates to the chromedp filler; draft_only is default.
 	if s.Cfg.Forms.Mode == "headless" {
-		return errors.New("headless mode: T13 wiring")
+		return s.handleHeadless(ctx, task, p)
 	}
 
 	// 3. Dedup: a test that already has a live draft/verdict is not re-solved.
@@ -271,6 +276,168 @@ func (s *Solver) HandleSolveTest(ctx context.Context, task queue.Task) error {
 	}
 	log.Info("testsolve: draft saved", "url", p.URL, "account", p.AccountID, "answers", len(answers))
 	return nil
+}
+
+// handleHeadless runs the chromedp flow (Mode=headless). It shares the
+// draft path's gates (allow-list was checked by the caller, dedup, pacer,
+// trusted profile context) and its terminal semantics: password fields and
+// off-list hosts are phishing reviews, parse failures land as failed
+// assessment rows, transient browser/AI errors requeue the task.
+func (s *Solver) handleHeadless(ctx context.Context, task queue.Task, p SolvePayload) error {
+	// Dedup: a test that already has a live draft/verdict is not re-solved.
+	done, err := s.alreadyDrafted(ctx, p.AccountID, p.URL)
+	if err != nil {
+		return err
+	}
+	if done {
+		s.log().Info("testsolve: draft already exists, skipping", "url", p.URL, "account", p.AccountID)
+		return nil
+	}
+
+	// Pacer before the browser action.
+	if s.Pacer != nil {
+		if err := s.Pacer.Wait(ctx, p.AccountID); err != nil {
+			return fmt.Errorf("testsolve: pacer: %w", err)
+		}
+	}
+
+	// Trusted candidate context for the AI.
+	profileText, perr := kit11.RenderProfile(ctx, s.Cfg, p.AccountID, s.DB, nil)
+	if perr != nil {
+		return fmt.Errorf("testsolve: profile context: %w", perr)
+	}
+
+	res, err := s.filler().Fill(ctx, FillRequest{
+		AccountID:    p.AccountID,
+		TestID:       p.TestID,
+		URL:          p.URL,
+		SubmitPolicy: s.Cfg.Forms.SubmitPolicy,
+		ProfileText:  profileText,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrPasswordDetected):
+			// Anti-phishing abort — terminal, same as the draft path.
+			return s.review(ctx, p.AccountID, "phishing_suspect",
+				"testsolve: password field on the form page — suspected phishing", p.URL)
+		case errors.Is(err, ErrHostDisallowed):
+			// A redirect/navigation outside the allow-list is a security
+			// refusal — terminal, never requeued.
+			return s.review(ctx, p.AccountID, "phishing_suspect",
+				"testsolve: page landed on a non-allowed host — refused", p.URL)
+		case errors.Is(err, ErrNoFields):
+			aerr := s.DB.AssessmentsAdd(ctx, &store.Assessment{
+				AccountID:   p.AccountID,
+				VacancyID:   intPtr(p.VacancyID),
+				Kind:        "external_form",
+				Provider:    strPtr(formKindForURL(p.URL)),
+				ExternalURL: &p.URL,
+				Status:      "failed",
+				Result:      strPtr("parse_failed: no answerable fields found"),
+			})
+			if aerr != nil {
+				return fmt.Errorf("testsolve: store failed assessment: %w", aerr)
+			}
+			return s.review(ctx, p.AccountID, "test_parse_failed",
+				"testsolve: form could not be parsed", p.URL)
+		}
+		// Transient browser/AI error: re-enqueue the same dedup key.
+		s.requeue(ctx, task)
+		return fmt.Errorf("testsolve: headless fill %s: %w", p.URL, err)
+	}
+
+	// Artifacts on the assessment row: answers JSON + serialized DOM.
+	artifact := headlessArtifact(p.URL, p.Source, p.ChatikID, res, s.now())
+	status := "in_progress"
+	switch {
+	case res.Submit == SubmitClicked:
+		status = "solved"
+	case res.Submit == SubmitAlreadyDone || res.Submit == SubmitAlreadyPending || res.Unsure:
+		status = "escalated"
+	}
+	if aerr := s.DB.AssessmentsAdd(ctx, &store.Assessment{
+		AccountID:   p.AccountID,
+		VacancyID:   intPtr(p.VacancyID),
+		Kind:        "external_form",
+		Provider:    strPtr(formKindForURL(p.URL)),
+		ExternalURL: &p.URL,
+		Status:      status,
+		Answers:     strPtr(artifact),
+		Result:      strPtr(res.DOM),
+	}); aerr != nil {
+		return fmt.Errorf("testsolve: store assessment: %w", aerr)
+	}
+
+	switch {
+	case res.Submit == SubmitAlreadyDone || res.Submit == SubmitAlreadyPending:
+		// The extsubmit intent was consumed by a previous/parallel run:
+		// never click again, hand the uncertainty to a human.
+		if rerr := s.review(ctx, p.AccountID, "test_submit_uncertain",
+			"testsolve: submit intent already consumed — replay forbidden, verify the form outcome manually", p.URL); rerr != nil {
+			return rerr
+		}
+		if s.Notify != nil {
+			s.Notify.Emit(webhook.Event{
+				Type:      webhook.EvNeedsHuman,
+				AccountID: p.AccountID,
+				Time:      s.now(),
+				Message:   "Внешний тест: отправка не подтверждена (повтор запрещён), нужна проверка",
+				Payload:   map[string]any{"url": p.URL, "submit_state": res.Submit.String()},
+			})
+		}
+		return nil
+	case res.Unsure:
+		if rerr := s.review(ctx, p.AccountID, "test_unsure",
+			"testsolve: AI unsure or fields unfilled — draft saved, human decision needed", p.URL); rerr != nil {
+			return rerr
+		}
+		if s.Notify != nil {
+			s.Notify.Emit(webhook.Event{
+				Type:      webhook.EvNeedsHuman,
+				AccountID: p.AccountID,
+				Time:      s.now(),
+				Message:   "Внешний тест: черновик готов, требуется проверка",
+				Payload:   map[string]any{"url": p.URL, "draft": true},
+			})
+		}
+		return nil
+	}
+
+	if res.Submit == SubmitClicked {
+		_ = s.DB.MetricsIncr(ctx, "testsolve.submit", kit11.Day(s.now()))
+		if s.Notify != nil {
+			s.Notify.Emit(webhook.Event{
+				Type:      webhook.EvTestSolved,
+				AccountID: p.AccountID,
+				Time:      s.now(),
+				Message:   "Внешний тест: заполнен и отправлен (headless, submit_policy=auto)",
+				Payload:   map[string]any{"url": p.URL, "submitted": true, "answers": len(res.Answers)},
+			})
+		}
+		s.log().Info("testsolve: submitted", "url", p.URL, "account", p.AccountID)
+		return nil
+	}
+
+	_ = s.DB.MetricsIncr(ctx, "testsolve.draft", kit11.Day(s.now()))
+	if s.Notify != nil {
+		s.Notify.Emit(webhook.Event{
+			Type:      webhook.EvTestSolved,
+			AccountID: p.AccountID,
+			Time:      s.now(),
+			Message:   "Внешний тест: черновик готов (headless, отправка человеком)",
+			Payload:   map[string]any{"url": p.URL, "draft": true, "answers": len(res.Answers)},
+		})
+	}
+	s.log().Info("testsolve: headless draft saved", "url", p.URL, "account", p.AccountID, "answers", len(res.Answers))
+	return nil
+}
+
+// filler selects the injected Filler or constructs the chromedp one.
+func (s *Solver) filler() Filler {
+	if s.Filler != nil {
+		return s.Filler
+	}
+	return &HeadlessFiller{Cfg: s.Cfg, DB: s.DB, AI: s.AI, Log: s.log(), Now: s.Now}
 }
 
 // testAnswerEntry mirrors one item of the test_answer verdict.

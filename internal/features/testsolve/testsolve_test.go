@@ -317,15 +317,23 @@ func TestHandleSolveTestPasswordFieldAborts(t *testing.T) {
 	}
 }
 
-func TestHandleSolveTestHeadlessIsStubbed(t *testing.T) {
+func TestSolverFillerDefaultAndInject(t *testing.T) {
 	db := newDB(t)
 	seedResume(t, db)
 	s := solver(t, db, &fakeRunner{}, &fakeNotifier{}, nil)
 	s.Cfg.Forms.Mode = "headless"
 
-	err := s.HandleSolveTest(t.Context(), solveTask(okFormURL))
-	if err == nil || !strings.Contains(err.Error(), "headless mode: T13 wiring") {
-		t.Fatalf("headless must return the wiring stub error, got %v", err)
+	// Default: the chromedp filler (fails fast with the typed error when no
+	// Chrome is installed — doctor surfaces the fix).
+	f := s.filler()
+	if _, ok := f.(*HeadlessFiller); !ok {
+		t.Fatalf("default filler = %T, want *HeadlessFiller", f)
+	}
+	// Injected filler wins.
+	inj := &fakeFiller{}
+	s.Filler = inj
+	if s.filler() != Filler(inj) {
+		t.Fatal("injected filler must be selected")
 	}
 }
 
