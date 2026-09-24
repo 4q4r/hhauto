@@ -55,7 +55,8 @@ func (c *Client) setXSRF(token string) {
 	c.xsrf = token
 }
 
-// xsrfToken returns the cached token, falling back to the _xsrf cookie.
+// xsrfToken returns the cached token, falling back to the _xsrf cookie with
+// deterministic host priority (site scope first, chatik last).
 func (c *Client) xsrfToken() string {
 	c.mu.Lock()
 	if c.xsrf != "" {
@@ -64,7 +65,7 @@ func (c *Client) xsrfToken() string {
 		return tok
 	}
 	c.mu.Unlock()
-	if tok := c.book.cookie("_xsrf"); tok != "" {
+	if tok := c.book.cookie("_xsrf", c.eps.siteHost()); tok != "" {
 		c.setXSRF(tok)
 		return tok
 	}
@@ -183,15 +184,56 @@ func (b *cookieBook) absorb(cks ...*http.Cookie) {
 	}
 }
 
-func (b *cookieBook) cookie(name string) string {
+// cookie returns the value of the named cookie with deterministic host
+// priority: site-scope entries (host-only or exact site host) win over the
+// parent-domain scope, which wins over unrelated hosts (e.g. chatik.hh.ru
+// keeps its own _xsrf). Ties break on domain, then path, so the result is
+// stable regardless of map iteration order.
+func (b *cookieBook) cookie(name string, siteHost ...string) string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	host := ""
+	if len(siteHost) > 0 {
+		host = siteHost[0]
+	}
+	var best *http.Cookie
 	for _, ck := range b.m {
-		if ck.Name == name {
-			return ck.Value
+		if ck.Name != name {
+			continue
+		}
+		if best == nil || cookieScopeLess(ck, best, host) {
+			best = ck
 		}
 	}
-	return ""
+	if best == nil {
+		return ""
+	}
+	return best.Value
+}
+
+// cookieScopeLess orders cookies by scope affinity to siteHost.
+func cookieScopeLess(a, b *http.Cookie, siteHost string) bool {
+	ra, rb := cookieScopeRank(a, siteHost), cookieScopeRank(b, siteHost)
+	if ra != rb {
+		return ra < rb
+	}
+	if a.Domain != b.Domain {
+		return a.Domain < b.Domain
+	}
+	return a.Path < b.Path
+}
+
+func cookieScopeRank(ck *http.Cookie, siteHost string) int {
+	host := strings.ToLower(hostWithoutPort(siteHost))
+	d := strings.ToLower(strings.TrimPrefix(ck.Domain, "."))
+	switch {
+	case ck.Domain == "" || (host != "" && d == host):
+		return 0 // exact site scope (or host-only)
+	case host != "" && strings.HasSuffix(host, "."+d):
+		return 1 // parent domain of the site host
+	default:
+		return 2 // unrelated host
+	}
 }
 
 func (b *cookieBook) snapshot() []*http.Cookie {
@@ -406,23 +448,6 @@ func parseHHTime(s string) time.Time {
 // timeFrom reads a time field under any of the given key spellings.
 func timeFrom(m map[string]json.RawMessage, keys ...string) time.Time {
 	return parseHHTime(str(m, keys...))
-}
-
-// stateArray resolves state["key"] as either a bare array or {items:[...]}.
-func stateArray(state map[string]json.RawMessage, key string) []json.RawMessage {
-	raw := state[key]
-	if a := arr(raw); a != nil {
-		return a
-	}
-	if m := obj(raw); m != nil {
-		if a := arr(m["items"]); a != nil {
-			return a
-		}
-		if a := arr(m["vacancies"]); a != nil {
-			return a
-		}
-	}
-	return nil
 }
 
 // errNilState is returned when an SSR page lacks the expected state node.

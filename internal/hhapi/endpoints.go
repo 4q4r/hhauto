@@ -13,7 +13,6 @@ import (
 const (
 	epSettings       = "settings"        // GET  /applicant/settings (SSR: xsrfToken, session)
 	epResumes        = "resumes"         // GET  /shards/applicant/resumes (JSON)
-	epResumesPage    = "resumes_page"    // GET  /applicant/resumes (SSR, suitable vacancies)
 	epTouch          = "touch"           // POST /applicant/resumes/touch
 	epApplyPopup     = "apply_popup"     // GET  /applicant/vacancy_response/popup?vacancyId=N
 	epApply          = "apply"           // POST /applicant/vacancy_response/popup
