@@ -119,7 +119,7 @@ func (e *endpoint) buildPayload(ev Event) ([]byte, error) {
 			DisableWebPagePreview bool   `json:"disable_web_page_preview"`
 		}{
 			ChatID:                e.cfg.ChatID,
-			Text:                  truncateRunes(html.EscapeString(ev.Message), telegramTextLimit),
+			Text:                  html.EscapeString(truncateRunes(ev.Message, telegramTextLimit)),
 			ParseMode:             "HTML",
 			DisableWebPagePreview: true,
 		}
@@ -136,40 +136,39 @@ func (e *endpoint) buildPayload(ev Event) ([]byte, error) {
 
 // deliver POSTs the event to the endpoint, retrying transient failures with
 // exponential backoff: 2xx is success, 429/5xx and transport errors are
-// retried up to RetryMax times, any other 4xx fails immediately.
-func (e *endpoint) deliver(ctx context.Context, ev Event) error {
+// retried up to RetryMax times, any other 4xx fails immediately. It returns
+// the exact body that was (attempted to be) sent so a failed delivery can be
+// parked byte-for-byte.
+func (e *endpoint) deliver(ctx context.Context, ev Event) ([]byte, error) {
 	payload, err := e.buildPayload(ev)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var lastErr error
 	for attempt := 0; attempt <= e.cfg.RetryMax; attempt++ {
 		if attempt > 0 {
 			if !sleepContext(ctx, e.backoff(attempt)) {
-				return ctx.Err()
+				return nil, ctx.Err()
 			}
 		}
 		err := e.attempt(ctx, payload)
 		if err == nil {
-			return nil
+			return payload, nil
 		}
 		lastErr = err
 		if !isRetryable(err) {
-			return err
+			return payload, err
 		}
 	}
-	return lastErr
+	return payload, lastErr
 }
 
-// park stores a failed delivery in the outbox for later redelivery. A nil
-// outbox keeps the failure in memory only (it is already logged by the caller).
-func (e *endpoint) park(_ context.Context, ev Event, outbox Outbox) error {
-	if outbox == nil {
+// park stores a failed delivery's exact payload in the outbox for later
+// redelivery. A nil outbox keeps the failure in memory only (it is already
+// logged by the caller); a nil payload means there is nothing to replay.
+func (e *endpoint) park(_ context.Context, payload []byte, outbox Outbox) error {
+	if outbox == nil || payload == nil {
 		return nil
-	}
-	payload, err := e.buildPayload(ev)
-	if err != nil {
-		return err
 	}
 	return outbox.Add(e.id, payload)
 }

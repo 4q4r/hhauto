@@ -124,9 +124,10 @@ func (n *notifier) dispatch(ctx context.Context, ev Event) {
 		if !ep.subscribes(ev.Type) {
 			continue
 		}
-		if err := ep.deliver(ctx, ev); err != nil {
+		payload, err := ep.deliver(ctx, ev)
+		if err != nil {
 			n.log.Error("webhook delivery failed", "endpoint", ep.id, "event", ev.Type, "err", err)
-			if parkErr := ep.park(ctx, ev, n.outbox); parkErr != nil {
+			if parkErr := ep.park(ctx, payload, n.outbox); parkErr != nil {
 				n.log.Error("webhook outbox Add failed", "endpoint", ep.id, "event", ev.Type, "err", parkErr)
 			}
 		}
