@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"hhauto/internal/config"
@@ -40,21 +39,20 @@ type twoCaptchaSolver struct {
 	solveTimeout time.Duration
 
 	client httpJSONClient
-	logger *slog.Logger
 }
 
 // newTwoCaptcha builds a Solver speaking the 2captcha in.php/res.php protocol.
 // The API key is resolved lazily: KeyEnv first, falling back to the inline
 // cfg.Key with a WARN (the fallback is discouraged; the config validator
 // warns too). A provider with neither key source is a configuration error.
-func newTwoCaptcha(id string, cfg config.CaptchaProvider) (*twoCaptchaSolver, error) {
+func newTwoCaptcha(id string, cfg config.CaptchaProvider, logger *slog.Logger) (*twoCaptchaSolver, error) {
 	if cfg.PollMS < 0 {
 		return nil, fmt.Errorf("captcha: %s: poll_interval_ms must be >= 0", id)
 	}
 	if cfg.TimeoutS < 0 {
 		return nil, fmt.Errorf("captcha: %s: timeout_s must be >= 0", id)
 	}
-	keys, err := newKeySource(id, cfg)
+	keys, err := newKeySource(id, cfg, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +68,6 @@ func newTwoCaptcha(id string, cfg config.CaptchaProvider) (*twoCaptchaSolver, er
 		pollInterval: pollDuration(cfg.PollMS),
 		solveTimeout: timeoutDuration(cfg.TimeoutS),
 		client:       newHTTPJSONClient(),
-		logger:       slog.Default(),
 	}, nil
 }
 
@@ -78,7 +75,7 @@ func (s *twoCaptchaSolver) ID() string { return s.id }
 
 func (s *twoCaptchaSolver) Solve(ctx context.Context, ch Challenge) (Solution, error) {
 	start := time.Now()
-	key, err := s.keys.get(s.logger)
+	key, err := s.keys.get()
 	if err != nil {
 		return Solution{}, err
 	}
@@ -154,7 +151,7 @@ func (s *twoCaptchaSolver) pollOnce(ctx context.Context, key, taskID string, sta
 }
 
 func (s *twoCaptchaSolver) Balance(ctx context.Context) (float64, error) {
-	key, err := s.keys.get(s.logger)
+	key, err := s.keys.get()
 	if err != nil {
 		return 0, err
 	}
@@ -209,7 +206,8 @@ func (s *twoCaptchaSolver) submitForm(ch Challenge) (url.Values, error) {
 }
 
 // normalizeBaseURL validates and normalizes a provider base_url: absolute
-// http(s) URL, no path, no trailing slash; empty falls back to def.
+// HTTPS URL, no path, no trailing slash; empty falls back to def. Plain
+// http:// is rejected: captcha API keys must never travel in cleartext.
 func normalizeBaseURL(raw, def string) (string, error) {
 	if raw == "" {
 		return def, nil
@@ -218,8 +216,8 @@ func normalizeBaseURL(raw, def string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid base_url: %w", err)
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", fmt.Errorf("invalid base_url scheme %q (want http or https)", u.Scheme)
+	if u.Scheme != "https" {
+		return "", fmt.Errorf("invalid base_url scheme %q (want https)", u.Scheme)
 	}
 	if u.Host == "" {
 		return "", fmt.Errorf("invalid base_url %q: missing host", raw)
@@ -227,7 +225,7 @@ func normalizeBaseURL(raw, def string) (string, error) {
 	if u.Path != "" && u.Path != "/" {
 		return "", fmt.Errorf("invalid base_url %q: path is not allowed", raw)
 	}
-	return strings.TrimRight(u.Scheme+"://"+u.Host, "/"), nil
+	return u.Scheme + "://" + u.Host, nil
 }
 
 // decodeJSON strictly unmarshals a protocol response.

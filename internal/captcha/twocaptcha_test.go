@@ -92,9 +92,7 @@ func writeJSON(w http.ResponseWriter, body string) {
 
 func newTwoCaptchaFake(t *testing.T, f *twoCaptchaFake) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(f.handler))
-	t.Cleanup(srv.Close)
-	return srv
+	return newTLSCaptchaServer(t, http.HandlerFunc(f.handler))
 }
 
 func twoCaptchaCfg(baseURL string) config.CaptchaProvider {
@@ -126,7 +124,7 @@ func TestTwoCaptchaImageSolveSubmitPollToken(t *testing.T) {
 	}}
 	srv := newTwoCaptchaFake(t, fake)
 
-	s, err := newTwoCaptcha("2c-main", twoCaptchaCfg(srv.URL))
+	s, err := newTwoCaptcha("2c-main", twoCaptchaCfg(srv.URL), nil)
 	if err != nil {
 		t.Fatalf("newTwoCaptcha() error = %v, want nil", err)
 	}
@@ -185,7 +183,7 @@ func TestTwoCaptchaHCaptchaAndTurnstileParams(t *testing.T) {
 			}}
 			srv := newTwoCaptchaFake(t, fake)
 
-			s, err := newTwoCaptcha("2c-hcap", twoCaptchaCfg(srv.URL))
+			s, err := newTwoCaptcha("2c-hcap", twoCaptchaCfg(srv.URL), nil)
 			if err != nil {
 				t.Fatalf("newTwoCaptcha() error = %v, want nil", err)
 			}
@@ -215,7 +213,7 @@ func TestTwoCaptchaSubmitProtocolError(t *testing.T) {
 	fake := &twoCaptchaFake{submitStatus: 0, submitReq: "ERROR_KEY_DOES_NOT_EXIST"}
 	srv := newTwoCaptchaFake(t, fake)
 
-	s, err := newTwoCaptcha("2c-bad", twoCaptchaCfg(srv.URL))
+	s, err := newTwoCaptcha("2c-bad", twoCaptchaCfg(srv.URL), nil)
 	if err != nil {
 		t.Fatalf("newTwoCaptcha() error = %v, want nil", err)
 	}
@@ -239,7 +237,7 @@ func TestTwoCaptchaUnsolvableDuringPoll(t *testing.T) {
 	}}
 	srv := newTwoCaptchaFake(t, fake)
 
-	s, _ := newTwoCaptcha("2c-unsolv", twoCaptchaCfg(srv.URL))
+	s, _ := newTwoCaptcha("2c-unsolv", twoCaptchaCfg(srv.URL), nil)
 
 	_, err := s.Solve(context.Background(), Challenge{Type: TypeImage, ImageB64: "aGVsbG8="})
 	var pe *ProtocolError
@@ -253,7 +251,7 @@ func TestTwoCaptchaSolveTimeout(t *testing.T) {
 	fake := &twoCaptchaFake{submitStatus: 1, submitReq: "43"}
 	srv := newTwoCaptchaFake(t, fake)
 
-	s, _ := newTwoCaptcha("2c-slow", twoCaptchaCfg(srv.URL))
+	s, _ := newTwoCaptcha("2c-slow", twoCaptchaCfg(srv.URL), nil)
 	s.pollInterval = time.Millisecond
 	s.solveTimeout = 30 * time.Millisecond
 
@@ -274,7 +272,7 @@ func TestTwoCaptchaBalance(t *testing.T) {
 	fake := &twoCaptchaFake{balanceResp: "9.99"}
 	srv := newTwoCaptchaFake(t, fake)
 
-	s, _ := newTwoCaptcha("2c-bal", twoCaptchaCfg(srv.URL))
+	s, _ := newTwoCaptcha("2c-bal", twoCaptchaCfg(srv.URL), nil)
 
 	bal, err := s.Balance(context.Background())
 	if err != nil {
@@ -302,7 +300,7 @@ func TestTwoCaptchaKeyFromEnvWithFallbackWarnings(t *testing.T) {
 		cfg.Key = ""
 		cfg.KeyEnv = "HHAUTO_TEST_2C_KEY"
 
-		s, err := newTwoCaptcha("2c-env", cfg)
+		s, err := newTwoCaptcha("2c-env", cfg, nil)
 		if err != nil {
 			t.Fatalf("newTwoCaptcha() error = %v, want nil", err)
 		}
@@ -314,34 +312,54 @@ func TestTwoCaptchaKeyFromEnvWithFallbackWarnings(t *testing.T) {
 		}
 	})
 
-	t.Run("KeyEnv unset falls back to Key with warning", func(t *testing.T) {
+	t.Run("inline key warns once at configure into injected logger", func(t *testing.T) {
 		var logBuf syncedBuffer
-		s, err := newTwoCaptcha("2c-warn", twoCaptchaCfg(srv.URL))
+		cfg := twoCaptchaCfg(srv.URL)
+		cfg.KeyEnv = "HHAUTO_TEST_MISSING_KEY" // unset at runtime; inline key is the fallback
+		s, err := newTwoCaptcha("2c-warn", cfg, newTestLogger(&logBuf))
 		if err != nil {
 			t.Fatalf("newTwoCaptcha() error = %v, want nil", err)
 		}
-		s.logger = newTestLogger(&logBuf)
-		// Simulate configured-but-unset KeyEnv over an inline key.
-		s.keys.keyEnv = "HHAUTO_TEST_MISSING_KEY"
-
-		fake.mu.Lock()
-		fake.pollResponses = []string{`{"status":1,"request":"tok"}`}
-		fake.mu.Unlock()
-
-		solvedImageToken(t, s, "2c-warn")
 
 		if !strings.Contains(logBuf.String(), "WARN") || !strings.Contains(logBuf.String(), "2c-warn") {
-			t.Fatalf("expected WARN mentioning provider id, got: %s", logBuf.String())
+			t.Fatalf("expected WARN mentioning provider id at configure, got: %s", logBuf.String())
 		}
 		if strings.Contains(logBuf.String(), "test-key") {
 			t.Fatalf("log leaks inline key: %s", logBuf.String())
 		}
+
+		// Parallel solves on the shared solver must stay warning-free: the
+		// warning happened once at configure time, never per request.
+		logBuf.Reset()
+		var wg sync.WaitGroup
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, _ = s.Solve(context.Background(), Challenge{Type: TypeImage, ImageB64: "aGVsbG8="})
+			}()
+		}
+		wg.Wait()
+		if logBuf.String() != "" {
+			t.Fatalf("solve must not log per-request, got: %s", logBuf.String())
+		}
+	})
+
+	t.Run("nil logger falls back to slog default", func(t *testing.T) {
+		fake.mu.Lock()
+		fake.pollResponses = []string{`{"status":1,"request":"tok"}`}
+		fake.mu.Unlock()
+		s, err := newTwoCaptcha("2c-nillog", twoCaptchaCfg(srv.URL), nil)
+		if err != nil {
+			t.Fatalf("newTwoCaptcha() error = %v, want nil", err)
+		}
+		solvedImageToken(t, s, "2c-nillog")
 	})
 
 	t.Run("no key at all is a config error", func(t *testing.T) {
 		cfg := twoCaptchaCfg(srv.URL)
 		cfg.Key = ""
-		if _, err := newTwoCaptcha("2c-nokey", cfg); err == nil {
+		if _, err := newTwoCaptcha("2c-nokey", cfg, nil); err == nil {
 			t.Fatal("newTwoCaptcha() error = nil, want config error for missing key")
 		}
 	})
@@ -363,7 +381,7 @@ func TestTwoCaptchaConfigValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := twoCaptchaCfg(srv.URL)
 			tc.mut(&cfg)
-			if _, err := newTwoCaptcha("2c-cfg", cfg); err == nil {
+			if _, err := newTwoCaptcha("2c-cfg", cfg, nil); err == nil {
 				t.Fatalf("newTwoCaptcha() error = nil, want config error")
 			}
 		})
@@ -373,7 +391,7 @@ func TestTwoCaptchaConfigValidation(t *testing.T) {
 func TestTwoCaptchaUnsupportedChallenge(t *testing.T) {
 	fake := &twoCaptchaFake{}
 	srv := newTwoCaptchaFake(t, fake)
-	s, _ := newTwoCaptcha("2c-u", twoCaptchaCfg(srv.URL))
+	s, _ := newTwoCaptcha("2c-u", twoCaptchaCfg(srv.URL), nil)
 
 	if _, err := s.Solve(context.Background(), Challenge{Type: "geetest"}); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("Solve() error = %v, want ErrUnsupported", err)
@@ -386,22 +404,71 @@ func TestTwoCaptchaUnsupportedChallenge(t *testing.T) {
 	}
 }
 
+func TestTwoCaptchaParallelSolveOnSharedSolver(t *testing.T) {
+	// One solver instance, many concurrent solves: per-request key resolution
+	// must be race-free (guards against unsynchronised per-solve state).
+	fake := &twoCaptchaFake{submitStatus: 1, submitReq: "1"}
+	// 32 scripted ready-replies: each of the 24 concurrent solves consumes
+	// exactly one poll response.
+	for i := 0; i < 32; i++ {
+		fake.pollResponses = append(fake.pollResponses, `{"status":1,"request":"tok"}`)
+	}
+	srv := newTwoCaptchaFake(t, fake)
+
+	var logBuf syncedBuffer
+	cfg := twoCaptchaCfg(srv.URL)
+	cfg.KeyEnv = "HHAUTO_TEST_PARALLEL_2C" // unset: exercises the inline-key fallback path
+	s, err := newTwoCaptcha("2c-parallel", cfg, newTestLogger(&logBuf))
+	if err != nil {
+		t.Fatalf("newTwoCaptcha() error = %v, want nil", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 24; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sol, err := s.Solve(context.Background(), Challenge{Type: TypeImage, ImageB64: "aGVsbG8="})
+			if err != nil {
+				t.Errorf("Solve() error = %v, want nil", err)
+				return
+			}
+			if sol.Token != "tok" {
+				t.Errorf("token = %q, want tok", sol.Token)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestTwoCaptchaHTTPSOnlyBaseURL(t *testing.T) {
+	s, err := newTwoCaptcha("2c-plain", twoCaptchaCfg("http://2captcha.example"), nil)
+	if err == nil {
+		t.Fatal("newTwoCaptcha() error = nil, want config error for http:// base_url (key would travel in cleartext)")
+	}
+	if !strings.Contains(err.Error(), "https") {
+		t.Fatalf("error = %v, want it to mention https", err)
+	}
+	if s != nil {
+		t.Fatal("solver must be nil on config error")
+	}
+}
+
 func TestTwoCaptchaHTTPAndJSONErrors(t *testing.T) {
 	t.Run("http error status", func(t *testing.T) {
 		fake := &twoCaptchaFake{forceHTTPError: http.StatusInternalServerError}
 		srv := newTwoCaptchaFake(t, fake)
-		s, _ := newTwoCaptcha("2c-500", twoCaptchaCfg(srv.URL))
+		s, _ := newTwoCaptcha("2c-500", twoCaptchaCfg(srv.URL), nil)
 
 		if _, err := s.Balance(context.Background()); err == nil {
 			t.Fatal("Balance() error = nil, want error for HTTP 500")
 		}
 	})
 	t.Run("invalid json", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		srv := newTLSCaptchaServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte("<html>not json</html>"))
 		}))
-		defer srv.Close()
-		s, _ := newTwoCaptcha("2c-json", twoCaptchaCfg(srv.URL))
+		s, _ := newTwoCaptcha("2c-json", twoCaptchaCfg(srv.URL), nil)
 
 		if _, err := s.Balance(context.Background()); err == nil {
 			t.Fatal("Balance() error = nil, want error for invalid JSON")
@@ -410,7 +477,7 @@ func TestTwoCaptchaHTTPAndJSONErrors(t *testing.T) {
 	t.Run("unparseable balance", func(t *testing.T) {
 		fake := &twoCaptchaFake{balanceResp: "not-a-float"}
 		srv := newTwoCaptchaFake(t, fake)
-		s, _ := newTwoCaptcha("2c-balfmt", twoCaptchaCfg(srv.URL))
+		s, _ := newTwoCaptcha("2c-balfmt", twoCaptchaCfg(srv.URL), nil)
 
 		if _, err := s.Balance(context.Background()); err == nil {
 			t.Fatal("Balance() error = nil, want error for unparseable balance")

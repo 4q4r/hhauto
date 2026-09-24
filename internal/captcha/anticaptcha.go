@@ -35,32 +35,33 @@ type antiCaptchaSolver struct {
 	solveTimeout time.Duration
 
 	client httpJSONClient
-	logger *slog.Logger
 }
 
 // newAntiCaptcha builds a Solver speaking the anti-captcha createTask/
 // getTaskResult protocol. Key resolution mirrors the 2captcha adapter:
 // KeyEnv first, inline cfg.Key as the warned fallback, neither = config error.
-func newAntiCaptcha(id string, cfg config.CaptchaProvider) (*antiCaptchaSolver, error) {
+func newAntiCaptcha(id string, cfg config.CaptchaProvider, logger *slog.Logger) (*antiCaptchaSolver, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	solver := &antiCaptchaSolver{
 		id:     id,
-		logger: slog.Default(),
 		client: newHTTPJSONClient(),
 	}
-	if err := solver.configure(cfg); err != nil {
+	if err := solver.configure(cfg, logger); err != nil {
 		return nil, err
 	}
 	return solver, nil
 }
 
-func (s *antiCaptchaSolver) configure(cfg config.CaptchaProvider) error {
+func (s *antiCaptchaSolver) configure(cfg config.CaptchaProvider, logger *slog.Logger) error {
 	if cfg.PollMS < 0 {
 		return fmt.Errorf("captcha: %s: poll_interval_ms must be >= 0", s.id)
 	}
 	if cfg.TimeoutS < 0 {
 		return fmt.Errorf("captcha: %s: timeout_s must be >= 0", s.id)
 	}
-	keys, err := newKeySource(s.id, cfg)
+	keys, err := newKeySource(s.id, cfg, logger)
 	if err != nil {
 		return err
 	}
@@ -80,7 +81,7 @@ func (s *antiCaptchaSolver) ID() string { return s.id }
 
 func (s *antiCaptchaSolver) Solve(ctx context.Context, ch Challenge) (Solution, error) {
 	start := time.Now()
-	key, err := s.keys.get(s.logger)
+	key, err := s.keys.get()
 	if err != nil {
 		return Solution{}, err
 	}
@@ -153,7 +154,7 @@ func (s *antiCaptchaSolver) Solve(ctx context.Context, ch Challenge) (Solution, 
 }
 
 func (s *antiCaptchaSolver) Balance(ctx context.Context) (float64, error) {
-	key, err := s.keys.get(s.logger)
+	key, err := s.keys.get()
 	if err != nil {
 		return 0, err
 	}
@@ -254,18 +255,26 @@ func solutionToken(challengeType string, solution map[string]any) (string, error
 }
 
 // keySource resolves the provider API key per request: KeyEnv first, the
-// inline key as a warned fallback. The value is never logged. The logger is
-// injected per call so it always reflects the owning solver's logger.
+// inline key as a fallback. It is immutable after construction — the
+// inline-key warning is emitted once by newKeySource (the fact is known at
+// configure time), so concurrent Solve calls share it without locks.
+// The key value is never logged.
 type keySource struct {
 	providerID string
 	keyEnv     string
 	inline     string
-	warned     bool
 }
 
-func newKeySource(id string, cfg config.CaptchaProvider) (keySource, error) {
+func newKeySource(id string, cfg config.CaptchaProvider, logger *slog.Logger) (keySource, error) {
 	if cfg.KeyEnv == "" && cfg.Key == "" {
 		return keySource{}, fmt.Errorf("captcha: %s: no API key configured (set key_env)", id)
+	}
+	if cfg.Key != "" {
+		if logger == nil {
+			logger = slog.Default()
+		}
+		logger.Warn("captcha: inline API key configured (discouraged; put the key in key_env instead)",
+			"provider", id, "key_env", cfg.KeyEnv)
 	}
 	return keySource{
 		providerID: id,
@@ -274,21 +283,13 @@ func newKeySource(id string, cfg config.CaptchaProvider) (keySource, error) {
 	}, nil
 }
 
-func (k *keySource) get(logger *slog.Logger) (string, error) {
-	if logger == nil {
-		logger = slog.Default()
-	}
+func (k keySource) get() (string, error) {
 	if k.keyEnv != "" {
 		if v := os.Getenv(k.keyEnv); v != "" {
 			return v, nil
 		}
 	}
 	if k.inline != "" {
-		if k.keyEnv != "" && !k.warned {
-			k.warned = true
-			logger.Warn("captcha: key_env unset, using inline key (discouraged; move the key to the environment)",
-				"provider", k.providerID, "key_env", k.keyEnv)
-		}
 		return k.inline, nil
 	}
 	return "", fmt.Errorf("captcha: %s: API key unavailable (env %s is not set)", k.providerID, k.keyEnv)
