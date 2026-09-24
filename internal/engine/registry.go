@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"hhauto/internal/ai"
@@ -51,8 +52,9 @@ type TaskContext struct {
 // live in different packages.
 
 type scheduleBinding struct {
-	spec    scheduler.Spec
-	factory TaskFactory
+	spec      scheduler.Spec
+	factory   TaskFactory
+	accountID string // "" = multi-account fan-out; non-empty = R11 single-account binding
 }
 
 var (
@@ -63,7 +65,26 @@ var (
 
 // RegisterSchedule binds a named schedule to its task factory. The spec
 // must validate; re-registration replaces (idempotent wiring, test reloads).
+//
+// Deprecated (kept for compatibility): this is the multi-account fan-out
+// binding — the schedule materializes one row PER configured account. New
+// wiring should use RegisterScheduleForAccount (ruling R11).
 func RegisterSchedule(name string, spec scheduler.Spec, factory TaskFactory) error {
+	return registerSchedule(name, "", spec, factory)
+}
+
+// RegisterScheduleForAccount binds a named schedule to exactly one account
+// (ruling R11): materialization creates exactly ONE schedule row for this
+// name, and the factory receives exactly this accountID.
+func RegisterScheduleForAccount(name, accountID string, spec scheduler.Spec, factory TaskFactory) error {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return fmt.Errorf("engine: RegisterScheduleForAccount %s: empty accountID", name)
+	}
+	return registerSchedule(name, accountID, spec, factory)
+}
+
+func registerSchedule(name, accountID string, spec scheduler.Spec, factory TaskFactory) error {
 	if name == "" {
 		return fmt.Errorf("engine: RegisterSchedule: empty name")
 	}
@@ -75,7 +96,7 @@ func RegisterSchedule(name string, spec scheduler.Spec, factory TaskFactory) err
 	}
 	regMu.Lock()
 	defer regMu.Unlock()
-	scheduleReg[name] = scheduleBinding{spec: spec, factory: factory}
+	scheduleReg[name] = scheduleBinding{spec: spec, factory: factory, accountID: accountID}
 	return nil
 }
 

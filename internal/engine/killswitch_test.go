@@ -99,3 +99,22 @@ func TestKillSwitchCancelledContext(t *testing.T) {
 
 // compile-time check: *fsKillSwitch satisfies KillSwitch.
 var _ KillSwitch = (*fsKillSwitch)(nil)
+
+func TestKillSwitchCtxCancelDoesNotLatchTrip(t *testing.T) {
+	ks := NewKillSwitch(filepath.Join(t.TempDir(), "STOP"))
+	ks.now = func() time.Time { return time.Now() }
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if !ks.Tripped(ctx) {
+		t.Fatal("cancelled ctx must report tripped for THIS check")
+	}
+	select {
+	case <-ks.StopCh():
+		t.Fatal("ctx cancellation must not latch the switch (tripOnce is for file/Stop only)")
+	default:
+	}
+	if ks.Tripped(context.Background()) {
+		t.Fatal("a fresh ctx must be untripped after a ctx-cancel report")
+	}
+}
