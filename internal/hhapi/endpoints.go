@@ -24,6 +24,7 @@ const (
 	epChatData       = "chat_data"       // GET  chatik /chatik/api/chat_data?chatId=N
 	epSend           = "send"            // POST chatik /chatik/api/send
 	epChatLeave      = "chat_leave"      // POST chatik /chatik/api/participant_action
+	epCounts         = "counts"          // GET  /shards/vacancy/counts (JSON {"counts":N}) — RULING R15
 )
 
 // endpointSet resolves endpoint URLs from config with defaults and

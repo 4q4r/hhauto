@@ -142,6 +142,12 @@ func (f *Feature) processVacancy(ctx context.Context, runID string, run config.R
 			"inconsistencies", strings.Join(meta.ResumeInconsistencies, "; "))
 		return "", "inconsistencies"
 	}
+	if meta.AlreadyApplied {
+		// Live popup surfaces the structural alreadyApplied flag upfront
+		// (responseStatus.alreadyApplied) — same skip as the dedup hit,
+		// one request earlier.
+		return "", "already_applied"
+	}
 	if meta.ChatWritePossibility == "DISABLED" {
 		return "", "chat_disabled"
 	}

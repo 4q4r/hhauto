@@ -1,0 +1,2606 @@
+{
+ "css_links": [
+  "https://i.hh.ru/build/vendors.a16f1bf5ca47025b.css",
+  "https://i.hh.ru/build/magritte.1b524f933bc6490e.css",
+  "https://i.hh.ru/styles/globals/pages/__bloko-imports_d32ecf58e8567a5f606b7a259e8dbe9c.css",
+  "https://i.hh.ru/styles/globals/pages/__globals_2bbc86869b8faa37c37d1c8d45f1a74e.css",
+  "https://i.hh.ru/styles/applicant/pages/__applicant_96f3d951b748fce864ffa4da258f1834.css"
+ ],
+ "font_url": "https://i.hh.ru/styles/other/pages/__fonts_3e2a20dec491e4294c7ec1c4f92c6567.css",
+ "magritte_font_url": "https://i.hh.ru/styles/other/pages/__magritte-fonts_4d0d9a933ed53bff79307aad380085e8.css",
+ "inline_script": "/* scrubbed */",
+ "staticHost": "https://employer-reviews-front.hh.ru/static",
+ "apiHost": "https://employer-reviews-front.hh.ru",
+ "requestId": "0000000000000000",
+ "sentryDSN": "https://00000000000000000000000000000000@o0.ingest.sentry.io/0",
+ "build": "1.4.80",
+ "userType": "applicant",
+ "analyticsParams": {
+  "method": "GET",
+  "path": "/employer_reviews/proxy_components/small_widget",
+  "screenName": "employer_reviews_front",
+  "sender": "python",
+  "hhtmSource": "employer_reviews_front",
+  "hhtmFrom": "",
+  "hhtmSourceLabel": "",
+  "hhtmFromLabel": ""
+ },
+ "externalMicroFrontendHosts": null,
+ "renderRestriction": {
+  "breakpoint": "l",
+  "magritteBreakpoint": "l",
+  "force": false,
+  "renderRestriction": false
+ },
+ "redirectConfig": {
+  "strictMode": true,
+  "topLevelDomain": "hh.ru",
+  "permittedHosts": [
+   "hh.ru",
+   "hr.zarplata.ru",
+   "api.zarplata.ru",
+   "zarplata.ru",
+   "talantix.ru",
+   "career.ru",
+   "joblist.ru",
+   "livehh.ru",
+   "hh.ua",
+   "hh.kz",
+   "headhunter.com.kz",
+   "hh.by",
+   "planetahr.ru",
+   "ka.hh.ru",
+   "educat.ru",
+   "educat.kz",
+   "jobs.tut.by",
+   "rabota.tut.by",
+   "job.tut.by",
+   "free-lance.ru",
+   "jobs.day.az",
+   "hh1.az",
+   "profile.tut.by",
+   "swa.mail.ru",
+   "hhid.ru",
+   "headhunter.kg",
+   "hh.uz",
+   "headhunter.ge",
+   "rabota.by",
+   "jcat.ru",
+   "rating-kube.kube.37b.io",
+   "dreamjob.ru"
+  ],
+  "permittedAppSchemes": [
+   "hh",
+   "jtb",
+   "hhios",
+   "hhapp",
+   "hhempios",
+   "jtbios",
+   "jtbapp",
+   "jtbempios",
+   "jdazios",
+   "jdazapp",
+   "zpandroid",
+   "zpios",
+   "zpapp"
+  ]
+ },
+ "statShardRequestPercent": false,
+ "webPerformanceAnalyticsPercent": false,
+ "advantages": [
+  {
+   "id": "1",
+   "name": "Своевременная оплата труда"
+  },
+  {
+   "id": "2",
+   "name": "Удобное расположение работы"
+  },
+  {
+   "id": "3",
+   "name": "Удаленная работа"
+  },
+  {
+   "id": "4",
+   "name": "Наличие кухни, места для обеда"
+  },
+  {
+   "id": "5",
+   "name": "Медицинское страхование"
+  },
+  {
+   "id": "6",
+   "name": "Оплата больничного"
+  },
+  {
+   "id": "7",
+   "name": "Гибкий рабочий график"
+  },
+  {
+   "id": "8",
+   "name": "Компенсация питания"
+  },
+  {
+   "id": "9",
+   "name": "Оплата транспортных расходов"
+  },
+  {
+   "id": "10",
+   "name": "Корпоративный транспорт"
+  },
+  {
+   "id": "11",
+   "name": "Профессиональное обучение"
+  },
+  {
+   "id": "12",
+   "name": "Место для парковки"
+  },
+  {
+   "id": "13",
+   "name": "Оплата мобильной связи"
+  },
+  {
+   "id": "14",
+   "name": "Система наставничества"
+  },
+  {
+   "id": "15",
+   "name": "Корпоративные мероприятия"
+  }
+ ],
+ "hasVerifiedPhone": true,
+ "reviewPossibility": {
+  "employer": {
+   "canReview": true
+  },
+  "interview": {
+   "canReview": true
+  }
+ },
+ "interviewDictionaries": {
+  "locations": [
+   {
+    "id": "1",
+    "name": "По телефону"
+   },
+   {
+    "id": "2",
+    "name": "По видеосвязи"
+   },
+   {
+    "id": "3",
+    "name": "В офисе"
+   }
+  ],
+  "durations": [
+   {
+    "id": "ONE_WEEK_OR_LESS",
+    "name": "Меньше недели"
+   },
+   {
+    "id": "TWO_WEEKS",
+    "name": "Две недели"
+   },
+   {
+    "id": "THREE_WEEKS",
+    "name": "Больше двух недель"
+   },
+   {
+    "id": "FOUR_WEEKS_OR_MORE",
+    "name": "Больше месяца"
+   }
+  ],
+  "components": [
+   {
+    "id": "1",
+    "name": "Рекомендации с прошлой работы"
+   },
+   {
+    "id": "2",
+    "name": "Обсуждение опыта работы"
+   },
+   {
+    "id": "3",
+    "name": "Оценка профессиональных навыков"
+   },
+   {
+    "id": "4",
+    "name": "Оценка навыков презентации"
+   },
+   {
+    "id": "5",
+    "name": "Психологический тест"
+   },
+   {
+    "id": "6",
+    "name": "Уровень владения иностранным языком"
+   },
+   {
+    "id": "7",
+    "name": "Проверка службой безопасности"
+   }
+  ],
+  "complexities": [
+   {
+    "id": "1",
+    "name": "Легко"
+   },
+   {
+    "id": "2",
+    "name": "Нормально"
+   },
+   {
+    "id": "3",
+    "name": "Сложно"
+   }
+  ],
+  "stagesCounts": [
+   {
+    "id": "ONE",
+    "name": "Один"
+   },
+   {
+    "id": "TWO",
+    "name": "Два"
+   },
+   {
+    "id": "THREE",
+    "name": "Три"
+   },
+   {
+    "id": "FOUR",
+    "name": "Четыре"
+   },
+   {
+    "id": "FIVE_OR_MORE",
+    "name": "Больше четырёх"
+   }
+  ],
+  "jobConditions": [
+   {
+    "id": "1",
+    "name": "Зарплата"
+   },
+   {
+    "id": "2",
+    "name": "Описание обязанностей"
+   },
+   {
+    "id": "3",
+    "name": "Требуемый опыт"
+   },
+   {
+    "id": "4",
+    "name": "Соцпакет"
+   },
+   {
+    "id": "5",
+    "name": "Описание условий работы"
+   },
+   {
+    "id": "6",
+    "name": "Расположение офиса"
+   }
+  ]
+ },
+ "employerReviews": {
+  "employerDjId": "10000024",
+  "recommendationsPercent": 82,
+  "totalRating": "4.2",
+  "ratings": [
+   {
+    "id": "WORKPLACE",
+    "value": "4.5"
+   },
+   {
+    "id": "TEAM",
+    "value": "4.6"
+   },
+   {
+    "id": "MANAGEMENT",
+    "value": "4.1"
+   },
+   {
+    "id": "CAREER",
+    "value": "4"
+   },
+   {
+    "id": "REST_RECOVERY",
+    "value": "4.2"
+   },
+   {
+    "id": "SALARY",
+    "value": "3.6"
+   }
+  ],
+  "advantages": [
+   {
+    "id": "1",
+    "name": "Своевременная оплата труда",
+    "count": 641
+   },
+   {
+    "id": "5",
+    "name": "Медицинское страхование",
+    "count": 588
+   },
+   {
+    "id": "15",
+    "name": "Корпоративные мероприятия",
+    "count": 574
+   },
+   {
+    "id": "3",
+    "name": "Удаленная работа",
+    "count": 562
+   },
+   {
+    "id": "4",
+    "name": "Наличие кухни, места для обеда",
+    "count": 473
+   },
+   {
+    "id": "6",
+    "name": "Оплата больничного",
+    "count": 416
+   },
+   {
+    "id": "7",
+    "name": "Гибкий рабочий график",
+    "count": 414
+   },
+   {
+    "id": "13",
+    "name": "Оплата мобильной связи",
+    "count": 407
+   },
+   {
+    "id": "11",
+    "name": "Профессиональное обучение",
+    "count": 392
+   },
+   {
+    "id": "14",
+    "name": "Система наставничества",
+    "count": 323
+   },
+   {
+    "id": "2",
+    "name": "Удобное расположение работы",
+    "count": 300
+   },
+   {
+    "id": "10",
+    "name": "Корпоративный транспорт",
+    "count": 137
+   },
+   {
+    "id": "12",
+    "name": "Место для парковки",
+    "count": 130
+   },
+   {
+    "id": "9",
+    "name": "Оплата транспортных расходов",
+    "count": 79
+   },
+   {
+    "id": "8",
+    "name": "Компенсация питания",
+    "count": 44
+   }
+  ],
+  "reviewsCount": 791,
+  "reviews": [
+   {
+    "id": "10000025",
+    "target": "PREVIOUS_EMPLOYER",
+    "position": "Разработчик",
+    "employmentDuration": {
+     "id": "4",
+     "name": "5-10 лет"
+    },
+    "area": "Екатеринбург",
+    "areaId": 3,
+    "totalRating": "3.2",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "3"
+     },
+     {
+      "id": "TEAM",
+      "value": "4"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "4"
+     },
+     {
+      "id": "CAREER",
+      "value": "2"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "3"
+     },
+     {
+      "id": "SALARY",
+      "value": "3"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "recommendToFriend": "YES",
+    "creationTime": "2026-09-15T13:41:14Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   }
+  ],
+  "reviewsWithoutFeedbackCount": 790,
+  "reviewsWithoutFeedback": [
+   {
+    "id": "10000025",
+    "target": "PREVIOUS_EMPLOYER",
+    "position": "Разработчик",
+    "employmentDuration": {
+     "id": "4",
+     "name": "5-10 лет"
+    },
+    "area": "Екатеринбург",
+    "areaId": 3,
+    "totalRating": "3.2",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "3"
+     },
+     {
+      "id": "TEAM",
+      "value": "4"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "4"
+     },
+     {
+      "id": "CAREER",
+      "value": "2"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "3"
+     },
+     {
+      "id": "SALARY",
+      "value": "3"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "recommendToFriend": "YES",
+    "creationTime": "2026-09-15T13:41:14Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000026",
+    "target": "CURRENT_EMPLOYER",
+    "employmentDuration": {
+     "id": "1",
+     "name": "Меньше года"
+    },
+    "area": "Москва",
+    "areaId": 1,
+    "totalRating": "4.3",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "4"
+     },
+     {
+      "id": "TEAM",
+      "value": "5"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "4"
+     },
+     {
+      "id": "CAREER",
+      "value": "4"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "5"
+     },
+     {
+      "id": "SALARY",
+      "value": "4"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "recommendToFriend": "YES",
+    "creationTime": "2026-09-09T16:25:48Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000027",
+    "target": "CURRENT_EMPLOYER",
+    "position": "Аналитик",
+    "employmentDuration": {
+     "id": "2",
+     "name": "1-2 года"
+    },
+    "area": "Москва",
+    "areaId": 1,
+    "totalRating": "4.2",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "5"
+     },
+     {
+      "id": "TEAM",
+      "value": "4"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "5"
+     },
+     {
+      "id": "CAREER",
+      "value": "5"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "1"
+     },
+     {
+      "id": "SALARY",
+      "value": "5"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "advantages": [
+     {
+      "id": "1",
+      "name": "Своевременная оплата труда"
+     },
+     {
+      "id": "3",
+      "name": "Удаленная работа"
+     },
+     {
+      "id": "4",
+      "name": "Наличие кухни, места для обеда"
+     },
+     {
+      "id": "5",
+      "name": "Медицинское страхование"
+     },
+     {
+      "id": "11",
+      "name": "Профессиональное обучение"
+     },
+     {
+      "id": "14",
+      "name": "Система наставничества"
+     },
+     {
+      "id": "15",
+      "name": "Корпоративные мероприятия"
+     }
+    ],
+    "recommendToFriend": "YES",
+    "creationTime": "2026-09-06T09:05:36Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000028",
+    "target": "CURRENT_EMPLOYER",
+    "position": "Java-разработчик",
+    "employmentDuration": {
+     "id": "3",
+     "name": "3-5 лет"
+    },
+    "totalRating": "5",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "5"
+     },
+     {
+      "id": "TEAM",
+      "value": "5"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "5"
+     },
+     {
+      "id": "CAREER",
+      "value": "5"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "5"
+     },
+     {
+      "id": "SALARY",
+      "value": "5"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "recommendToFriend": "YES",
+    "creationTime": "2026-09-01T17:20:13Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000029",
+    "target": "CURRENT_EMPLOYER",
+    "position": "Ведущий менеджер офиса продаж",
+    "employmentDuration": {
+     "id": "2",
+     "name": "1-2 года"
+    },
+    "area": "Москва",
+    "areaId": 1,
+    "totalRating": "4.7",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "5"
+     },
+     {
+      "id": "TEAM",
+      "value": "4"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "5"
+     },
+     {
+      "id": "CAREER",
+      "value": "5"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "4"
+     },
+     {
+      "id": "SALARY",
+      "value": "5"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "advantages": [
+     {
+      "id": "1",
+      "name": "Своевременная оплата труда"
+     },
+     {
+      "id": "2",
+      "name": "Удобное расположение работы"
+     },
+     {
+      "id": "7",
+      "name": "Гибкий рабочий график"
+     },
+     {
+      "id": "9",
+      "name": "Оплата транспортных расходов"
+     },
+     {
+      "id": "10",
+      "name": "Корпоративный транспорт"
+     },
+     {
+      "id": "12",
+      "name": "Место для парковки"
+     },
+     {
+      "id": "13",
+      "name": "Оплата мобильной связи"
+     },
+     {
+      "id": "14",
+      "name": "Система наставничества"
+     },
+     {
+      "id": "15",
+      "name": "Корпоративные мероприятия"
+     }
+    ],
+    "recommendToFriend": "YES",
+    "creationTime": "2026-08-31T19:02:52Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000030",
+    "target": "PREVIOUS_EMPLOYER",
+    "position": "Стажер аналитик",
+    "employmentDuration": {
+     "id": "1",
+     "name": "Меньше года"
+    },
+    "area": "Москва",
+    "areaId": 1,
+    "totalRating": "5",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "5"
+     },
+     {
+      "id": "TEAM",
+      "value": "5"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "5"
+     },
+     {
+      "id": "CAREER",
+      "value": "5"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "5"
+     },
+     {
+      "id": "SALARY",
+      "value": "5"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "recommendToFriend": "YES",
+    "creationTime": "2026-08-29T20:24:19Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000031",
+    "target": "PREVIOUS_EMPLOYER",
+    "employmentDuration": {
+     "id": "2",
+     "name": "1-2 года"
+    },
+    "area": "Москва",
+    "areaId": 1,
+    "totalRating": "4.3",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "4"
+     },
+     {
+      "id": "TEAM",
+      "value": "5"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "5"
+     },
+     {
+      "id": "CAREER",
+      "value": "4"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "4"
+     },
+     {
+      "id": "SALARY",
+      "value": "4"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "recommendToFriend": "YES",
+    "creationTime": "2026-08-29T18:08:37Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000032",
+    "target": "CURRENT_EMPLOYER",
+    "position": "Ведущий тестировщик",
+    "employmentDuration": {
+     "id": "3",
+     "name": "3-5 лет"
+    },
+    "area": "Санкт-Петербург",
+    "areaId": 2,
+    "totalRating": "5",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "5"
+     },
+     {
+      "id": "TEAM",
+      "value": "5"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "5"
+     },
+     {
+      "id": "CAREER",
+      "value": "5"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "5"
+     },
+     {
+      "id": "SALARY",
+      "value": "5"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "advantages": [
+     {
+      "id": "1",
+      "name": "Своевременная оплата труда"
+     },
+     {
+      "id": "2",
+      "name": "Удобное расположение работы"
+     },
+     {
+      "id": "3",
+      "name": "Удаленная работа"
+     },
+     {
+      "id": "4",
+      "name": "Наличие кухни, места для обеда"
+     },
+     {
+      "id": "5",
+      "name": "Медицинское страхование"
+     },
+     {
+      "id": "6",
+      "name": "Оплата больничного"
+     },
+     {
+      "id": "8",
+      "name": "Компенсация питания"
+     },
+     {
+      "id": "9",
+      "name": "Оплата транспортных расходов"
+     },
+     {
+      "id": "10",
+      "name": "Корпоративный транспорт"
+     },
+     {
+      "id": "11",
+      "name": "Профессиональное обучение"
+     }
+    ],
+    "recommendToFriend": "YES",
+    "creationTime": "2026-08-28T07:47:40Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000033",
+    "target": "CURRENT_EMPLOYER",
+    "position": "Ведущий аналитик",
+    "employmentDuration": {
+     "id": "3",
+     "name": "3-5 лет"
+    },
+    "area": "Москва",
+    "areaId": 1,
+    "totalRating": "4.3",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "4"
+     },
+     {
+      "id": "TEAM",
+      "value": "5"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "4"
+     },
+     {
+      "id": "CAREER",
+      "value": "4"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "5"
+     },
+     {
+      "id": "SALARY",
+      "value": "4"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "recommendToFriend": "YES",
+    "creationTime": "2026-08-13T09:16:50Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000034",
+    "target": "PREVIOUS_EMPLOYER",
+    "position": "Аналитик",
+    "employmentDuration": {
+     "id": "2",
+     "name": "1-2 года"
+    },
+    "area": "Курск",
+    "areaId": 56,
+    "totalRating": "3.5",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "4"
+     },
+     {
+      "id": "TEAM",
+      "value": "5"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "4"
+     },
+     {
+      "id": "CAREER",
+      "value": "2"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "4"
+     },
+     {
+      "id": "SALARY",
+      "value": "2"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "advantages": [
+     {
+      "id": "1",
+      "name": "Своевременная оплата труда"
+     },
+     {
+      "id": "2",
+      "name": "Удобное расположение работы"
+     },
+     {
+      "id": "4",
+      "name": "Наличие кухни, места для обеда"
+     },
+     {
+      "id": "5",
+      "name": "Медицинское страхование"
+     },
+     {
+      "id": "13",
+      "name": "Оплата мобильной связи"
+     },
+     {
+      "id": "15",
+      "name": "Корпоративные мероприятия"
+     }
+    ],
+    "recommendToFriend": "YES",
+    "creationTime": "2026-08-13T08:25:27Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   }
+  ],
+  "negativeReviewsCount": 26,
+  "negativeReviews": [
+   {
+    "id": "10000035",
+    "target": "PREVIOUS_EMPLOYER",
+    "position": "Аналитик",
+    "employmentDuration": {
+     "id": "2",
+     "name": "1-2 года"
+    },
+    "area": "Москва",
+    "areaId": 1,
+    "totalRating": "1.3",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "1"
+     },
+     {
+      "id": "TEAM",
+      "value": "3"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "1"
+     },
+     {
+      "id": "CAREER",
+      "value": "1"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "1"
+     },
+     {
+      "id": "SALARY",
+      "value": "1"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "recommendToFriend": "NO",
+    "creationTime": "2026-07-13T08:28:46Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000036",
+    "target": "PREVIOUS_EMPLOYER",
+    "position": "Бизнес-тренер",
+    "employmentDuration": {
+     "id": "1",
+     "name": "Меньше года"
+    },
+    "area": "Москва",
+    "areaId": 1,
+    "totalRating": "1.5",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "1"
+     },
+     {
+      "id": "TEAM",
+      "value": "2"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "1"
+     },
+     {
+      "id": "CAREER",
+      "value": "1"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "3"
+     },
+     {
+      "id": "SALARY",
+      "value": "1"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "recommendToFriend": "NO",
+    "creationTime": "2026-01-21T11:29:14Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000037",
+    "target": "PREVIOUS_EMPLOYER",
+    "position": "Frontend-разработчик",
+    "employmentDuration": {
+     "id": "3",
+     "name": "3-5 лет"
+    },
+    "area": "Москва",
+    "areaId": 1,
+    "totalRating": "1.7",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "2"
+     },
+     {
+      "id": "TEAM",
+      "value": "4"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "1"
+     },
+     {
+      "id": "CAREER",
+      "value": "1"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "1"
+     },
+     {
+      "id": "SALARY",
+      "value": "1"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "recommendToFriend": "NO",
+    "creationTime": "2026-01-13T14:38:38Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000038",
+    "target": "PREVIOUS_EMPLOYER",
+    "position": "Инженер технической поддержки",
+    "employmentDuration": {
+     "id": "1",
+     "name": "Меньше года"
+    },
+    "area": "Ярославль",
+    "areaId": 112,
+    "totalRating": "1.8",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "3"
+     },
+     {
+      "id": "TEAM",
+      "value": "2"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "1"
+     },
+     {
+      "id": "CAREER",
+      "value": "2"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "1"
+     },
+     {
+      "id": "SALARY",
+      "value": "2"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "recommendToFriend": "NO",
+    "creationTime": "2025-12-18T17:53:09Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000039",
+    "target": "PREVIOUS_EMPLOYER",
+    "position": "Специалист по тестированию",
+    "employmentDuration": {
+     "id": "2",
+     "name": "1-2 года"
+    },
+    "area": "Москва",
+    "areaId": 1,
+    "totalRating": "1.8",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "3"
+     },
+     {
+      "id": "TEAM",
+      "value": "4"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "1"
+     },
+     {
+      "id": "CAREER",
+      "value": "1"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "1"
+     },
+     {
+      "id": "SALARY",
+      "value": "1"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "advantages": [
+     {
+      "id": "3",
+      "name": "Удаленная работа"
+     },
+     {
+      "id": "5",
+      "name": "Медицинское страхование"
+     },
+     {
+      "id": "13",
+      "name": "Оплата мобильной связи"
+     }
+    ],
+    "recommendToFriend": "NO",
+    "creationTime": "2025-11-09T19:10:15Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000040",
+    "target": "CURRENT_EMPLOYER",
+    "position": "Архитектор",
+    "employmentDuration": {
+     "id": "1",
+     "name": "Меньше года"
+    },
+    "totalRating": "1",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "1"
+     },
+     {
+      "id": "TEAM",
+      "value": "1"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "1"
+     },
+     {
+      "id": "CAREER",
+      "value": "1"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "1"
+     },
+     {
+      "id": "SALARY",
+      "value": "1"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "recommendToFriend": "NO",
+    "creationTime": "2025-08-08T17:34:53Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000041",
+    "target": "PREVIOUS_EMPLOYER",
+    "position": "Аналитик",
+    "employmentDuration": {
+     "id": "1",
+     "name": "Меньше года"
+    },
+    "area": "Москва",
+    "areaId": 1,
+    "totalRating": "1.7",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "1"
+     },
+     {
+      "id": "TEAM",
+      "value": "4"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "1"
+     },
+     {
+      "id": "CAREER",
+      "value": "1"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "1"
+     },
+     {
+      "id": "SALARY",
+      "value": "2"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "advantages": [
+     {
+      "id": "1",
+      "name": "Своевременная оплата труда"
+     },
+     {
+      "id": "4",
+      "name": "Наличие кухни, места для обеда"
+     },
+     {
+      "id": "5",
+      "name": "Медицинское страхование"
+     },
+     {
+      "id": "15",
+      "name": "Корпоративные мероприятия"
+     }
+    ],
+    "recommendToFriend": "NO",
+    "creationTime": "2025-07-02T10:54:35Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000042",
+    "target": "PREVIOUS_EMPLOYER",
+    "position": "Аналитик",
+    "employmentDuration": {
+     "id": "1",
+     "name": "Меньше года"
+    },
+    "totalRating": "2",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "5"
+     },
+     {
+      "id": "TEAM",
+      "value": "3"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "1"
+     },
+     {
+      "id": "CAREER",
+      "value": "1"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "1"
+     },
+     {
+      "id": "SALARY",
+      "value": "1"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "advantages": [
+     {
+      "id": "1",
+      "name": "Своевременная оплата труда"
+     },
+     {
+      "id": "3",
+      "name": "Удаленная работа"
+     },
+     {
+      "id": "4",
+      "name": "Наличие кухни, места для обеда"
+     }
+    ],
+    "recommendToFriend": "NO",
+    "creationTime": "2025-05-28T14:39:14Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000043",
+    "target": "PREVIOUS_EMPLOYER",
+    "position": "Бизнес-тренер",
+    "employmentDuration": {
+     "id": "1",
+     "name": "Меньше года"
+    },
+    "area": "Москва",
+    "areaId": 1,
+    "totalRating": "1.8",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "3"
+     },
+     {
+      "id": "TEAM",
+      "value": "2"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "1"
+     },
+     {
+      "id": "CAREER",
+      "value": "1"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "1"
+     },
+     {
+      "id": "SALARY",
+      "value": "3"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "advantages": [
+     {
+      "id": "1",
+      "name": "Своевременная оплата труда"
+     },
+     {
+      "id": "4",
+      "name": "Наличие кухни, места для обеда"
+     },
+     {
+      "id": "5",
+      "name": "Медицинское страхование"
+     },
+     {
+      "id": "6",
+      "name": "Оплата больничного"
+     },
+     {
+      "id": "13",
+      "name": "Оплата мобильной связи"
+     },
+     {
+      "id": "14",
+      "name": "Система наставничества"
+     },
+     {
+      "id": "15",
+      "name": "Корпоративные мероприятия"
+     }
+    ],
+    "recommendToFriend": "NO",
+    "creationTime": "2025-05-11T01:35:48Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   },
+   {
+    "id": "10000044",
+    "target": "CURRENT_EMPLOYER",
+    "position": "Системный аналитик",
+    "employmentDuration": {
+     "id": "2",
+     "name": "1-2 года"
+    },
+    "area": "Москва",
+    "areaId": 1,
+    "totalRating": "1.3",
+    "ratings": [
+     {
+      "id": "WORKPLACE",
+      "value": "1"
+     },
+     {
+      "id": "TEAM",
+      "value": "3"
+     },
+     {
+      "id": "MANAGEMENT",
+      "value": "1"
+     },
+     {
+      "id": "CAREER",
+      "value": "1"
+     },
+     {
+      "id": "REST_RECOVERY",
+      "value": "1"
+     },
+     {
+      "id": "SALARY",
+      "value": "1"
+     }
+    ],
+    "pros": "Текст отзыва.",
+    "cons": "Текст отзыва.",
+    "advantages": [
+     {
+      "id": "1",
+      "name": "Своевременная оплата труда"
+     }
+    ],
+    "recommendToFriend": "NO",
+    "creationTime": "2025-04-28T08:13:21Z",
+    "status": {
+     "id": 1,
+     "name": "Опубликован"
+    },
+    "pinned": false
+   }
+  ],
+  "reviewsAreHidden": false,
+  "widgetMode": "FREE",
+  "isOpenEmployer": false,
+  "last3MonthsReviewsInfo": {
+   "reviewsCount": 21,
+   "feedbacksCount": 0,
+   "pinnedOnHhCount": 0,
+   "pinnedOnDjCount": 0,
+   "requiredReviewAndFeedbackCount": 5,
+   "openStatusQuarter": {
+    "q1": 0,
+    "q2": 0,
+    "q3": 0,
+    "q4": 0
+   }
+  },
+  "services": {
+   "tariff": "FREE",
+   "addons": [],
+   "plannedTariffs": [],
+   "hasPaidTariffs": false,
+   "hasOnlyHhProvidedTariffs": false
+  },
+  "activityStatus": "INACTIVE_EMPLOYER",
+  "activityStatusLabel": "Не работает с отзывами",
+  "isPersonalized": false,
+  "topManagerWords": [],
+  "employeeStories": [],
+  "awards": [],
+  "widgetType": 1,
+  "aiSummaryIsActive": false,
+  "staffCount": "STAFF_COUNT_1000_9999",
+  "freeResponsesAvailable": 1,
+  "tariffGroup": "G120"
+ },
+ "employerId": "10000008",
+ "employerNameMap": {
+  "10000008": "Company N"
+ },
+ "employerLogoUrl": "/logo-placeholder.png",
+ "employerIsTrusted": false,
+ "vacancyId": null,
+ "reviewsAreHidden": false,
+ "isNoticeableComplainButton": false,
+ "departmentsByEmployerId": {
+  "10000008": []
+ },
+ "department": null,
+ "interviewReviewWizardData": {
+  "areaId": 1,
+  "position": "DevOps-инженер",
+  "vacancyId": 10000006,
+  "employerName": "Company N",
+  "negotiationTopicId": 10000007
+ },
+ "reviewFieldsConstraints": {
+  "employerCons": {
+   "maximumLength": 7000,
+   "minimumLength": 80,
+   "required": true
+  },
+  "employerPros": {
+   "maximumLength": 7000,
+   "minimumLength": 80,
+   "required": true
+  }
+ },
+ "isSmallWidgetMagritte": false,
+ "isSmallWidgetOnDashboard": false,
+ "isSmallWidgetForceShrinked": false,
+ "isSmallWidgetOnEmployerPage": false,
+ "proxyComponentId": null,
+ "xhhPageName": "employer_reviews_front",
+ "siteId": "1",
+ "trl": {
+  "RU": {
+   "applicant.employerReviews.notification.title": "Рекомендуете ли вы своего работодателя?",
+   "applicant.interviewReviews.thankYou": "Отзыв оставлен, спасибо!",
+   "applicant.negotiations.action.feedback": "Оставить отзыв",
+   "employer.complain.button.already": "Я сообщил о нарушениях",
+   "employer.complain.button.title": "Пожаловаться",
+   "employer.complain.button.tooltip": "Пожаловаться на компанию",
+   "employer.complain.menuItem.button": "Пожаловаться на компанию",
+   "employerReviews.abstract.submitError": "Произошла ошибка. Попробуйте повторить операцию позднее",
+   "employerReviews.advantages.basedOn.prefix": "На основании",
+   "employerReviews.benefits.card.title": "Преимущества и льготы",
+   "employerReviews.benefits.modal.subTitle": "На основании",
+   "employerReviews.benefits.modal.subTitle.employes": "сотрудников",
+   "employerReviews.benefits.modal.subTitle.many": "отзывов",
+   "employerReviews.benefits.modal.subTitle.one": "отзыва",
+   "employerReviews.benefits.modal.title": "Преимущества и льготы в компании",
+   "employerReviews.bigWidget.activityStatus.subtitle.activeEmployer": "отвечает на отзывы",
+   "employerReviews.bigWidget.activityStatus.subtitle.openEmployer": "высоко ценит отзывы",
+   "employerReviews.bigWidget.activityStatus.title.activeEmployer": "Активный",
+   "employerReviews.bigWidget.activityStatus.title.inactiveEmployer": "Не работает с отзывами",
+   "employerReviews.bigWidget.activityStatus.title.openEmployer": "Открытый",
+   "employerReviews.bigWidget.allReviews.short": "{0} на Dream Job",
+   "employerReviews.bigWidget.allReviews.without.count": "Все отзывы на Dream Job",
+   "employerReviews.bigWidget.award.description.careerGrowth": "В компании есть возможности для карьерного и профессионального роста сотрудников",
+   "employerReviews.bigWidget.award.description.caringForEmployees": "Работодатель поддерживает достойные условия труда и отдыха для сотрудников",
+   "employerReviews.bigWidget.award.description.corporateCulture": "Сотрудники отмечают профессионализм руководства и хорошую атмосферу в коллективе",
+   "employerReviews.bigWidget.award.description.feedbackLeader": "Работодатель поддерживает открытый диалог с сотрудниками, оперативно отвечает на каждый отзыв",
+   "employerReviews.bigWidget.award.receivedAt": "Получена: {0}",
+   "employerReviews.bigWidget.award.stat.long": "Есть у {0}% компаний на Dream Job",
+   "employerReviews.bigWidget.award.stat.short": "У {0}% работодателей",
+   "employerReviews.bigWidget.award.title.careerGrowth": "Карьерный рост",
+   "employerReviews.bigWidget.award.title.caringForEmployees": "Забота о сотрудниках",
+   "employerReviews.bigWidget.award.title.corporateCulture": "Корпоративная культура",
+   "employerReviews.bigWidget.award.title.feedbackLeader": "Лидер обратной связи",
+   "employerReviews.bigWidget.awards.closePopup": "Закрыть",
+   "employerReviews.bigWidget.awards.description": "На основе отзывов сотрудников",
+   "employerReviews.bigWidget.awards.showAll": "Смотреть все",
+   "employerReviews.bigWidget.awards.title": "Награды работодателя",
+   "employerReviews.bigWidget.employeeStories.closePopup": "Закрыть",
+   "employerReviews.bigWidget.employeeStories.title": "Истории сотрудников",
+   "employerReviews.bigWidget.hiddenReview.dreamjobLink": "Работодатель скрыл отзывы в нашем приложении, но вы можете посмотреть их на сайте",
+   "employerReviews.bigWidget.hiddenReview.dreamjobLink.title": "Отзывы пока скрыты, но их видно на сервисе {0}",
+   "employerReviews.bigWidget.hiddenReview.noReviews": "Здесь пока нет отзывов, но ваш может стать первым",
+   "employerReviews.bigWidget.hiddenReview.noReviews.subtitle": "Поможете тем, кто сейчас выбирает место работы",
+   "employerReviews.bigWidget.hiddenReview.noReviews.title": "Пока нет отзывов — оставьте первый, если работали здесь",
+   "employerReviews.bigWidget.leaveReviewAction": "Оставить отзыв",
+   "employerReviews.bigWidget.leaveReviewComment": "Ваши отзывы помогают людям принимать взвешенные карьерные решения",
+   "employerReviews.bigWidget.onPreviewSubtitle": "Подобрали {0} по вашей профессии",
+   "employerReviews.bigWidget.onPreviewSubtitle.reviews.many": "отзывов",
+   "employerReviews.bigWidget.onPreviewSubtitle.reviews.one": "отзыв",
+   "employerReviews.bigWidget.onPreviewSubtitle.reviews.some": "отзыва",
+   "employerReviews.bigWidget.ratingComment": "Оценка Dream Job",
+   "employerReviews.bigWidget.recommendationAddon": "рекомендует",
+   "employerReviews.bigWidget.recommendationComment": "Рекомендуют работодателя",
+   "employerReviews.bigWidget.recommendationCommentShort": "Рекомендуют",
+   "employerReviews.bigWidget.reviewsSubtitle": "Подобрали отзывы по вашей профессии",
+   "employerReviews.bigWidget.reviewsTitle": "Что говорят сотрудники",
+   "employerReviews.bigWidget.trialVersionInfo.days.many": "дней",
+   "employerReviews.bigWidget.trialVersionInfo.days.one": "день",
+   "employerReviews.bigWidget.trialVersionInfo.days.some": "дня",
+   "employerReviews.bigWidget.vacancyPreviewBanner.content": "Узнайте, как улучшить впечатление, в личном кабинете Dream Job",
+   "employerReviews.bigWidget.vacancyPreviewBanner.title": "Кроме вакансии, соискатели видят ваш рейтинг и отзывы — это влияет на отклики",
+   "employerReviews.bigWidget.verifyPhone": "Подтвердить номер",
+   "employerReviews.cantReview.alreadyReviewed": "Можно оставить только один отзыв. После модерации он появится на сайте Dreamjob.ru и будет доступен другим соискателям",
+   "employerReviews.cantReview.alreadyReviewedInterview": "Вы уже оставили отзыв. После модерации он появится на сайте Dreamjob.ru и будет доступен другим соискателям.",
+   "employerReviews.cantReview.loginAsApplicant": "Войдите как соискатель, чтобы оставить отзыв",
+   "employerReviews.cantReview.verifyPhone": "Чтобы оставить отзыв о работодателе подтвердите ваш аккаунт с помощью номера телефона",
+   "employerReviews.complainWizard.callPolice.action": "Читать статью",
+   "employerReviews.complainWizard.callPolice.description": "При нарушении трудовых прав вы можете обратиться в контролирующие или надзорные органы. Мы подготовили для вас статью на эту тему",
+   "employerReviews.complainWizard.callPolice.title": "Обратитесь в контролирующие органы",
+   "employerReviews.complainWizard.complete.text": "Жалоба отправлена",
+   "employerReviews.complainWizard.error.text": "Ошибка отправки",
+   "employerReviews.complainWizard.finish.action": "Закрыть",
+   "employerReviews.complainWizard.finish.description": "Теперь мы знаем, что с компанией что-то не так, и уже работаем над этим",
+   "employerReviews.complainWizard.finish.description.vacancy": "Теперь мы знаем, что с вакансией что-то не так, и уже работаем над этим",
+   "employerReviews.complainWizard.finish.title": "Спасибо за помощь",
+   "employerReviews.complainWizard.reason.title": "Причина жалобы",
+   "employerReviews.complainWizard.reason.titleXS": "Укажите причину, по которой вы хотите удалить отзыв",
+   "employerReviews.complainWizard.text.next.label": "Отправить ответ",
+   "employerReviews.complainWizard.text.placeholder": "Расскажите о своей ситуации",
+   "employerReviews.complainWizard.text.selectedReason": "Вы выбрали причину:",
+   "employerReviews.deleteReviewModal.actions.cancel": "Отменить",
+   "employerReviews.deleteReviewModal.actions.delete": "Удалить",
+   "employerReviews.deleteReviewModal.other.placeholder": "Например: написал отзыв на эмоциях…",
+   "employerReviews.deleteReviewModal.other.title": "Причина удаления",
+   "employerReviews.deleteReviewModal.reason.byMistake": "Отзыв был оставлен по ошибке",
+   "employerReviews.deleteReviewModal.reason.changedOpinion": "Поменялось мнение о работодателе",
+   "employerReviews.deleteReviewModal.reason.employerRequested": "Работодатель попросил удалить отзыв",
+   "employerReviews.deleteReviewModal.reason.noLongerRelevant": "Отзыв потерял актуальность",
+   "employerReviews.deleteReviewModal.reason.other": "Другое",
+   "employerReviews.deleteReviewModal.title": "Укажите причину, по которой вы хотите удалить отзыв",
+   "employerReviews.editReviewModal.actions.cancel": "Отменить",
+   "employerReviews.editReviewModal.actions.delete": "Удалить",
+   "employerReviews.editReviewModal.actions.save": "Опубликовать",
+   "employerReviews.editReviewModal.description.title": "Пожалуйста, исправьте замечания и опубликуйте отзыв повторно",
+   "employerReviews.editReviewModal.hint": "Напишите нам, если вы считаете, что ваш отзыв не нарушает ни одно из перечисленных правил или хотите задать вопрос касательно процесса модерации",
+   "employerReviews.editReviewModal.hint.close": "Закрыть",
+   "employerReviews.editReviewModal.hint.show": "Подробнее",
+   "employerReviews.editReviewModal.title": "Редактирование отзыва",
+   "employerReviews.employerReviewsMine.rejected.warning": "Пожалуйста, поправьте отзыв и опубликуйте снова",
+   "employerReviews.freeReviewAnswerBannerButton.button": "Перейти к отзывам",
+   "employerReviews.freeWidget.employerDontWork": "Работодатель пока не работает с отзывами сотрудников на hh.ru. Отображается последний отзыв.",
+   "employerReviews.freeWidget.employerDontWork.action.alreadyAnswered": "Вы уже ответили",
+   "employerReviews.freeWidget.employerDontWork.action.showMore": "Показывайте больше отзывов",
+   "employerReviews.freeWidget.employerDontWork.description": "Отображается последний отзыв",
+   "employerReviews.freeWidget.employerDontWork.title": "Работодатель пока не работает с отзывами сотрудников на hh.ru",
+   "employerReviews.freeWidget.showMoreWidget.error": "Что-то пошло не так",
+   "employerReviews.freeWidget.showMoreWidget.letMeKnow": "Дайте знать об этом — попросим работодателя открыть их",
+   "employerReviews.freeWidget.showMoreWidget.thanks": "Спасибо! Попросим работодателя открыть отзывы",
+   "employerReviews.freeWidget.showMoreWidget.wantSeeMoreWidgets": "Хотите видеть здесь больше отзывов?",
+   "employerReviews.freeWidget.showMoreWidget.yesShowMore": "Да, показывайте больше",
+   "employerReviews.freeWidget.showMoreWidget.youAnswered": "Вы ответили, что хотите видеть больше",
+   "employerReviews.freeWidgetModal.close": "Закрыть",
+   "employerReviews.freeWidgetModal.employerDontWork": "Работодатель пока не работает с отзывами сотрудников на hh.ru. Отображается последний отзыв.",
+   "employerReviews.freeWidgetModal.onlyLast": "На hh.ru видно только один отзыв. Остальные — на {0}",
+   "employerReviews.freeWidgetModal.thanks": "Спасибо! Попросим работодателя открыть отзывы",
+   "employerReviews.freeWidgetModal.wantMore": "Если хотите видеть больше отзывов на hh.ru, дайте знать об этом — попросим работодателя открыть их",
+   "employerReviews.freeWidgetModal.yesShowMore": "Показывайте больше отзывов",
+   "employerReviews.freeWidgetModal.youAnswered": "Вы ответили, что хотите видеть больше",
+   "employerReviews.guardAlert.action.cancel": "Отменить",
+   "employerReviews.guardAlert.notApplicant.action.confirm": "Войти",
+   "employerReviews.guardAlert.notApplicant.title": "Чтобы оставить отзыв, войдите как соискатель",
+   "employerReviews.guardAlert.verifyPhone.action.confirm": "Подтвердить",
+   "employerReviews.guardAlert.verifyPhone.title": "Чтобы оставить отзыв, подтвердите ваш номер телефона",
+   "employerReviews.index.openEmployer.activated.checkButton": "Посмотреть",
+   "employerReviews.index.openEmployer.activated.title.withNoBreak": "Вы получили статус «Открытый работодатель»",
+   "employerReviews.index.openEmployer.canGetStatus": "Вы можете получить статус «Открытый работодатель»",
+   "employerReviews.index.openEmployer.canGetStatus.withNoBreak": "Вы можете получить статус «Открытый работодатель»",
+   "employerReviews.index.openEmployer.close": "Закрыть",
+   "employerReviews.index.openEmployer.enableReviews.button": "Подключить",
+   "employerReviews.index.openEmployer.enableReviews.text": "Подключите отзывы, чтобы сделать вашу компанию привлекательнее",
+   "employerReviews.index.openEmployer.learnMore": "Узнать больше",
+   "employerReviews.index.openEmployer.submitApplication.button": "Подключить",
+   "employerReviews.index.openEmployer.submitApplication.text": "Подключите доступ ко всем функциям отзывов",
+   "employerReviews.index.openEmployer.trial.button": "Подключить постоянный",
+   "employerReviews.index.openEmployer.withoutReviews.button": "Как получить отзывы?",
+   "employerReviews.index.openEmployer.withoutReviews.text": "Пока никто не написал о работе у вас",
+   "employerReviews.interviewWizard.about.gotOffer": "Предложили ли вам работу после собеседования?",
+   "employerReviews.interviewWizard.about.gotOffer.error": "Выберите ответ",
+   "employerReviews.interviewWizard.about.gotOffer.no": "Нет, не предлагали",
+   "employerReviews.interviewWizard.about.gotOffer.yes": "Да, есть приглашение",
+   "employerReviews.interviewWizard.components.title": "Что включал в себя процесс отбора в компанию?",
+   "employerReviews.interviewWizard.finish.description": "Информацию о том, что было на собеседовании, увидит только работодатель",
+   "employerReviews.interviewWizard.finish.title": "Спасибо за отзыв!",
+   "employerReviews.interviewWizard.general.error": "Выберите ответ",
+   "employerReviews.interviewWizard.nonMatchedJobConditions.title": "Что не соответствовало описанию вакансии?",
+   "employerReviews.interviewWizard.questions.complexity": "Как вы оцениваете уровень сложности собеседования?",
+   "employerReviews.interviewWizard.questions.duration": "Сколько недель длился процесс отбора c момента отклика на вакансию?",
+   "employerReviews.interviewWizard.questions.interviewHappened.inProcess": "Еще прохожу собеседование",
+   "employerReviews.interviewWizard.questions.interviewHappened.no": "Не общались",
+   "employerReviews.interviewWizard.questions.interviewHappened.title": "Вы общались с работодателем?",
+   "employerReviews.interviewWizard.questions.interviewHappened.yes": "Да, было собеседование",
+   "employerReviews.interviewWizard.questions.isMatch": "Условия работы соответствуют описанию вакансии?",
+   "employerReviews.interviewWizard.questions.isMatch.no": "Не соответствуют",
+   "employerReviews.interviewWizard.questions.isMatch.yes": "Соответствуют",
+   "employerReviews.interviewWizard.questions.locations": "Где проходило собеседование?",
+   "employerReviews.interviewWizard.questions.locations.hint": "Можно выбрать несколько вариантов",
+   "employerReviews.interviewWizard.questions.stagesCount": "Сколько этапов собеседования на должность?",
+   "employerReviews.interviewWizard.questions.title": "Ответьте на вопросы",
+   "employerReviews.interviewWizard.rate.feedbackSpeed": "Скорость обратной связи от работодателя",
+   "employerReviews.interviewWizard.rate.hrCompetition": "Профессионализм HR / представителя компании",
+   "employerReviews.interviewWizard.rate.perceiving": "Атмосфера на собеседовании",
+   "employerReviews.interviewWizard.review.impression": "Поделитесь впечатлением от процесса",
+   "employerReviews.interviewWizard.review.impression.hint": "Понравилось ли вам в целом, как проходили этапы отбора в компанию?",
+   "employerReviews.interviewWizard.review.questions": "О чём вас спрашивали?",
+   "employerReviews.interviewWizard.review.questions.hint": "Помогите соискателям - расскажите, какие вопросы задавали на собеседовании",
+   "employerReviews.interviewWizard.review.title": "Что было на собеседовании?",
+   "employerReviews.loginCard.action": "Войти",
+   "employerReviews.loginCard.description": "Войдите, чтобы увидеть все отзывы",
+   "employerReviews.main.trialExtension.description": "Осталось {0} до конца пробного периода",
+   "employerReviews.main.trialExtension.description.days.many": "дней",
+   "employerReviews.main.trialExtension.description.days.one": "день",
+   "employerReviews.main.trialExtension.description.days.some": "дня",
+   "employerReviews.price.advantages.banner.text": "Управляйте репутацией и ускоряйте найм",
+   "employerReviews.price.advantages.banner.title": "Работайте с отзывами на Dream Job",
+   "employerReviews.price.advantages.conversionToResponse.text": " к конверсиям в отклики",
+   "employerReviews.price.advantages.linkText": "Подробнее",
+   "employerReviews.price.advantages.stuffTurnover.text": " текучести персонала",
+   "employerReviews.price.advantages.vacancyClosingRate.text": " к скорости закрытия вакансии",
+   "employerReviews.price.premiumWidgetBanner.button": "Оставить заявку",
+   "employerReviews.price.premiumWidgetBanner.link": "Самая важная информация",
+   "employerReviews.price.premiumWidgetBanner.premiumConnected": "Активен",
+   "employerReviews.price.premiumWidgetBanner.sectionTitle": "Дополнительно",
+   "employerReviews.price.premiumWidgetBanner.text": " на странице компании для соискателей. В виджете будут показываться награды, отзывы и истории сотрудников",
+   "employerReviews.price.premiumWidgetBanner.title": "Премиум-виджет",
+   "employerReviews.price.tariffs.bullet.analytics12Reports": "12 отчётов конкурентного анализа",
+   "employerReviews.price.tariffs.bullet.analytics4Reports": "4 отчёта конкурентного анализа",
+   "employerReviews.price.tariffs.bullet.analytics8Reports": "8 отчётов конкурентного анализа",
+   "employerReviews.price.tariffs.bullet.analyticsReportsTooltip": "Сравнивайте свои показатели с другими компаниями и индустрией",
+   "employerReviews.price.tariffs.bullet.awardOpenEmployer": "Награды и статус «Открытый работодатель»",
+   "employerReviews.price.tariffs.bullet.badgeDreamJob": "Бейдж Dream Job на вашем сайте",
+   "employerReviews.price.tariffs.bullet.brandPageDreamJob": "Брендирование страницы на Dream Job",
+   "employerReviews.price.tariffs.bullet.brandedReplies": "Брендированные ответы",
+   "employerReviews.price.tariffs.bullet.corporateBlog": "Корпоративный блог",
+   "employerReviews.price.tariffs.bullet.corporateBlogTooltip": "Напишите статью, добавьте фото и опубликуйте на Dream Job",
+   "employerReviews.price.tariffs.bullet.fullReviewManagement": "Ведение отзывов под ключ",
+   "employerReviews.price.tariffs.bullet.pin1ReviewHh": "Закрепление 1 отзыва на hh.ru",
+   "employerReviews.price.tariffs.bullet.pin3Hh1DreamJob": "Закрепление 3 отзывов на hh.ru и 1 на Dream Job",
+   "employerReviews.price.tariffs.bullet.replyReviews": "Ответы на отзывы",
+   "employerReviews.price.tariffs.bullet.subsidiaryReviews": "Оценка и отзывы для отдельных подразделений",
+   "employerReviews.price.tariffs.bullet.widgetExtended": "Расширенный виджет",
+   "employerReviews.price.tariffs.bullet.widgetPremium": "Премиум-виджет",
+   "employerReviews.price.tariffs.optimal.subtitle": "Поддерживайте репутацию и расширяйте команду",
+   "employerReviews.price.tariffs.optimal.title": "Оптимум",
+   "employerReviews.price.tariffs.premium.subtitle": "Управляйте HR-брендом и работайте с лучшими",
+   "employerReviews.price.tariffs.premium.title": "Премиум",
+   "employerReviews.price.tariffs.sectionTitle": "Тарифы",
+   "employerReviews.price.tariffs.showMoreLink.showMore": "И ещё",
+   "employerReviews.price.tariffs.standard.subtitle": "Увеличивайте узнаваемость HR‑бренда",
+   "employerReviews.price.tariffs.standard.title": "Стандарт",
+   "employerReviews.price.tariffs.tariffButton.activeTill": "Активен до",
+   "employerReviews.price.tariffs.tariffButton.needConsultation": "Оставить заявку",
+   "employerReviews.price.tariffs.tariffHeader.recommended": "Рекомендуем",
+   "employerReviews.price.tariffsTable.cell.pin1Hh": "1 на hh.ru",
+   "employerReviews.price.tariffsTable.cell.pin3Hh1DreamJob": "3 на hh.ru, 1 на Dream Job",
+   "employerReviews.price.tariffsTable.cell.widgetExtended": "Расширенный",
+   "employerReviews.price.tariffsTable.cell.widgetPremium": "Премиум",
+   "employerReviews.price.tariffsTable.header.optimal": "Оптимум",
+   "employerReviews.price.tariffsTable.header.premium": "Премиум",
+   "employerReviews.price.tariffsTable.header.standard": "Стандарт",
+   "employerReviews.price.tariffsTable.label.analytics": "Аналитика отзывов",
+   "employerReviews.price.tariffsTable.label.banner": "Загрузка баннера",
+   "employerReviews.price.tariffsTable.label.brandedReplies": "Брендирован­ные ответы",
+   "employerReviews.price.tariffsTable.label.companyAwards": "Награды компании",
+   "employerReviews.price.tariffsTable.label.corporateBlog": "Корпоративный блог",
+   "employerReviews.price.tariffsTable.label.descriptionSocials": "Описание и соцсети",
+   "employerReviews.price.tariffsTable.label.dreamJobBadge": "Бейдж Dream Job на вашем сайте",
+   "employerReviews.price.tariffsTable.label.dreamJobTurnkey": "Пакет «Dream Job под ключ»",
+   "employerReviews.price.tariffsTable.label.dreamJobTurnkey.tooltip": "Ответы на все новые и уже существующие отзывы и помощь в сборе отзывов силами команды Dream Job",
+   "employerReviews.price.tariffsTable.label.employeeStories": "Истории сотрудников",
+   "employerReviews.price.tariffsTable.label.inFocus": "В центре внимания",
+   "employerReviews.price.tariffsTable.label.inFocus.tooltip": "Скрывает упоминания других работодателей на вашей странице",
+   "employerReviews.price.tariffsTable.label.openEmployer": "Открытый работодатель",
+   "employerReviews.price.tariffsTable.label.photosVideos": "Загрузка фото и видео",
+   "employerReviews.price.tariffsTable.label.pinReviews": "Закрепление отзывов",
+   "employerReviews.price.tariffsTable.label.replyReviews": "Ответы на отзывы",
+   "employerReviews.price.tariffsTable.label.topManager": "Слово топ-менеджера",
+   "employerReviews.price.tariffsTable.label.topManager.tooltip": "Блок на странице компании на Dream Job, который раскроет стиль управления командой и важные детали о руководителе",
+   "employerReviews.price.tariffsTable.label.widget": "Виджет на hh.ru",
+   "employerReviews.price.tariffsTable.section.additional": "Дополнительные опции",
+   "employerReviews.price.tariffsTable.section.awards": "Награды и статусы",
+   "employerReviews.price.tariffsTable.section.branding": "Брендирование",
+   "employerReviews.price.tariffsTable.section.description": "Описание",
+   "employerReviews.price.tariffsTableComparison.sectionTitle": "Сравнение тарифов",
+   "employerReviews.ratingSummary.fine": "отлично",
+   "employerReviews.ratingSummary.good": "хорошо",
+   "employerReviews.ratingSummary.satisfactorily": "удовлетворительно",
+   "employerReviews.ratingSummary.unsatisfactorily": "неудовлетворительно",
+   "employerReviews.ratingSummary.veryGood": "очень хорошо",
+   "employerReviews.review.deleteReview": "Удалить отзыв",
+   "employerReviews.review.noTitle": "Отзыв сотрудника",
+   "employerReviews.reviewModal.ratings.career": "Возможности роста",
+   "employerReviews.reviewModal.ratings.management": "Руководство",
+   "employerReviews.reviewModal.ratings.restRecovery": "Условия для отдыха",
+   "employerReviews.reviewModal.ratings.salary": "Уровень дохода",
+   "employerReviews.reviewModal.ratings.team": "Коллектив",
+   "employerReviews.reviewModal.ratings.workPlace": "Условия труда",
+   "employerReviews.reviewModal.reviewBlock.advantages": "Льготы и преимущества",
+   "employerReviews.reviewModal.reviewBlock.cons": "Что можно улучшить",
+   "employerReviews.reviewModal.reviewBlock.pros": "Что нравится",
+   "employerReviews.reviewModal.reviewBlock.rating": "Оценка соискателя",
+   "employerReviews.reviewModal.section.cons": "Что можно было бы улучшить",
+   "employerReviews.reviewModal.section.feedback": "Ответ работодателя",
+   "employerReviews.reviewModal.section.pros": "Что вам нравится в работодателе",
+   "employerReviews.reviewModal.target.currentEmployer": "Работаю в компании",
+   "employerReviews.reviewModal.target.interview": "Был на собеседовании",
+   "employerReviews.reviewModal.target.previousEmployer": "Работал в компании",
+   "employerReviews.reviewModal.title.benifits": "Преимущества и льготы из отзывов сотрудников",
+   "employerReviews.reviewModal.workInCompany": "Продолжительность работы {0}",
+   "employerReviews.reviewModal.workedInCompany": "Время работы: {0}",
+   "employerReviews.reviewSelectorModal.aboutCompany": "О работе в компании",
+   "employerReviews.reviewSelectorModal.aboutInterview": "О собеседовании",
+   "employerReviews.reviewSelectorModal.allReviewsIsAnon": "Все отзывы абсолютно анонимны",
+   "employerReviews.reviewSelectorModal.anonymousReview.action.complain.active": "Пожаловаться",
+   "employerReviews.reviewSelectorModal.anonymousReview.action.complain.exists": "Оставили жалобу",
+   "employerReviews.reviewSelectorModal.anonymousReview.action.interview.active": "О собеседовании",
+   "employerReviews.reviewSelectorModal.anonymousReview.action.interview.exists": "Вы оставили о собеседовании",
+   "employerReviews.reviewSelectorModal.anonymousReview.action.review.active": "О работодателе",
+   "employerReviews.reviewSelectorModal.anonymousReview.action.review.exists": "Вы оставили о работодателе",
+   "employerReviews.reviewSelectorModal.anonymousReview.description": "Никто не увидит, что его оставили вы",
+   "employerReviews.reviewSelectorModal.anonymousReview.title": "Анонимный отзыв",
+   "employerReviews.reviewSelectorModal.complain.company": "Пожаловаться на компанию",
+   "employerReviews.reviewSelectorModal.complain.disabled": "Вы уже оставили жалобу",
+   "employerReviews.reviewSelectorModal.complain.vacancy": "Пожаловаться на вакансию",
+   "employerReviews.reviewSelectorModal.dontSendPersonalData": "Мы не передаем персональную информацию третьим лицами.",
+   "employerReviews.reviewSelectorModal.leaveAnonReview": "Оставить анонимный отзыв",
+   "employerReviews.reviews.modal.didNotWorkHere.action.myEmployer": "Мой, оценить ",
+   "employerReviews.reviews.modal.didNotWorkHere.action.notMyEmployer": "Не мой работодатель ",
+   "employerReviews.reviews.modal.didNotWorkHere.title": "{0} — ваш работодатель?",
+   "employerReviews.reviewsCount.genitive.many": "отзывов",
+   "employerReviews.reviewsCount.genitive.one": "отзыва",
+   "employerReviews.reviewsCount.genitive.some": "отзывов",
+   "employerReviews.reviewsCount.magritte.noReviews": "Нет отзывов",
+   "employerReviews.reviewsCount.many": "отзывов",
+   "employerReviews.reviewsCount.noReviews": "Нет отзывов",
+   "employerReviews.reviewsCount.one": "отзыв",
+   "employerReviews.reviewsCount.some": "отзыва",
+   "employerReviews.reviewsCount.tooltip.goToReviews": "Перейти к отзывам",
+   "employerReviews.settings.advantages.id1": "Своевременная оплата",
+   "employerReviews.settings.advantages.id11": "Обучение и развитие",
+   "employerReviews.settings.advantages.id15": "Корпоративы",
+   "employerReviews.settings.advantages.id2": "Удобное расположение",
+   "employerReviews.settings.advantages.id4": "Кухня, место для обеда",
+   "employerReviews.settings.advantages.id9": "Оплата транспорта",
+   "employerReviews.settings.advantages.modal.subtitle": "На основании {reviewsCount} сотрудников",
+   "employerReviews.settings.advantages.modal.subtitle.reviews.many": "отзывов",
+   "employerReviews.settings.advantages.modal.subtitle.reviews.one": "отзыва",
+   "employerReviews.settings.advantages.modal.subtitle.reviews.some": "отзывов",
+   "employerReviews.settings.advantages.modal.title": "Преимущества и льготы из отзывов сотрудников",
+   "employerReviews.settings.advantages.showAllLink": "Посмотреть все",
+   "employerReviews.settings.advantages.title": "Сотрудники часто отмечают",
+   "employerReviews.settings.analytics.categoryLeaders.activityStatus.title.activeEmployer": "Активный",
+   "employerReviews.settings.analytics.categoryLeaders.activityStatus.title.inactiveEmployer": "Не работает с отзывами",
+   "employerReviews.settings.analytics.categoryLeaders.activityStatus.title.openEmployer": "Открытый",
+   "employerReviews.settings.analytics.categoryLeaders.categoryLeaders": "Лидеры отрасли",
+   "employerReviews.settings.analytics.categoryLeaders.close": "Закрыть",
+   "employerReviews.settings.analytics.categoryLeaders.compareButton": "Сравнить с лидерами",
+   "employerReviews.settings.analytics.categoryLeaders.extendedAnalysisButton": "Расширенный конкурентный анализ",
+   "employerReviews.settings.analytics.categoryLeaders.field.awards": "Награды",
+   "employerReviews.settings.analytics.categoryLeaders.field.employer": "Работодатель",
+   "employerReviews.settings.analytics.categoryLeaders.field.feedbacks": "Ответы",
+   "employerReviews.settings.analytics.categoryLeaders.field.rating": "Оценка",
+   "employerReviews.settings.analytics.categoryLeaders.field.reviews": "Отзывы",
+   "employerReviews.settings.analytics.categoryLeaders.field.staffCount": "Численность",
+   "employerReviews.settings.analytics.categoryLeaders.field.status": "Статус",
+   "employerReviews.settings.analytics.categoryLeaders.field.vacancies": "Вакансии",
+   "employerReviews.settings.analytics.categoryLeaders.sheetTitle": "Сравнение с лидерами",
+   "employerReviews.settings.analytics.categoryLeaders.staffCount.STAFF_COUNT_0": "—",
+   "employerReviews.settings.analytics.categoryLeaders.staffCount.STAFF_COUNT_1000_9999": "1 000 — 9 999",
+   "employerReviews.settings.analytics.categoryLeaders.staffCount.STAFF_COUNT_100_499": "100 — 499",
+   "employerReviews.settings.analytics.categoryLeaders.staffCount.STAFF_COUNT_500_999": "500 — 999",
+   "employerReviews.settings.analytics.categoryLeaders.staffCount.STAFF_COUNT_LESS_100": "Меньше 100",
+   "employerReviews.settings.analytics.categoryLeaders.staffCount.STAFF_COUNT_MORE_10000": "Больше 10 000",
+   "employerReviews.settings.analytics.exEmployees.collect": "Собрать отзывы",
+   "employerReviews.settings.analytics.exEmployees.last24Months": "За 24 месяца",
+   "employerReviews.settings.analytics.exEmployees.link": "Посмотреть",
+   "employerReviews.settings.analytics.exEmployees.noReviewsText": "Пока нет отзывов",
+   "employerReviews.settings.analytics.exEmployees.reviews.many": "отзывов",
+   "employerReviews.settings.analytics.exEmployees.reviews.one": "отзыв",
+   "employerReviews.settings.analytics.exEmployees.reviews.some": "отзыва",
+   "employerReviews.settings.analytics.exEmployees.reviews.zero": "0 отзывов",
+   "employerReviews.settings.analytics.exEmployees.title": "Оценка бывших сотрудников",
+   "employerReviews.settings.analytics.feedbackCompare.answers.many": "ответов",
+   "employerReviews.settings.analytics.feedbackCompare.answers.one": "ответов",
+   "employerReviews.settings.analytics.feedbackCompare.answers.some": "ответов",
+   "employerReviews.settings.analytics.feedbackCompare.answers.zero": "0% ответов",
+   "employerReviews.settings.analytics.feedbackCompare.keyword.EQUAL": "так же",
+   "employerReviews.settings.analytics.feedbackCompare.keyword.HIGHER": "чаще",
+   "employerReviews.settings.analytics.feedbackCompare.keyword.LOWER": "реже",
+   "employerReviews.settings.analytics.feedbackCompare.keyword.SIGNIFICANTLY_LOWER": "сильно реже",
+   "employerReviews.settings.analytics.feedbackCompare.keyword.SLIGHTLY_LOWER": "чуть реже",
+   "employerReviews.settings.analytics.feedbackCompare.text.EQUAL": "Вы отвечаете {keyword}, как лидеры отрасли",
+   "employerReviews.settings.analytics.feedbackCompare.text.EQUAL_BREAKPOINT_L": "Вы отвечаете {keyword}, как лидеры вашей отрасли",
+   "employerReviews.settings.analytics.feedbackCompare.text.HIGHER": "Вы отвечаете {keyword}, чем лидеры отрасли",
+   "employerReviews.settings.analytics.feedbackCompare.text.HIGHER_BREAKPOINT_L": "Вы отвечаете {keyword}, чем лидеры вашей отрасли",
+   "employerReviews.settings.analytics.feedbackCompare.text.LOWER": "Вы отвечаете {keyword}, чем лидеры вашей отрасли",
+   "employerReviews.settings.analytics.feedbackCompare.text.SIGNIFICANTLY_LOWER": "Вы отвечаете {keyword} лидеров отрасли",
+   "employerReviews.settings.analytics.feedbackCompare.text.SLIGHTLY_LOWER": "Вы отвечаете {keyword} лидеров отрасли",
+   "employerReviews.settings.analytics.industryCompare.title": "Сравнение по отрасли",
+   "employerReviews.settings.analytics.infoIcon.close": "Закрыть",
+   "employerReviews.settings.analytics.infoIcon.content": "На основе данных Dream Job",
+   "employerReviews.settings.analytics.perMonthAnalytics.title": "Оценка в динамике",
+   "employerReviews.settings.analytics.ratingCompare.keyword.EQUAL": "такая же",
+   "employerReviews.settings.analytics.ratingCompare.keyword.HIGHER": "выше",
+   "employerReviews.settings.analytics.ratingCompare.keyword.LOWER": "ниже",
+   "employerReviews.settings.analytics.ratingCompare.keyword.SIGNIFICANTLY_LOWER": "сильно ниже",
+   "employerReviews.settings.analytics.ratingCompare.keyword.SLIGHTLY_LOWER": "чуть ниже",
+   "employerReviews.settings.analytics.ratingCompare.text.EQUAL": "Оценка {keyword}, как у лидеров отрасли",
+   "employerReviews.settings.analytics.ratingCompare.text.HIGHER": "Оценка {keyword}, чем у лидеров отрасли",
+   "employerReviews.settings.analytics.ratingCompare.text.LOWER": "Оценка {keyword}, чем у лидеров отрасли",
+   "employerReviews.settings.analytics.ratingCompare.text.SIGNIFICANTLY_LOWER": "Оценка {keyword}, чем у лидеров отрасли",
+   "employerReviews.settings.analytics.ratingCompare.text.SLIGHTLY_LOWER": "Оценка {keyword}, чем у лидеров отрасли",
+   "employerReviews.settings.analytics.ratings.title": "Оценки по категориям",
+   "employerReviews.settings.analytics.reviewsCompare.keyword.EQUAL": "Столько же",
+   "employerReviews.settings.analytics.reviewsCompare.keyword.HIGHER": "Больше",
+   "employerReviews.settings.analytics.reviewsCompare.keyword.LOWER": "Меньше",
+   "employerReviews.settings.analytics.reviewsCompare.keyword.SIGNIFICANTLY_LOWER": "Сильно меньше",
+   "employerReviews.settings.analytics.reviewsCompare.keyword.SLIGHTLY_LOWER": "Чуть меньше",
+   "employerReviews.settings.analytics.reviewsCompare.reviews.many": "отзывов",
+   "employerReviews.settings.analytics.reviewsCompare.reviews.one": "отзыв",
+   "employerReviews.settings.analytics.reviewsCompare.reviews.some": "отзыва",
+   "employerReviews.settings.analytics.reviewsCompare.reviews.zero": "0 отзывов",
+   "employerReviews.settings.analytics.reviewsCompare.text.EQUAL": "{keyword} отзывов, как у лидеров отрасли",
+   "employerReviews.settings.analytics.reviewsCompare.text.HIGHER": "{keyword} отзывов, чем у лидеров отрасли",
+   "employerReviews.settings.analytics.reviewsCompare.text.LOWER": "{keyword} отзывов, чем у лидеров отрасли",
+   "employerReviews.settings.analytics.reviewsCompare.text.SIGNIFICANTLY_LOWER": "{keyword}, чем у лидеров отрасли",
+   "employerReviews.settings.analytics.reviewsCompare.text.SIGNIFICANTLY_LOWER_BREAKPOINT_L": "{keyword}, чем у лидеров вашей отрасли",
+   "employerReviews.settings.analytics.reviewsCompare.text.SLIGHTLY_LOWER": "{keyword} отзывов, чем у лидеров отрасли",
+   "employerReviews.settings.analytics.title": "Аналитика",
+   "employerReviews.settings.copySnackbar.text": "Ссылка для сотрудника скопирована",
+   "employerReviews.settings.dreamJobAccountBanner.contentTextRedesigned": "Работайте с отзывами в личном кабинете Dream Job",
+   "employerReviews.settings.dreamJobAccountBanner.link": "Перейти на Dream Job",
+   "employerReviews.settings.employerStatus.actions.collectMoreReviewsLabel": "Соберите ещё {0}",
+   "employerReviews.settings.employerStatus.actions.pinReviewsDjLabel": "Закрепите {0} на Dream Job",
+   "employerReviews.settings.employerStatus.actions.pinReviewsLabel": "Закрепите {0} на hh.ru",
+   "employerReviews.settings.employerStatus.actions.replyToReviewsLabel": "Ответьте на {0}",
+   "employerReviews.settings.employerStatus.actions.reviews.many": "отзывов",
+   "employerReviews.settings.employerStatus.actions.reviews.one": "отзыв",
+   "employerReviews.settings.employerStatus.actions.reviews.some": "отзыва",
+   "employerReviews.settings.employerStatus.active.activeStatusLabel": "Активная компания",
+   "employerReviews.settings.employerStatus.active.advantages": "На 25% больше откликов",
+   "employerReviews.settings.employerStatus.active.statusLabel": "Активная компания",
+   "employerReviews.settings.employerStatus.collectSize.button": "Сохранить",
+   "employerReviews.settings.employerStatus.collectSize.description": "Покажем условия для повышение статуса",
+   "employerReviews.settings.employerStatus.collectSize.failure": "Что-то пошло не так, попробуйте еще раз",
+   "employerReviews.settings.employerStatus.collectSize.label": "Укажите, сколько у вас сотрудников",
+   "employerReviews.settings.employerStatus.completeSteps": "Выполните, чтобы повысить статус",
+   "employerReviews.settings.employerStatus.days.many": "дней",
+   "employerReviews.settings.employerStatus.days.one": "день",
+   "employerReviews.settings.employerStatus.days.some": "дня",
+   "employerReviews.settings.employerStatus.howToAchieve": "Как это работает",
+   "employerReviews.settings.employerStatus.howToGet": "Как получить",
+   "employerReviews.settings.employerStatus.howToGetAwards": "Как получить награды",
+   "employerReviews.settings.employerStatus.howToGetAwardsDescription": "Выполняйте условия 4 квартала подряд — получите достижение и сертификат. Достижение увидят кандидаты на Dream Job и hh.ru, а сертификат вы можете разместить в соцсетях или в офисе",
+   "employerReviews.settings.employerStatus.howToGetDescription": "Выполните условия, которые увидите в личном кабинете — так вы получите статус на текущий и следующий кварталы",
+   "employerReviews.settings.employerStatus.howToSave": "Как сохранить",
+   "employerReviews.settings.employerStatus.howToSaveDescription": "Выполните условия для следующего квартала. Если не выполнить, статус понизится",
+   "employerReviews.settings.employerStatus.inactive.action": "Перейдите на тариф «Стандарт» или выше",
+   "employerReviews.settings.employerStatus.inactive.statusLabel": "Не работает с отзывами",
+   "employerReviews.settings.employerStatus.modalButtonClose": "Понятно",
+   "employerReviews.settings.employerStatus.modalTitle": "Статус «Открытый работодатель»",
+   "employerReviews.settings.employerStatus.open.advantages": "Статус топ‑3% компаний",
+   "employerReviews.settings.employerStatus.open.allFinihsed": "В этом квартале условия выполнены — новые появятся {0}",
+   "employerReviews.settings.employerStatus.open.openStatusLabel": "Открытый работодатель",
+   "employerReviews.settings.employerStatus.open.timeLeft.many": "Осталось",
+   "employerReviews.settings.employerStatus.open.timeLeft.one": "Остался",
+   "employerReviews.settings.employerStatus.open.timeLeft.some": "Осталось",
+   "employerReviews.settings.employerStatus.q1": "Q1",
+   "employerReviews.settings.employerStatus.q2": "Q2",
+   "employerReviews.settings.employerStatus.q3": "Q3",
+   "employerReviews.settings.employerStatus.q4": "Q4",
+   "employerReviews.settings.employerStatus.statusLabelHint": "Ваш статус, видно на hh.ru",
+   "employerReviews.settings.employerStatus.year": "{0} год",
+   "employerReviews.settings.filters.apply": "Применить",
+   "employerReviews.settings.filters.city": "Город",
+   "employerReviews.settings.filters.period.apply": "Применить",
+   "employerReviews.settings.filters.period.dateFrom.placeholder": "От",
+   "employerReviews.settings.filters.period.dateTo.placeholder": "До",
+   "employerReviews.settings.filters.period.error.format": "Некорректный формат даты",
+   "employerReviews.settings.filters.period.error.order": "Укажите дату раньше, чем окончание",
+   "employerReviews.settings.filters.period.label": "Период",
+   "employerReviews.settings.filters.period.reset": "Сбросить",
+   "employerReviews.settings.filters.period.title": "Период отзыва",
+   "employerReviews.settings.filters.pinned.dreamJob": "На Dream Job",
+   "employerReviews.settings.filters.pinned.hh": "На hh",
+   "employerReviews.settings.filters.pinned.label": "Закреплённые",
+   "employerReviews.settings.filters.positionStatus.all": "Все статусы",
+   "employerReviews.settings.filters.positionStatus.current": "Работает сейчас",
+   "employerReviews.settings.filters.positionStatus.former": "Бывший сотрудник",
+   "employerReviews.settings.filters.positionStatus.label": "Статус",
+   "employerReviews.settings.filters.profRole": "Должность",
+   "employerReviews.settings.filters.rating": "Оценка",
+   "employerReviews.settings.filters.reset": "Сбросить всё",
+   "employerReviews.settings.filters.selectPlaceholder": "Выберите из списка",
+   "employerReviews.settings.filters.title": "Фильтры",
+   "employerReviews.settings.filters.withFeedback.any": "Не важно",
+   "employerReviews.settings.filters.withFeedback.has": "С ответом",
+   "employerReviews.settings.filters.withFeedback.label": "Ответ работодателя",
+   "employerReviews.settings.filters.withFeedback.none": "Без ответа",
+   "employerReviews.settings.freeTariffReviewsBannerInfo.content.link": "расширенный виджет",
+   "employerReviews.settings.freeTariffReviewsBannerInfo.content.prefix": "Подключите ",
+   "employerReviews.settings.freeTariffReviewsBannerInfo.content.suffix": ", чтобы показать больше отзывов и информации о компании",
+   "employerReviews.settings.freeTariffReviewsBannerInfo.ctaButton": "Оставить заявку",
+   "employerReviews.settings.freeTariffReviewsBannerInfo.modal.closeButton": "Закрыть",
+   "employerReviews.settings.freeTariffReviewsBannerInfo.modal.content": "10 последних отзывов, общая оценка компании, % рекомендующих сотрудников, льготы и преимущества работодателя",
+   "employerReviews.settings.freeTariffReviewsBannerInfo.modal.ctaButton": "Оставить заявку",
+   "employerReviews.settings.freeTariffReviewsBannerInfo.modal.title": "Что отображается в расширенном виджете",
+   "employerReviews.settings.freeTariffReviewsBannerInfo.title": "Соискатели на hh видят только один отзыв",
+   "employerReviews.settings.haveReviews.collectReviewsBanner.link": "Собрать отзывы",
+   "employerReviews.settings.haveReviews.collectReviewsBanner.subtitle": "Предложите сотрудникам написать, что им нравится",
+   "employerReviews.settings.haveReviews.collectReviewsBanner.title": "Больше хороших отзывов — выше оценка",
+   "employerReviews.settings.mainInfo.percentRecommend.title": "Рекомендуют работодателя",
+   "employerReviews.settings.mainInfo.percentRecommend.value": "% сотрудников",
+   "employerReviews.settings.mainInfo.rating.collectReviews": "Собрать отзывы",
+   "employerReviews.settings.mainInfo.rating.noReviews": "Пока нет отзывов",
+   "employerReviews.settings.mainInfo.rating.title": "Оценка DreamJob",
+   "employerReviews.settings.mainInfo.tariff.custom": "Индивидуальный",
+   "employerReviews.settings.mainInfo.tariff.daysLeft": "осталось",
+   "employerReviews.settings.mainInfo.tariff.free": "Бесплатный",
+   "employerReviews.settings.mainInfo.tariff.link": "Посмотреть тарифы",
+   "employerReviews.settings.mainInfo.tariff.optimal": "Оптимум",
+   "employerReviews.settings.mainInfo.tariff.premium": "Премиум",
+   "employerReviews.settings.mainInfo.tariff.standard": "Стандарт",
+   "employerReviews.settings.mainInfo.tariff.title": "Тариф",
+   "employerReviews.settings.mainInfo.tariff.trial": "Пробный период",
+   "employerReviews.settings.mainInfo.tariff.validUntil": "до",
+   "employerReviews.settings.needConsultationSnackbar.alreadySent": "Уже отправили заявку — ждите звонок",
+   "employerReviews.settings.needConsultationSnackbar.failure": "Что-то пошло не так, попробуйте ещё раз",
+   "employerReviews.settings.needConsultationSnackbar.success": "Заявка отправлена — скоро вам позвоним",
+   "employerReviews.settings.noReviews.advice.button": "Что видят соискатели",
+   "employerReviews.settings.noReviews.advice.modal.button.desktop": "Собрать отзывы",
+   "employerReviews.settings.noReviews.advice.modal.button.mobile": "Закрыть",
+   "employerReviews.settings.noReviews.advice.modal.description": "Он есть на ваших вакансиях и на странице компании. Отзывы появятся, как только их оставят",
+   "employerReviews.settings.noReviews.advice.modal.title": "Виджет для соискателей",
+   "employerReviews.settings.noReviews.advice.title.end": "— это может снижать количество откликов",
+   "employerReviews.settings.noReviews.advice.title.noReviews": "нет отзывов",
+   "employerReviews.settings.noReviews.advice.title.start": "На ваших вакансиях пока",
+   "employerReviews.settings.noReviews.collectReviewsBanner.link": "Собрать отзывы",
+   "employerReviews.settings.noReviews.collectReviewsBanner.subtitle": "95% соискателей читают их перед откликом и выходом на работу",
+   "employerReviews.settings.noReviews.collectReviewsBanner.title": "Начните собирать отзывы",
+   "employerReviews.settings.noReviews.description": "95% соискателей читают отзывы перед откликом и выходом на работу",
+   "employerReviews.settings.noReviews.title": "Отзывов пока нет",
+   "employerReviews.settings.pagedReviews.empty.action": "Открыть фильтры",
+   "employerReviews.settings.pagedReviews.empty.description": "Попробуйте изменить фильтры",
+   "employerReviews.settings.pagedReviews.empty.title": "Ничего не нашлось",
+   "employerReviews.settings.pagedReviews.error.action": "Попробовать снова",
+   "employerReviews.settings.pagedReviews.error.description": "Попробуйте обновить страницу",
+   "employerReviews.settings.pagedReviews.error.title": "Не удалось загрузить отзывы",
+   "employerReviews.settings.questions.banner.link": "Заказать консультацию",
+   "employerReviews.settings.questions.banner.title": "Остались вопросы? Мы всегда готовы помочь",
+   "employerReviews.settings.questions.delete.content": "Да, в любое время во вкладке «Отзывы» в личном кабинете на Dream Job",
+   "employerReviews.settings.questions.delete.title": "Можно удалить или отредактировать ответ на отзыв?",
+   "employerReviews.settings.questions.help.content": "Да! Для этого напишите нам на почту user@example.com",
+   "employerReviews.settings.questions.help.title": "Вы помогаете с ответами на отзывы?",
+   "employerReviews.settings.questions.moreQuestions.content": "На почту user@example.com или оставьте заявку по кнопке «Нужна помощь»",
+   "employerReviews.settings.questions.moreQuestions.title": "Где я могу задать вопросы по работе с отзывами?",
+   "employerReviews.settings.questions.rate.content": "Попросите лояльных сотрудников оставить развёрнутые отзывы: что им нравится и что можно улучшить. Такие искренние и конструктивные отклики повышают доверие. Поток однотипных хвалебных комментариев, наоборот, может насторожить",
+   "employerReviews.settings.questions.rate.title": "Как поднять оценку компании?",
+   "employerReviews.settings.questions.respond.content": "Ответом вы показываете, что цените обратную связь и готовы улучшать условия работы. Открытость к диалогу повышает доверие — и у соискателей, и у авторов отзывов",
+   "employerReviews.settings.questions.respond.title": "Не вижу смысла отвечать на негативный отзыв. Что это даст?",
+   "employerReviews.settings.quickFilter.filters": "Фильтры",
+   "employerReviews.settings.quickFilter.pinned": "Закреплённые",
+   "employerReviews.settings.quickFilter.withoutAnswer": "Без ответа",
+   "employerReviews.settings.recommendations.redesign.ANSWER_NEGATIVE_REVIEWS.body.end": "— грамотный ответ может изменить мнение 80% соискателей к лучшему",
+   "employerReviews.settings.recommendations.redesign.ANSWER_NEGATIVE_REVIEWS.body.start": "Есть негативные отзывы без ответа",
+   "employerReviews.settings.recommendations.redesign.BUY_PREMIUM_WIDGET.body.end": "— он показывает оценку, отзывы и статус работодателя на странице компании",
+   "employerReviews.settings.recommendations.redesign.BUY_PREMIUM_WIDGET.body.start": "Подключите виджет отзывов",
+   "employerReviews.settings.recommendations.redesign.COLLECT_REVIEWS.body.end": "— соберите новые от сотрудников, чтобы соискатели читали их и выбирали вас чаще",
+   "employerReviews.settings.recommendations.redesign.COLLECT_REVIEWS.body.start": "Мало отзывов",
+   "employerReviews.settings.recommendations.redesign.FIX_NEGATIVE_REVIEWS.body.end": "— изучите частые замечания: они подскажут, что стоит улучшить в компании",
+   "employerReviews.settings.recommendations.redesign.FIX_NEGATIVE_REVIEWS.body.start": "Много негативных отзывов",
+   "employerReviews.settings.recommendations.redesign.FREE_REVIEWS_ANSWER.body.end": "— на бесплатном тарифе это доступно раз в месяц",
+   "employerReviews.settings.recommendations.redesign.FREE_REVIEWS_ANSWER.body.start": "Можно ответить на 1 отзыв",
+   "employerReviews.settings.recommendations.redesign.GIVE_FEEDBACK.body.end": "— это поднимет показатель ответов до {0}%",
+   "employerReviews.settings.recommendations.redesign.GIVE_FEEDBACK.body.start": "Ответьте на {0}",
+   "employerReviews.settings.recommendations.redesign.GIVE_FEEDBACK.body.start.many": "последних отзывов",
+   "employerReviews.settings.recommendations.redesign.GIVE_FEEDBACK.body.start.one": "последний отзыв",
+   "employerReviews.settings.recommendations.redesign.GIVE_FEEDBACK.body.start.some": "последних отзыва",
+   "employerReviews.settings.recommendations.redesign.GIVE_FEEDBACK_HIGH_REVIEW_COUNT.body.end": "— ответьте на них: без реакции доверие соискателей снижается",
+   "employerReviews.settings.recommendations.redesign.GIVE_FEEDBACK_HIGH_REVIEW_COUNT.body.start": "У вас много отзывов без ответа",
+   "employerReviews.settings.recommendations.redesign.GIVE_FEEDBACK_TO_EX_EMPLOYEES.body.end": "— без реакции доверие соискателей снижается",
+   "employerReviews.settings.recommendations.redesign.GIVE_FEEDBACK_TO_EX_EMPLOYEES.body.start": "Есть отзывы бывших сотрудников без ответа",
+   "employerReviews.settings.recommendations.redesign.INCREASE_FEEDBACK.body.end": "— ответьте на них: это поможет укрепить доверие соискателей",
+   "employerReviews.settings.recommendations.redesign.INCREASE_FEEDBACK.body.start": "Есть отзывы без ответа",
+   "employerReviews.settings.recommendations.redesign.INCREASE_FEEDBACK_PERCENT.body.end": ", чтобы догнать лидеров рынка — ответьте на {0}",
+   "employerReviews.settings.recommendations.redesign.INCREASE_FEEDBACK_PERCENT.body.end.many": "отзывов",
+   "employerReviews.settings.recommendations.redesign.INCREASE_FEEDBACK_PERCENT.body.end.one": "отзыв",
+   "employerReviews.settings.recommendations.redesign.INCREASE_FEEDBACK_PERCENT.body.end.some": "отзыва",
+   "employerReviews.settings.recommendations.redesign.INCREASE_FEEDBACK_PERCENT.body.start": "Поднимите показатель ответов до {0}%",
+   "employerReviews.settings.recommendations.redesign.INCREASE_RATING_IF_EQUAL.body.end": "— для этого соберите новые отзывы у лояльных сотрудников",
+   "employerReviews.settings.recommendations.redesign.INCREASE_RATING_IF_EQUAL.body.start": "Оценку компании можно повысить",
+   "employerReviews.settings.recommendations.redesign.INCREASE_RATING_IF_LOWER.body.end": "— чтобы её повысить, соберите новые отзывы у лояльных сотрудников",
+   "employerReviews.settings.recommendations.redesign.INCREASE_RATING_IF_LOWER.body.start": "Оценка компании ниже среднего",
+   "employerReviews.settings.recommendations.redesign.INCREASE_RATING_IN_CAREER.body.start": "В категории «Возможности роста» ваша",
+   "employerReviews.settings.recommendations.redesign.INCREASE_RATING_IN_CATEGORY.body.end": "— изучите отзывы и узнайте, что можно улучшить",
+   "employerReviews.settings.recommendations.redesign.INCREASE_RATING_IN_CATEGORY.body.start": "оценка ниже других",
+   "employerReviews.settings.recommendations.redesign.INCREASE_RATING_IN_MANAGEMENT.body.start": "В категории «Руководство» ваша",
+   "employerReviews.settings.recommendations.redesign.INCREASE_RATING_IN_REST_RECOVERY.body.start": "В категории «Условия для отдыха» ваша",
+   "employerReviews.settings.recommendations.redesign.INCREASE_RATING_IN_SALARY.body.start": "В категории «Уровень дохода» ваша",
+   "employerReviews.settings.recommendations.redesign.INCREASE_RATING_IN_TEAM.body.start": "В категории «Коллектив» ваша",
+   "employerReviews.settings.recommendations.redesign.INCREASE_RATING_IN_WORKPLACE.body.start": "В категории «Условия труда» ваша",
+   "employerReviews.settings.recommendations.redesign.OUTPACE_COMPETITORS_RATING.body.end": ", чтобы выйти в лидеры рынка. Учтите критику сотрудников и соберите отзывы",
+   "employerReviews.settings.recommendations.redesign.OUTPACE_COMPETITORS_RATING.body.start": "Повысьте оценку ещё на {0}",
+   "employerReviews.settings.recommendations.redesign.OUTPACE_COMPETITORS_RATING.body.start.many": "пунктов",
+   "employerReviews.settings.recommendations.redesign.OUTPACE_COMPETITORS_RATING.body.start.one": "пункт",
+   "employerReviews.settings.recommendations.redesign.OUTPACE_COMPETITORS_RATING.body.start.some": "пункта",
+   "employerReviews.settings.recommendations.redesign.OUTPACE_COMPETITORS_REVIEWS.body.end": ", чтобы выйти в лидеры рынка по количеству отзывов",
+   "employerReviews.settings.recommendations.redesign.OUTPACE_COMPETITORS_REVIEWS.body.start": "Соберите ещё {0}",
+   "employerReviews.settings.recommendations.redesign.OUTPACE_COMPETITORS_REVIEWS.body.start.many": "отзывов",
+   "employerReviews.settings.recommendations.redesign.OUTPACE_COMPETITORS_REVIEWS.body.start.one": "отзыв",
+   "employerReviews.settings.recommendations.redesign.OUTPACE_COMPETITORS_REVIEWS.body.start.some": "отзыва",
+   "employerReviews.settings.recommendations.redesign.PIN_REVIEWS.body.end": "на первых местах — они сформируют первое впечатление о компании",
+   "employerReviews.settings.recommendations.redesign.PIN_REVIEWS.body.start": "Закрепите 3 лучших отзыва",
+   "employerReviews.settings.recommendations.redesign.action.BUY_PREMIUM_WIDGET": "Подробнее",
+   "employerReviews.settings.recommendations.redesign.action.GO_TO_DJ_LINK_CREATION": "Создать ссылку",
+   "employerReviews.settings.recommendations.redesign.action.GO_TO_DJ_REVIEWS": "Перейти к отзывам",
+   "employerReviews.settings.recommendations.redesign.action.SCROLL_TO_NEGATIVE_REVIEWS": "Посмотреть отзывы",
+   "employerReviews.settings.requestTrial.alert.close": "Закрыть",
+   "employerReviews.settings.requestTrial.alert.description": "Теперь вам доступны платные функции Dream Job: закрепление отзывов, ответы на отзывы, расширенный виджет и другие",
+   "employerReviews.settings.requestTrial.alert.error.close": "Закрыть",
+   "employerReviews.settings.requestTrial.alert.error.description": "Не удалось активировать пробный период, попробуйте ещё раз",
+   "employerReviews.settings.requestTrial.alert.error.retry": "Повторить попытку",
+   "employerReviews.settings.requestTrial.alert.error.title": "Что‑то пошло не так",
+   "employerReviews.settings.requestTrial.alert.goToDj": "Перейти на Dream Job",
+   "employerReviews.settings.requestTrial.alert.title": "Оптимум активирован  на 14 дней",
+   "employerReviews.settings.requestTrial.failure": "Что-то пошло не так, попробуйте еще раз",
+   "employerReviews.settings.requestTrial.success": "Оптимум активирован на 14 дней",
+   "employerReviews.settings.reviewBanner.copyLink": "Ссылка для сотрудника",
+   "employerReviews.settings.reviewsFeed.card.duration.fiveToTenYears": "5-10 лет в компании",
+   "employerReviews.settings.reviewsFeed.card.duration.lessThanYear": "Меньше года в компании",
+   "employerReviews.settings.reviewsFeed.card.duration.moreThanTenYears": "Больше 10 лет в компании",
+   "employerReviews.settings.reviewsFeed.card.duration.oneToTwoYears": "1-2 года в компании",
+   "employerReviews.settings.reviewsFeed.card.duration.threeToFiveYears": "3-5 лет в компании",
+   "employerReviews.settings.reviewsFeed.card.pinnedReview": "Закреплён",
+   "employerReviews.settings.reviewsFeed.card.tags.adaptedReview": "Адаптированный",
+   "employerReviews.settings.reviewsFeed.card.tags.adaptedReviewTooltip": "В отзыве есть утверждения, которые нужно подтвердить документами. Поэтому мы не публикуем его дословно, а показываем ключевые темы. Оригинал доступен на тарифе «Премиум»",
+   "employerReviews.settings.reviewsFeed.card.tags.adaptedReviewTooltipClose": "Закрыть",
+   "employerReviews.settings.reviewsFeed.card.tags.target.currentEmployer": "Работаю сейчас",
+   "employerReviews.settings.reviewsFeed.card.tags.target.interview": "Был на собеседовании",
+   "employerReviews.settings.reviewsFeed.card.tags.target.previousEmployer": "Бывший сотрудник",
+   "employerReviews.settings.reviewsFeed.employeeFeedback.adapted.badgeLabel": "Адаптированная версия — видят все",
+   "employerReviews.settings.reviewsFeed.employeeFeedback.adapted.originalLabel": "Оригинал без цензуры — только для вас на тарифе «Премиум»",
+   "employerReviews.settings.reviewsFeed.employeeFeedback.adapted.viewOriginalButton": "Посмотреть оригинал",
+   "employerReviews.settings.reviewsFeed.employeeFeedback.advantagesTitle": "Преимущества и льготы",
+   "employerReviews.settings.reviewsFeed.employeeFeedback.consTitle": "Что можно улучшить",
+   "employerReviews.settings.reviewsFeed.employeeFeedback.prosTitle": "Что нравится",
+   "employerReviews.settings.reviewsFeed.employerFeedback.title": "Ответ компании",
+   "employerReviews.settings.reviewsFeed.emptyReviewCards.negativeReviews.description": "Если вы получите негативный отзыв, он появится тут",
+   "employerReviews.settings.reviewsFeed.emptyReviewCards.negativeReviews.title": "У вас нет негативных отзывов",
+   "employerReviews.settings.reviewsFeed.emptyReviewCards.reviewsWithoutFeedback.description": "Здесь будут появляться отзывы, которые ещё не получили ответ",
+   "employerReviews.settings.reviewsFeed.emptyReviewCards.reviewsWithoutFeedback.title": "Вы ответили на все отзывы",
+   "employerReviews.settings.reviewsFeed.emptyReviewCards.unreadTab.description": "Здесь будут появляться новые отзывы",
+   "employerReviews.settings.reviewsFeed.emptyReviewCards.unreadTab.title": "Вы посмотрели все отзывы",
+   "employerReviews.settings.reviewsFeed.expandLink.expandDown": "Свернуть",
+   "employerReviews.settings.reviewsFeed.expandLink.expandUp": "Развернуть",
+   "employerReviews.settings.reviewsFeed.expandMoreReviews": "Посмотреть ещё",
+   "employerReviews.settings.reviewsFeed.footerActions.answer": "Ответить",
+   "employerReviews.settings.reviewsFeed.footerActions.pin": "Закрепить",
+   "employerReviews.settings.reviewsFeed.paywallModal.aiAnalysis": "ИИ для анализа отзывов",
+   "employerReviews.settings.reviewsFeed.paywallModal.brandedAnswers": "Брендированные ответы на отзывы",
+   "employerReviews.settings.reviewsFeed.paywallModal.ctaButton": "Отправить заявку",
+   "employerReviews.settings.reviewsFeed.paywallModal.dreamJobPackage": "Пакет «Dream Job под ключ»",
+   "employerReviews.settings.reviewsFeed.paywallModal.dreamJobPackageTooltip": "Ответы на все новые и уже существующие отзывы и помощь в сборе отзывов силами команды Dream Job",
+   "employerReviews.settings.reviewsFeed.paywallModal.focusAttention": "В центре внимания",
+   "employerReviews.settings.reviewsFeed.paywallModal.focusAttentionTooltip": "Скрывает упоминания других работодателей на вашей странице.",
+   "employerReviews.settings.reviewsFeed.paywallModal.moreAdvantages": "И ещё 12 преимуществ",
+   "employerReviews.settings.reviewsFeed.paywallModal.title": "Чтобы посмотреть оригинал, подключите «Премиум»",
+   "employerReviews.settings.reviewsFeed.paywallModal.titleDescription": "Что ещё входит в тариф:",
+   "employerReviews.settings.reviewsFeed.paywallModal.tooltipClose": "Закрыть",
+   "employerReviews.settings.reviewsFeed.paywallModal.viewAllLink": "Посмотреть все",
+   "employerReviews.settings.reviewsFeed.paywallModal.viewAllLink.mobile": "Посмотреть",
+   "employerReviews.settings.reviewsFeed.seeAllReviews": "Посмотреть все",
+   "employerReviews.settings.reviewsFound.many": "отзывов",
+   "employerReviews.settings.reviewsFound.one": "отзыв",
+   "employerReviews.settings.reviewsFound.some": "отзыва",
+   "employerReviews.settings.reviewsSlider.singleReviewBanner.link": "Собрать отзывы",
+   "employerReviews.settings.reviewsSlider.tabs.all": "Все",
+   "employerReviews.settings.reviewsSlider.tabs.negative": "Негативные",
+   "employerReviews.settings.reviewsSlider.tabs.noReply": "Без ответа",
+   "employerReviews.settings.reviewsSlider.tabs.unread": "Новые",
+   "employerReviews.settings.reviewsSlider.title": "Отзывы",
+   "employerReviews.settings.showMoreReviewsCard.applicant.many": "соискателей",
+   "employerReviews.settings.showMoreReviewsCard.applicant.one": "соискатель",
+   "employerReviews.settings.showMoreReviewsCard.applicant.some": "соискателя",
+   "employerReviews.settings.showMoreReviewsCard.link": "Собрать отзывы",
+   "employerReviews.settings.showMoreReviewsCard.title": "видеть больше отзывов",
+   "employerReviews.settings.showMoreReviewsCard.want.many": "Хотят",
+   "employerReviews.settings.showMoreReviewsCard.want.one": "Хочет",
+   "employerReviews.settings.showMoreReviewsCard.want.some": "Хотят",
+   "employerReviews.settings.showMoreReviewsCardModal.closeButton": "Закрыть",
+   "employerReviews.settings.showMoreReviewsCardModal.content": " на кнопку «Показывайте больше отзывов» на страницах ваших вакансий",
+   "employerReviews.settings.showMoreReviewsCardModal.ctaButton": "Собрать отзывы",
+   "employerReviews.settings.showMoreReviewsCardModal.employeeLink": "Ссылка для сотрудников",
+   "employerReviews.settings.showMoreReviewsCardModal.push.many": "нажали",
+   "employerReviews.settings.showMoreReviewsCardModal.push.one": "нажал",
+   "employerReviews.settings.showMoreReviewsCardModal.push.some": "нажали",
+   "employerReviews.settings.showMoreReviewsCardModal.title": "Соискателям недостаточно отзывов",
+   "employerReviews.settings.sort.byDate": "По дате",
+   "employerReviews.settings.sort.byRating": "По оценке",
+   "employerReviews.settings.sort.newest": "Сначала новые",
+   "employerReviews.settings.sort.oldest": "Сначала старые",
+   "employerReviews.settings.sort.ratingAsc": "По возрастанию оценки",
+   "employerReviews.settings.sort.ratingDesc": "По убыванию оценки",
+   "employerReviews.settings.sort.title": "Сортировка",
+   "employerReviews.settings.tab.overview": "Обзор",
+   "employerReviews.settings.tab.reviews": "Отзывы",
+   "employerReviews.settings.verticalProgressBar.bottomSheet.close": "Закрыть",
+   "employerReviews.trialBanners.activateOptimumBanner.activateOptimum": "Активировать Оптимум",
+   "employerReviews.trialBanners.activateOptimumBanner.activateOptimumDescription": "Возможности Оптимума",
+   "employerReviews.trialBanners.activateOptimumBanner.subtitle": "Вы можете бесплатно активировать пробный период тарифа Оптимум на 14 дней",
+   "employerReviews.trialBanners.activateOptimumBanner.title": "Пробный период",
+   "employerReviews.trialBanners.optimumInfoModal.activateTrial": "Активировать пробный период",
+   "employerReviews.trialBanners.optimumInfoModal.analytics": "Аналитика отзывов",
+   "employerReviews.trialBanners.optimumInfoModal.badge": "Бейдж Dream Job на сайте",
+   "employerReviews.trialBanners.optimumInfoModal.basic": "Базовый",
+   "employerReviews.trialBanners.optimumInfoModal.blogs": "Корпоративные блоги",
+   "employerReviews.trialBanners.optimumInfoModal.branding": "Брендирование",
+   "employerReviews.trialBanners.optimumInfoModal.extended": "Расширенный",
+   "employerReviews.trialBanners.optimumInfoModal.freeColumnTitle": "Бесплатный",
+   "employerReviews.trialBanners.optimumInfoModal.openEmployer": "Статус «Открытый работодатель»",
+   "employerReviews.trialBanners.optimumInfoModal.paidColumnTitle": "Оптимум",
+   "employerReviews.trialBanners.optimumInfoModal.pin": "Закрепление отзывов",
+   "employerReviews.trialBanners.optimumInfoModal.reply": "Ответы на отзывы",
+   "employerReviews.trialBanners.optimumInfoModal.rewards": "Награды компании",
+   "employerReviews.trialBanners.optimumInfoModal.showAllTariffs": "Посмотреть все тарифы",
+   "employerReviews.trialBanners.optimumInfoModal.title": "Возможности тарифов",
+   "employerReviews.trialBanners.optimumInfoModal.widget": "Виджет на hh.ru",
+   "employerReviews.wizard.about.city": "Город",
+   "employerReviews.wizard.about.city.error": "Укажите город проживания",
+   "employerReviews.wizard.about.company": "Компания",
+   "employerReviews.wizard.about.company.error": "Укажите название компании",
+   "employerReviews.wizard.about.company.error.cantReview": "Вы уже оставили отзыв на эту компанию",
+   "employerReviews.wizard.about.department.emptyOption": "Затрудняюсь ответить",
+   "employerReviews.wizard.about.department.title": "Подразделение",
+   "employerReviews.wizard.about.duration": "Как долго работали?",
+   "employerReviews.wizard.about.duration.error": "Укажите как долго работали",
+   "employerReviews.wizard.about.duration.fiveToTenYears": "5-10 лет",
+   "employerReviews.wizard.about.duration.lessThanYear": "Меньше года",
+   "employerReviews.wizard.about.duration.moreThanTenYears": "Больше 10 лет",
+   "employerReviews.wizard.about.duration.oneToTwoYears": "1-2 года",
+   "employerReviews.wizard.about.duration.threeToFiveYears": "3-5 лет",
+   "employerReviews.wizard.about.position": "Должность",
+   "employerReviews.wizard.about.position.error": "Укажите должность",
+   "employerReviews.wizard.about.target": "Я оцениваю",
+   "employerReviews.wizard.about.target.currentEmployer": "Текущее место работы",
+   "employerReviews.wizard.about.target.error": "Выберите кого вы оцениваете",
+   "employerReviews.wizard.about.target.errorShort": "Выберите, что оцениваете",
+   "employerReviews.wizard.about.target.previousEmployer": "Прошлое место работы",
+   "employerReviews.wizard.about.title": "Анонимный отзыв",
+   "employerReviews.wizard.action.delete": "Удалить отзыв",
+   "employerReviews.wizard.action.publish": "Опубликовать",
+   "employerReviews.wizard.advantages.error": "Выберите льготы и удобства",
+   "employerReviews.wizard.advantages.title": "Какие льготы и удобства есть у работодателя?",
+   "employerReviews.wizard.cancel": "Отменить",
+   "employerReviews.wizard.closeAlert.cancel": "Продолжить отзыв",
+   "employerReviews.wizard.closeAlert.confirm": "Прервать",
+   "employerReviews.wizard.closeAlert.text": "Информация не сохранится",
+   "employerReviews.wizard.closeAlert.title": "Прервать заполнение?",
+   "employerReviews.wizard.confirmClose": "Закрыть окно?\nВнесенные изменения не сохранятся.",
+   "employerReviews.wizard.create.complete.action": "Понятно",
+   "employerReviews.wizard.create.complete.text": "После модерации он появится на Dream Job и будет доступен другим соискателям",
+   "employerReviews.wizard.create.complete.title": "Спасибо за отзыв!",
+   "employerReviews.wizard.delete.error": "Не удалился — попробуйте ещё раз",
+   "employerReviews.wizard.delete.error.INVALID_REASON_LENGTH": "Укажите причину удаления от 10 до 4000 символов",
+   "employerReviews.wizard.delete.success": "Отзыв удалён",
+   "employerReviews.wizard.deleteReasonOther.action": "Другая причина",
+   "employerReviews.wizard.deleteReasonOtherText.description": "Например, написали отзыв на эмоциях",
+   "employerReviews.wizard.deleteReasonOtherText.placeholder": "Причина удаления",
+   "employerReviews.wizard.edit.success": "Информация обновилась",
+   "employerReviews.wizard.finish.action": "Хорошо",
+   "employerReviews.wizard.finish.description": "После модерации он появится на Dreamjob.ru и будет доступен другим соискателям",
+   "employerReviews.wizard.finish.title": "Спасибо за отзыв!",
+   "employerReviews.wizard.next": "Продолжить",
+   "employerReviews.wizard.ok": "Понятно",
+   "employerReviews.wizard.prev": "Назад",
+   "employerReviews.wizard.rate.career.description": "Оцените перспективы для роста и развития, возможности перехода в другой отдел и обучения в компании",
+   "employerReviews.wizard.rate.career.title": "Возможности роста",
+   "employerReviews.wizard.rate.close": "Закрыть",
+   "employerReviews.wizard.rate.compensation.hint": "Сумма в месяц",
+   "employerReviews.wizard.rate.compensation.label": "Уровень дохода",
+   "employerReviews.wizard.rate.compensation.placeholder": "Доход после вычета налога (руб./месяц)",
+   "employerReviews.wizard.rate.error": "Оцените работодателя по критериям",
+   "employerReviews.wizard.rate.managment.description": "Оцените отношение руководства к сотрудникам, уровень компетентности, возможности решения рабочих проблем",
+   "employerReviews.wizard.rate.managment.title": "Руководство",
+   "employerReviews.wizard.rate.restRecovery.description": "Оцените наличие и уровень соц.пакета и ДМС, оплату питания, продолжительность рабочего дня и перерывов",
+   "employerReviews.wizard.rate.restRecovery.title": "Условия для отдыха",
+   "employerReviews.wizard.rate.salary.description": "Оцените размер оплаты труда и премии",
+   "employerReviews.wizard.rate.salary.title": "Уровень дохода",
+   "employerReviews.wizard.rate.team.description": "Оцените атмосферу в коллективе: сплоченность, поддержка, общение вне работы",
+   "employerReviews.wizard.rate.team.title": "Коллектив",
+   "employerReviews.wizard.rate.title": "Оцените работодателя",
+   "employerReviews.wizard.rate.workPlace.description": "Оцените удобство и условия рабочего места, наличие необходимого оборудования, месторасположение",
+   "employerReviews.wizard.rate.workPlace.title": "Условия труда",
+   "employerReviews.wizard.recommend.didntWorkHere": "Не работали тут?",
+   "employerReviews.wizard.recommend.dislike": "Нет",
+   "employerReviews.wizard.recommend.error": "Оставьте свою рекомендацию",
+   "employerReviews.wizard.recommend.like": "Да",
+   "employerReviews.wizard.recommend.modal.close": "Закрыть",
+   "employerReviews.wizard.recommend.modal.notMyEmployer": "Это не мой работодатель",
+   "employerReviews.wizard.recommend.modal.title": "Вы работали в",
+   "employerReviews.wizard.recommend.notification": "Больше не будем просить оценить эту компанию",
+   "employerReviews.wizard.recommend.title": "Вы бы порекомендовали работодателя своему другу?",
+   "employerReviews.wizard.review.cons": "Что можно было бы улучшить",
+   "employerReviews.wizard.review.cons.error60": "Поле должно содержать не менее 60 символов. Пожалуйста, дополните ваш отзыв",
+   "employerReviews.wizard.review.cons.placeholder": "Например: коммуникация между сотрудниками",
+   "employerReviews.wizard.review.field.error.dynamic": "Поле должно содержать не менее {0}. Пожалуйста, дополните ваш отзыв",
+   "employerReviews.wizard.review.field.error.unit.many": "символов",
+   "employerReviews.wizard.review.field.error.unit.one": "символ",
+   "employerReviews.wizard.review.field.error.unit.some": "символа",
+   "employerReviews.wizard.review.input.action.clear": "Очистить",
+   "employerReviews.wizard.review.input.action.save": "Сохранить",
+   "employerReviews.wizard.review.input.cons.hint": "Например: коммуникация между сотрудниками",
+   "employerReviews.wizard.review.input.cons.placeholder": "Что можно улучшить",
+   "employerReviews.wizard.review.input.points.noCategoricalStatements": "Избегайте категоричных и предвзятых оценок: у каждой компании есть как плюсы, так и зоны для улучшений",
+   "employerReviews.wizard.review.input.points.noFoulLanguage": "Не используйте нецензурную лексику",
+   "employerReviews.wizard.review.input.points.noPersonalData": "Не переходите на личности и не разглашайте персональные данные",
+   "employerReviews.wizard.review.input.pros.hint": "Например: свобода в выборе рабочего графика, близость к дому",
+   "employerReviews.wizard.review.input.pros.placeholder": "Что нравится",
+   "employerReviews.wizard.review.points": "— Избегайте категоричных и предвзятых оценок: у каждой компании есть как плюсы, так и зоны для улучшений.\n— Не используйте нецензурную лексику.\n— Не переходите на личности и не разглашайте персональные данные.",
+   "employerReviews.wizard.review.pros": "Что вам нравится в работодателе",
+   "employerReviews.wizard.review.pros.error60": "Поле должно содержать не менее 60 символов. Пожалуйста, дополните ваш отзыв",
+   "employerReviews.wizard.review.pros.placeholder": "Например: свобода в выборе рабочего графика, близость к дому и т. д.",
+   "employerReviews.wizard.review.title": "Напишите отзыв",
+   "employerReviews.wizard.submit": "Отправить отзыв",
+   "employerReviews.wizard.suggest.delimiter.popularCities": "Популярные",
+   "employerReviews.wizard.suggest.errors.common.button": "Перезагрузить",
+   "employerReviews.wizard.suggest.errors.common.description": "Попробуйте ещё раз или проверьте подключение к интернету",
+   "employerReviews.wizard.suggest.errors.common.title": "Что-то пошло не так",
+   "employerReviews.wizard.title.delete": "Почему хотите удалить отзыв?",
+   "error.page.authorization.link": "Личный кабинет",
+   "error.page.code": "Ошибка {0}",
+   "error.page.description.400": "Напишите в поддержку — там помогут решить проблему. В сообщение вставьте код ошибки: {0}",
+   "error.page.description.403": "Чтобы увидеть, доступна ли она вам, войдите в личный кабинет",
+   "error.page.description.404": "Возможно, в ссылке опечатка. Если считаете, что страница была здесь раньше, но исчезла, — напишите в службу поддержки.",
+   "error.page.link.feedback": "Написать в поддержку",
+   "error.page.link.index": "Перейти на главную",
+   "error.page.title.400": "Страница не открывается",
+   "error.page.title.403": "Эта страница доступна не всем",
+   "error.page.title.404": "Такой страницы нет",
+   "index.footer.menuitem.copyright": "© {0} ООО «Хэдхантер»",
+   "industryComparison.extendedBanner.description": "Сравнение с конкурентами, статистика по должностям и городам, а ещё динамика eNPS и многое другое",
+   "industryComparison.extendedBanner.downloadSample": "Скачать пример",
+   "industryComparison.extendedBanner.getReport": "Получить отчёт",
+   "industryComparison.extendedBanner.title": "Расширенная аналитика отзывов на Dream Job",
+   "lux.error": "Произошла ошибка. Попробуйте перезагрузить страницу.",
+   "lux.error.network": "Произошла ошибка. Проверьте подключение к сети и попробуйте еще раз.",
+   "navi.logo.title": "hh.ru",
+   "noticeableComplainButton.complained": "Оставили жалобу",
+   "noticeableComplainButton.title": "Пожаловаться на вакансию",
+   "openEmployerCard.dreamJobName": "Dream Job",
+   "page.403.pageTitle": "Ошибка 403",
+   "page.404.pageTitle": "Ошибка 404",
+   "page.4xx.pageTitle": "Ошибка",
+   "rb.edit.area": "Город проживания",
+   "treeselector.cancel": "Отменить",
+   "treeselector.notFound": "Совпадений не найдено",
+   "treeselector.quicksearch": "Быстрый поиск",
+   "treeselector.save": "Выбрать"
+  }
+ },
+ "langs": [
+  "RU"
+ ],
+ "features": {
+  "sentry_logging": true,
+  "sentry_request_queue_limit": null,
+  "sentry_js_config": null,
+  "employer_reviews_settings_disable_links": 1200,
+  "employer_reviews_settings_dynamic_banner_content": "{}",
+  "employer_reviews_settings_enable_trial": true,
+  "highlight_magritte_grid": null,
+  "vpn_detection_vpn_hostile_url": null
+ },
+ "experiments": {
+  "enabled": {
+   "cp_ml_course_ranking": "control",
+   "web_moya_smena_entrypoint_tab": "control",
+   "web_moya_smena_entrypoint_tab_v2": "control",
+   "altai_2025_hire_only_crit_res": "control",
+   "marketplace_filter_prices": "control",
+   "ang_26_queue_weights": "control",
+   "resume_search_hide_viewed_filter": "control",
+   "altai_2025_hire_full": "control",
+   "ang_26_ss_bm_ft_hire_v8_full_sim": "control",
+   "setka_search_banner_exp": "experiment",
+   "experience_in_profile": "experiment",
+   "web_applicant_vacancy_magritte": "experiment",
+   "vacancy_hidden_pessimized_serp": "experiment",
+   "profile_documents": "experiment",
+   "setka_vacancies_banner_reg": "experiment",
+   "web_redesign_vacancy_contacts_b": "experiment",
+   "snippet_logo_64_to_80": "experiment",
+   "hh_pro_cjm_negotiations_b": "experiment",
+   "hhpro_ai_cover_letter_v2": "experiment",
+   "yenisei_dcn24_tmp": "experiment",
+   "hhpro_price_codes_five": "experiment",
+   "career-ru-personalization-v2": "experiment",
+   "discard_exp_inconsistency_v2": "experiment",
+   "cp_banner_v2_lk": "experiment",
+   "trudvsem_serp": "experiment",
+   "cp_banner_v2_catalog_top": "experiment",
+   "renewed_signup_modal_v2": "experiment",
+   "cp_chat_list": "experiment",
+   "hhpro_ai_cover_letter_v3": "experiment",
+   "experience_recommendations_v2": "experiment",
+   "cp_lk_bottom_sheet_similar": "experiment",
+   "hhpro_lite_tariff_c": "experiment",
+   "tech_marketplace_pre_sale_chat": "experiment",
+   "hhpro_autoresponse": "experiment",
+   "hhpro_resume_renewal": "experiment",
+   "web_applicant_career_banner": "experiment",
+   "vacancy-responses-virt-list": "experiment",
+   "negotiation_captcha_day": "experiment",
+   "renewed_applicant_signup": "experiment",
+   "web_dont_know_profession_suggest": "experiment",
+   "resume_parsing_exp_v5": "experiment",
+   "web_hhpro_increase_effect": "experiment",
+   "hhpro_resume_target_employer_b": "experiment",
+   "sorted_by_distances_serp": "experiment",
+   "web_redesign_favorite_autosearch": "experiment",
+   "new_applicant_skills_test_result": "experiment",
+   "extra_education_in_profile": "experiment",
+   "cp_banner_v2_catalog_list": "experiment",
+   "career_courses_resume_list": "experiment",
+   "cp_job_status": "experiment",
+   "web_hhpro_rte": "experiment",
+   "web_add_labor_contract_filter": "experiment"
+  },
+  "checked": []
+ },
+ "request": {
+  "protocol": "https",
+  "host": "172.18.16.17:2680",
+  "url": "/employer_reviews/proxy_components/small_widget?employerId=10000008",
+  "id": "fad03fdf2bab9486a21fe8d35cc84b22",
+  "xsrfToken": "6dfb19bb316ebab872c000de2fa4de6d",
+  "pageName": "SmallWidget",
+  "origin": "https://172.18.16.17:2680"
+ },
+ "config": {
+  "staticHost": "https://employer-reviews-front.hh.ru/static",
+  "apiHost": "https://employer-reviews-front.hh.ru",
+  "hhcdnHost": "https://hhcdn.ru",
+  "sentryDSN": "https://00000000000000000000000000000000@o0.ingest.sentry.io/0",
+  "imageResizingCdnHost": null,
+  "build": "1.4.80",
+  "externalMicroFrontendHosts": null
+ },
+ "userId": "10000003",
+ "isWebView": false,
+ "isProxiedComponent": false,
+ "isProxiedPage": true,
+ "locale": {
+  "areaId": "113",
+  "domainAreaId": "1",
+  "host": "hh.ru",
+  "protocolHost": "https://172.18.16.17:2680",
+  "isSeoDomain": false,
+  "platform": "HEADHUNTER",
+  "availableLanguages": [
+   "EN",
+   "KG",
+   "RU",
+   "KZ",
+   "UZ"
+  ],
+  "siteLanguage": "RU"
+ },
+ "displayType": "DESKTOP",
+ "sentry_traceparent": "00-0000000000000000000000000000000000000000-00",
+ "sentry_baggage": ""
+}

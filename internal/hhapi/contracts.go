@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -89,15 +90,26 @@ type EmployerRating struct {
 	ReviewsCount int       `json:"reviews_count"`
 	RecommendPct int       `json:"recommend_percent"`
 	FetchedAt    time.Time `json:"fetched_at"`
+	// ReviewsCountRecent mirrors last3MonthsReviewsInfo.reviewsCount from the
+	// live widget (0 when the block is absent). See parseEmployerRating for
+	// the ScoreRecent window heuristic.
+	ReviewsCountRecent int `json:"reviews_count_recent,omitempty"`
 }
 
 // ApplyMeta is the response-popup metadata that gates the apply flow.
+// Live payload: a JSON envelope whose structured part lives in
+// `responseStatus` (test / shortVacancy / resumeInconsistencies dict /
+// alreadyApplied / responseImpossible) plus `responsePopup` — see
+// testdata/live/popup.json.
 type ApplyMeta struct {
 	HasTests              bool     `json:"has_tests"`
-	LetterRequired        bool     `json:"letter_required"`
+	LetterRequired        bool     `json:"letter_required"` // shortVacancy.@responseLetterRequired
 	ResumeInconsistencies []string `json:"resume_inconsistencies,omitempty"`
-	AcceptAutoResponse    bool     `json:"accept_auto_response,omitempty"`
-	ChatWritePossibility  string   `json:"chat_write_possibility,omitempty"`
+	AcceptAutoResponse    bool     `json:"accept_auto_response,omitempty"`   // shortVacancy.autoResponse
+	ChatWritePossibility  string   `json:"chat_write_possibility,omitempty"` // shortVacancy.chatWritePossibility
+	// Structural gates surfaced by the live popup envelope.
+	AlreadyApplied     bool `json:"already_applied,omitempty"`
+	ResponseImpossible bool `json:"response_impossible,omitempty"`
 }
 
 // ApplyRequest is the input of a vacancy response submission.
@@ -133,6 +145,24 @@ type Chat struct {
 	EmployerName  string    `json:"employer_name,omitempty"`
 	LastMessageAt time.Time `json:"last_message_at,omitempty"`
 	Unread        int       `json:"unread,omitempty"`
+	// ApplicantState is the live negotiation state for the chat's topic:
+	// resources.negotiation_topics[topic].currentApplicantState, falling
+	// back to lastMessage.workflowTransition.applicantState. "DISCARD"
+	// marks the structural refusal (RULING R9) — use IsStructuralRefusal.
+	ApplicantState string `json:"applicant_state,omitempty"`
+}
+
+// IsStructuralRefusal reports whether a negotiation/applicant state marks a
+// structural refusal of the application (RULING R9). The live hh enum spells
+// it "DISCARD" (chats resources.negotiation_topics, popup
+// responseStatus.negotiations.topicList[].lastState); the donor-documented
+// "refused" spelling stays accepted for the SSR negotiations surface.
+func IsStructuralRefusal(state string) bool {
+	switch strings.ToUpper(strings.TrimSpace(state)) {
+	case "DISCARD", "REFUSED":
+		return true
+	}
+	return false
 }
 
 // ChatMessage is one message inside a chat history.
@@ -186,6 +216,11 @@ type HHAPI interface {
 	SendMessage(ctx context.Context, chatID, idempotencyKey, text string) error
 	LeaveChat(ctx context.Context, chatID string) error
 	EmployerContacts(ctx context.Context, employerID int64) ([]Contact, error)
+	// Counts reads the vacancy-search counter shard (live shape:
+	// {"counts":1630}). query is the raw URL query string mirroring the
+	// search filters (e.g. `text=golang&area=1`); empty means the global
+	// counter. RULING R15: sanctioned contract extension (preview counts).
+	Counts(ctx context.Context, query string) (int, error)
 }
 
 // Implementation notes for the hhapi implementer:
