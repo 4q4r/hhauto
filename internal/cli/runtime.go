@@ -591,28 +591,37 @@ func (rt *Runtime) Schedules() []schedBinding { return rt.schedules }
 func (rt *Runtime) MarkEngineOwned() { rt.ownsShutdown = true }
 
 // Close tears the runtime down. Idempotent; safe after engine.Run.
+// closeQueueAndWebhooks drains the queue and closes webhooks with short
+// timeouts — only when the runtime is NOT engine-owned (engine.Run performs
+// its own ordered shutdown of the same resources).
+func (rt *Runtime) closeQueueAndWebhooks(firstErr *error) {
+	if rt.ownsShutdown {
+		return
+	}
+	if rt.Queue != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := rt.Queue.Close(ctx, time.Second); err != nil && *firstErr == nil {
+			*firstErr = err
+		}
+		cancel()
+	}
+	if rt.Webhooks != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := rt.Webhooks.Close(ctx); err != nil && *firstErr == nil {
+			*firstErr = err
+		}
+		cancel()
+	}
+}
+
+// Close tears the runtime down. Idempotent; safe after engine.Run.
 func (rt *Runtime) Close() error {
 	if rt == nil || rt.closed {
 		return nil
 	}
 	rt.closed = true
 	var firstErr error
-	if !rt.ownsShutdown {
-		if rt.Queue != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			if err := rt.Queue.Close(ctx, time.Second); err != nil && firstErr == nil {
-				firstErr = err
-			}
-			cancel()
-		}
-		if rt.Webhooks != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			if err := rt.Webhooks.Close(ctx); err != nil && firstErr == nil {
-				firstErr = err
-			}
-			cancel()
-		}
-	}
+	rt.closeQueueAndWebhooks(&firstErr)
 	if rt.DB != nil {
 		if err := rt.DB.Close(); err != nil && !rt.ownsShutdown && firstErr == nil {
 			firstErr = err

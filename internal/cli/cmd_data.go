@@ -132,63 +132,7 @@ func vacanciesSearch(ctx context.Context, rt *Runtime, o out, runID string, run 
 		case matchEmployer(flt.CompanyBlacklist, v.EmployerID, v.EmployerName):
 			row.SkipReason = "blacklisted"
 		default:
-			row.Stage = "F4_rating"
-			if pass, reason := emplrating.New(rt.DB, api, rt.Log).Pass(ctx, accountID, v.EmployerID, flt); !pass {
-				row.SkipReason = reason
-				break
-			}
-			row.Stage = "F5_dedup"
-			key := featurekit.DedupKey(accountID, resumeHash, v.ID)
-			if app, derr := rt.DB.ApplicationsGetByDedupKey(ctx, key); derr == nil && app != nil {
-				row.SkipReason = "already_applied"
-				break
-			}
-			if rt.Cfg.Features.MultiApply.DedupNativeResp {
-				if accepts, found := acceptsAutoResponse(v.Raw); found && !accepts {
-					row.SkipReason = "native_autoresponse"
-					break
-				}
-			}
-			row.Stage = "F6_ai"
-			if rt.Cfg.Features.MultiApply.AIFilter && rt.AI != nil {
-				threshold := run.AIFilterOverrides.MinScore
-				if threshold <= 0 {
-					threshold = rt.Cfg.Features.MultiApply.MinMatchPercent
-				}
-				if threshold <= 0 {
-					threshold = 60
-				}
-				verdict, pass, reason := relevance.New(rt.AI, rt.DB, accountID, runID, prof, relevance.Rules{
-					ExcludeWords:      flt.ExcludeWords,
-					TargetRoles:       relevance.RolesFromFacts(prof),
-					ExtraInstructions: run.AIFilterOverrides.ExtraInstructions,
-				}, rt.Log).Pass(ctx, v, resumeHash, threshold)
-				row.Score, row.Band = verdict.Score, verdict.Band
-				if !pass {
-					row.SkipReason = reason
-					break
-				}
-			}
-			row.Stage = "F6.5_popup"
-			meta, perr := api.ApplyPopup(ctx, v.ID)
-			if perr != nil {
-				row.SkipReason = "popup_failed"
-				break
-			}
-			if len(meta.ResumeInconsistencies) > 0 {
-				row.SkipReason = "inconsistencies"
-				break
-			}
-			if meta.ChatWritePossibility == "DISABLED" {
-				row.SkipReason = "chat_disabled"
-				break
-			}
-			row.Stage = "F7_quota"
-			if run.MaxPerDay > 0 || rt.Cfg.Features.MultiApply.Enabled {
-				// Quota numbers come from the store counters; a preview never
-				// crosses into F8 regardless of their values.
-				row.Stage = "F8_apply_would_run"
-			}
+			row = screenVacancy(ctx, rt, run, runID, prof, resumeHash, api, v, row)
 		}
 		rows = append(rows, row)
 	}
@@ -206,6 +150,78 @@ func vacanciesSearch(ctx context.Context, rt *Runtime, o out, runID string, run 
 	o.printTable([]string{"VACANCY", "NAME", "EMPLOYER", "BAND", "SCORE", "STAGE", "SKIP"}, table)
 	o.printf("\nПоказано: %d (лимит %d). Отклики НЕ отправляются.\n", len(rows), limit)
 	return nil
+}
+
+// screenVacancyAI applies the AI relevance screen (F6) when the AI filter
+// is enabled and a runner is wired; otherwise the row passes through.
+func screenVacancyAI(ctx context.Context, rt *Runtime, run config.Run, runID string,
+	prof profile.Profile, resumeHash string, v hhapi.Vacancy, row vacancyRow) vacancyRow {
+	if rt.Cfg.Features.MultiApply.AIFilter && rt.AI != nil {
+		threshold := run.AIFilterOverrides.MinScore
+		if threshold <= 0 {
+			threshold = rt.Cfg.Features.MultiApply.MinMatchPercent
+		}
+		if threshold <= 0 {
+			threshold = 60
+		}
+		verdict, pass, reason := relevance.New(rt.AI, rt.DB, run.Account, runID, prof, relevance.Rules{
+			ExcludeWords:      run.Filters.ExcludeWords,
+			TargetRoles:       relevance.RolesFromFacts(prof),
+			ExtraInstructions: run.AIFilterOverrides.ExtraInstructions,
+		}, rt.Log).Pass(ctx, v, resumeHash, threshold)
+		row.Score, row.Band = verdict.Score, verdict.Band
+		if !pass {
+			row.SkipReason = reason
+			return row
+		}
+	}
+	return row
+}
+
+// screenVacancy runs the F4-F7 preview cascade for one vacancy; a preview
+// stops before F8 by construction. Every skip keeps the row (with only
+// SkipReason set), so the caller always appends the row.
+func screenVacancy(ctx context.Context, rt *Runtime, run config.Run, runID string,
+	prof profile.Profile, resumeHash string, api hhapi.HHAPI, v hhapi.Vacancy, row vacancyRow) vacancyRow {
+	row.Stage = "F4_rating"
+	if pass, reason := emplrating.New(rt.DB, api, rt.Log).Pass(ctx, run.Account, v.EmployerID, run.Filters); !pass {
+		row.SkipReason = reason
+		return row
+	}
+	row.Stage = "F5_dedup"
+	key := featurekit.DedupKey(run.Account, resumeHash, v.ID)
+	if app, derr := rt.DB.ApplicationsGetByDedupKey(ctx, key); derr == nil && app != nil {
+		row.SkipReason = "already_applied"
+		return row
+	}
+	if rt.Cfg.Features.MultiApply.DedupNativeResp {
+		if accepts, found := acceptsAutoResponse(v.Raw); found && !accepts {
+			row.SkipReason = "native_autoresponse"
+			return row
+		}
+	}
+	row = screenVacancyAI(ctx, rt, run, runID, prof, resumeHash, v, row)
+	row.Stage = "F6.5_popup"
+	meta, perr := api.ApplyPopup(ctx, v.ID)
+	if perr != nil {
+		row.SkipReason = "popup_failed"
+		return row
+	}
+	if len(meta.ResumeInconsistencies) > 0 {
+		row.SkipReason = "inconsistencies"
+		return row
+	}
+	if meta.ChatWritePossibility == "DISABLED" {
+		row.SkipReason = "chat_disabled"
+		return row
+	}
+	row.Stage = "F7_quota"
+	if run.MaxPerDay > 0 || rt.Cfg.Features.MultiApply.Enabled {
+		// Quota numbers come from the store counters; a preview never
+		// crosses into F8 regardless of their values.
+		row.Stage = "F8_apply_would_run"
+	}
+	return row
 }
 
 func orDash(s string) string {

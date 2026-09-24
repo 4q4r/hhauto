@@ -16,6 +16,32 @@ linters:
     - misspell
     - unconvert
     - revive
+    # Task 20: complexity gates.
+    - gocyclo
+    - gocognit
+    - funlen
+    - nestif
+
+  settings:
+    gocyclo:
+      min-complexity: 20
+    gocognit:
+      min-complexity: 30
+    funlen:
+      lines: 200
+      statements: 100
+    nestif:
+      min-complexity: 5
+
+  exclusions:
+    rules:
+      # Tests may be long (table-driven); complexity gates apply to prod code only.
+      - path: _test\.go
+        linters:
+          - funlen
+          - gocyclo
+          - gocognit
+          - nestif
 
 formatters:
   enable:

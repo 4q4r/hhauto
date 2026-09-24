@@ -119,14 +119,38 @@ func runOnce(ctx context.Context, rt *Runtime, o out) (int, int, error) {
 		return 0, 0, nil
 	}
 
-	accounts := make([]string, 0, len(rt.Cfg.Accounts))
-	for id := range rt.Cfg.Accounts {
-		accounts = append(accounts, id)
-	}
-	sort.Strings(accounts)
+	accounts := sortedAccountIDs(rt.Cfg)
+	bootstrapAccounts(ctx, rt, accounts)
 
-	// One best-effort session bootstrap per account (the engine does this
-	// per task with a TTL; a single pass keeps --once cheap).
+	var (
+		wg        sync.WaitGroup
+		inflight  atomic.Int64
+		seen      sync.Map // (account|kind|dedupkey) → processed in this pass
+		processed atomic.Int64
+		failed    atomic.Int64
+	)
+	drain := func(accountID string, task queue.Task) {
+		drainTask(ctx, rt, handlers, &seen, &processed, &failed, accountID, task)
+	}
+	startConsumers(ctx, rt, accounts, &inflight, drain, &wg)
+	awaitQuiescence(ctx, rt, accounts, &inflight)
+	_ = rt.Queue.Close(context.Background(), time.Second)
+	wg.Wait()
+
+	p, f := processed.Load(), failed.Load()
+	o.printf("run --once: %d task(s) done, %d failed (dry_run=%v)\n", p, f, rt.Cfg.General.DryRun)
+	if f > 0 {
+		return int(p), int(f), exitErr("%d task(s) failed", f)
+	}
+	return int(p), int(f), nil
+}
+
+// onceBudget bounds a single --once pass.
+const onceBudget = 5 * time.Minute
+
+// bootstrapAccounts does one best-effort session bootstrap per account (the
+// engine does this per task with a TTL; a single pass keeps --once cheap).
+func bootstrapAccounts(ctx context.Context, rt *Runtime, accounts []string) {
 	for _, id := range accounts {
 		api, err := rt.APIFor(id)
 		if err != nil {
@@ -137,47 +161,43 @@ func runOnce(ctx context.Context, rt *Runtime, o out) (int, int, error) {
 			rt.Log.Warn("run --once: session bootstrap failed; proceeding", "account", id, "err", err)
 		}
 	}
+}
 
-	var (
-		wg        sync.WaitGroup
-		inflight  atomic.Int64
-		seen      sync.Map // (account|kind|dedupkey) → processed in this pass
-		processed atomic.Int64
-		failed    atomic.Int64
-	)
-
-	drain := func(accountID string, task queue.Task) {
-		key := accountID + "|" + string(task.Kind) + "|" + task.DedupKey
-		if _, dup := seen.LoadOrStore(key, true); dup {
-			return // processed earlier in this pass: drop the re-enqueue
-		}
-		h, known := handlers[task.Kind]
-		if !known {
-			rt.Log.Error("run --once: no handler for task kind", "kind", task.Kind, "task", task.ID)
-			_ = audit.Incr(ctx, rt.DB, audit.KeyTasksFailed)
-			failed.Add(1)
-			return
-		}
-		tc, err := rt.TaskContext(accountID)
-		if err != nil {
-			rt.Log.Error("run --once: task context", "account", accountID, "err", err)
-			failed.Add(1)
-			return
-		}
-		if err := h(ctx, tc, task); err != nil {
-			rt.Log.Error("run --once: task failed", "account", accountID, "kind", task.Kind, "task", task.ID, "err", err)
-			_ = audit.Incr(ctx, rt.DB, audit.KeyTasksFailed)
-			failed.Add(1)
-			return
-		}
-		rt.Log.Info("run --once: task done", "account", accountID, "kind", task.Kind, "task", task.ID)
-		processed.Add(1)
+// drainTask handles one dequeued task at most once per --once pass: the
+// (account|kind|dedupkey) seen map drops re-enqueues already processed.
+func drainTask(ctx context.Context, rt *Runtime, handlers map[queue.TaskKind]engine.TaskHandler, seen *sync.Map, processed, failed *atomic.Int64, accountID string, task queue.Task) {
+	key := accountID + "|" + string(task.Kind) + "|" + task.DedupKey
+	if _, dup := seen.LoadOrStore(key, true); dup {
+		return // processed earlier in this pass: drop the re-enqueue
 	}
+	h, known := handlers[task.Kind]
+	if !known {
+		rt.Log.Error("run --once: no handler for task kind", "kind", task.Kind, "task", task.ID)
+		_ = audit.Incr(ctx, rt.DB, audit.KeyTasksFailed)
+		failed.Add(1)
+		return
+	}
+	tc, err := rt.TaskContext(accountID)
+	if err != nil {
+		rt.Log.Error("run --once: task context", "account", accountID, "err", err)
+		failed.Add(1)
+		return
+	}
+	if err := h(ctx, tc, task); err != nil {
+		rt.Log.Error("run --once: task failed", "account", accountID, "kind", task.Kind, "task", task.ID, "err", err)
+		_ = audit.Incr(ctx, rt.DB, audit.KeyTasksFailed)
+		failed.Add(1)
+		return
+	}
+	rt.Log.Info("run --once: task done", "account", accountID, "kind", task.Kind, "task", task.ID)
+	processed.Add(1)
+}
 
-	// Consumers: one per account. Each exits when the queue closes (or the
-	// context is cancelled); the in-flight counter covers the full
-	// dequeue→handler span, so the supervisor below cannot mistake a task
-	// being handled for a quiescent queue.
+// startConsumers spawns one consumer goroutine per account. Each exits when
+// the queue closes (or the context is cancelled); the in-flight counter
+// covers the full dequeue→handler span, so the quiescence supervisor cannot
+// mistake a task being handled for an idle queue.
+func startConsumers(ctx context.Context, rt *Runtime, accounts []string, inflight *atomic.Int64, drain func(string, queue.Task), wg *sync.WaitGroup) {
 	for _, id := range accounts {
 		wg.Add(1)
 		go func(accountID string) {
@@ -198,12 +218,14 @@ func runOnce(ctx context.Context, rt *Runtime, o out) (int, int, error) {
 			}
 		}(id)
 	}
+}
 
-	// Supervisor: watch for quiescence (nothing queued anywhere, nothing
-	// in flight on two consecutive samples), then close intake so parked
-	// consumers exit. The double sample closes the dequeue→count race: a
-	// task that left the queue but is not yet counted makes the second
-	// sample non-quiescent.
+// awaitQuiescence blocks until nothing is queued anywhere and nothing is in
+// flight on two consecutive samples (then the caller closes intake so parked
+// consumers exit), or until the context is cancelled / the --once budget
+// expires. The double sample closes the dequeue→count race: a task that left
+// the queue but is not yet counted makes the second sample non-quiescent.
+func awaitQuiescence(ctx context.Context, rt *Runtime, accounts []string, inflight *atomic.Int64) {
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	budget := time.NewTimer(onceBudget)
@@ -232,19 +254,7 @@ quiesce:
 			}
 		}
 	}
-	_ = rt.Queue.Close(context.Background(), time.Second)
-	wg.Wait()
-
-	p, f := processed.Load(), failed.Load()
-	o.printf("run --once: %d task(s) done, %d failed (dry_run=%v)\n", p, f, rt.Cfg.General.DryRun)
-	if f > 0 {
-		return int(p), int(f), exitErr("%d task(s) failed", f)
-	}
-	return int(p), int(f), nil
 }
-
-// onceBudget bounds a single --once pass.
-const onceBudget = 5 * time.Minute
 
 func newStatusCmd() *cobra.Command {
 	var account string
@@ -303,13 +313,27 @@ func showStatus(ctx context.Context, rt *Runtime, o out, accountFilter string) e
 	for _, a := range stored {
 		statuses[a.ID] = a.Status
 	}
+	ids := sortedAccountIDs(rt.Cfg)
 
-	rep.ReviewOpen = map[string]int{}
-	ids := make([]string, 0, len(rt.Cfg.Accounts))
-	for id := range rt.Cfg.Accounts {
-		ids = append(ids, id)
+	if err := collectAccountStatuses(ctx, rt, &rep, ids, statuses, accountFilter); err != nil {
+		return err
 	}
-	sort.Strings(ids)
+	if err := fillDailyTotals(ctx, rt, &rep, day); err != nil {
+		return err
+	}
+	previewNextRuns(rt, &rep, ids, accountFilter)
+
+	if flags.json {
+		return o.printJSON(rep)
+	}
+	printStatusText(o, rep, rep.Funnel)
+	return nil
+}
+
+// collectAccountStatuses fills rep.Accounts and rep.ReviewOpen for the
+// configured accounts (optionally restricted to accountFilter).
+func collectAccountStatuses(ctx context.Context, rt *Runtime, rep *statusReport, ids []string, statuses map[string]string, accountFilter string) error {
+	rep.ReviewOpen = map[string]int{}
 	for _, id := range ids {
 		if accountFilter != "" && id != accountFilter {
 			continue
@@ -325,7 +349,11 @@ func showStatus(ctx context.Context, rt *Runtime, o out, accountFilter string) e
 		}
 		rep.ReviewOpen[id] = len(open)
 	}
+	return nil
+}
 
+// fillDailyTotals loads today's funnel, counters and AI usage into rep.
+func fillDailyTotals(ctx context.Context, rt *Runtime, rep *statusReport, day string) error {
 	funnel, err := audit.Snapshot(ctx, rt.DB, day)
 	if err != nil {
 		return exitErr("funnel: %v", err)
@@ -344,11 +372,14 @@ func showStatus(ctx context.Context, rt *Runtime, o out, accountFilter string) e
 	if err != nil {
 		return exitErr("ai totals: %v", err)
 	}
+	return nil
+}
 
-	// Next runs come from the registered bindings (specs live in the
-	// schedule registry, not in a readable store DAO).
+// previewNextRuns projects the next fire of every registered binding per
+// account (deterministic preview; real jitter happens per fire).
+func previewNextRuns(rt *Runtime, rep *statusReport, ids []string, accountFilter string) {
 	now := time.Now()
-	rnd := rand.New(rand.NewSource(1)) // deterministic preview; real jitter happens per fire
+	rnd := rand.New(rand.NewSource(1))
 	for _, b := range rt.Schedules() {
 		for _, id := range ids {
 			if accountFilter != "" && id != accountFilter {
@@ -364,11 +395,11 @@ func showStatus(ctx context.Context, rt *Runtime, o out, accountFilter string) e
 			})
 		}
 	}
+}
 
-	if flags.json {
-		return o.printJSON(rep)
-	}
-
+// printStatusText renders the human-readable status report.
+func printStatusText(o out, rep statusReport, funnel audit.Funnel) {
+	day := rep.Day
 	o.println("Day:", day)
 	o.printTable([]string{"ACCOUNT", "STATUS", "PROXY", "REVIEW OPEN"},
 		func() [][]string {
@@ -399,7 +430,6 @@ func showStatus(ctx context.Context, rt *Runtime, o out, accountFilter string) e
 		o.println("\nNext runs:")
 		o.printTable([]string{"SCHEDULE", "ACCOUNT", "NEXT RUN"}, rows)
 	}
-	return nil
 }
 
 func totalSkipped(f audit.Funnel) int {

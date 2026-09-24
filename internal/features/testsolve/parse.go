@@ -85,38 +85,67 @@ func formKindForURL(raw string) string {
 // false when nothing answerable was found — callers treat that as a parse
 // failure, never as an empty form.
 func ParseFormHTML(doc string) (Form, bool) {
-	root, err := html.Parse(strings.NewReader(doc))
-	if err != nil {
+	root, ok := parseHTML(doc)
+	if !ok {
 		return Form{}, false
 	}
-
 	f := Form{}
-	// Pass 1: label[for=id] -> label text.
+	if t := textContent(findFirst(root, "title")); t != "" {
+		f.Title = t
+	}
+	if f.Title == "" {
+		f.Title = headingTitle(root)
+	}
+	labelByID := collectLabels(root)
+	f.Fields = formFields(root, labelByID)
+	return f, len(f.Fields) > 0
+}
+
+// parseHTML parses the document, reporting parse failures (never an empty form).
+func parseHTML(doc string) (*html.Node, bool) {
+	root, err := html.Parse(strings.NewReader(doc))
+	return root, err == nil
+}
+
+// headingTitle is the first non-empty heading/legend text (form title fallback).
+func headingTitle(root *html.Node) string {
+	for _, tag := range []string{"h1", "h2", "legend"} {
+		if t := textContent(findFirst(root, tag)); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+// collectLabels maps label[for=id] to the label text.
+func collectLabels(root *html.Node) map[string]string {
 	labelByID := map[string]string{}
-	var walk1 func(*html.Node)
-	walk1 = func(n *html.Node) {
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode && n.Data == "label" {
-			forAttr := attr(n, "for")
-			if forAttr != "" {
+			if forAttr := attr(n, "for"); forAttr != "" {
 				if t := textContent(n); t != "" {
 					labelByID[forAttr] = t
 				}
 			}
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk1(c)
+			walk(c)
 		}
 	}
-	walk1(root)
-	if t := textContent(findFirst(root, "title")); t != "" {
-		f.Title = t
-	}
+	walk(root)
+	return labelByID
+}
 
-	// Pass 2: fields in document order.
+// formFields walks the document in order, folding answerable elements into
+// form fields. Free text is remembered as the nearest preceding context for
+// the next field (the question text when labels are absent).
+func formFields(root *html.Node, labelByID map[string]string) []FormField {
+	var fields []FormField
 	var lastText string
 	seenRadio := map[string]bool{}
-	var walk2 func(*html.Node)
-	walk2 = func(n *html.Node) {
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
 		if n.Type == html.TextNode {
 			t := strings.TrimSpace(n.Data)
 			if t != "" && len([]rune(t)) <= 200 && !isInside(n, "label", "option", "textarea", "title", "script", "style") {
@@ -128,77 +157,89 @@ func ParseFormHTML(doc string) (Form, bool) {
 			return
 		}
 		switch n.Data {
-		case "h1", "h2", "legend":
-			if t := textContent(n); t != "" && f.Title == "" {
-				f.Title = t
-			}
 		case "input":
-			typ := strings.ToLower(attr(n, "type"))
-			if typ == "" {
-				typ = "text"
-			}
-			switch typ {
-			case "password", "hidden", "submit", "button", "image", "reset", "file", "date", "time":
-				return
-			case "radio", "checkbox":
-				name := attr(n, "name")
-				if typ == "radio" {
-					if name == "" || seenRadio[name] {
-						return
-					}
-					seenRadio[name] = true
-					f.Fields = append(f.Fields, radioGroup(root, n, name, labelByID, &lastText))
-					return
-				}
-				// checkbox: single yes/no question
-				label := fieldLabel(n, labelByID, &lastText)
-				f.Fields = append(f.Fields, FormField{Label: label, Type: "check"})
-				lastText = ""
-				return
-			default: // text, email, tel, number, url, search...
-				label := fieldLabel(n, labelByID, &lastText)
-				f.Fields = append(f.Fields, FormField{
-					Label:    label,
-					Type:     "text",
-					Required: attr(n, "required") != "" || boolAttr(n, "required"),
-				})
-				lastText = ""
-				return
-			}
+			inputField(&fields, root, n, labelByID, &lastText, seenRadio)
+			return
 		case "textarea":
-			label := fieldLabel(n, labelByID, &lastText)
-			if label == "" {
-				label = attr(n, "placeholder")
-			}
-			f.Fields = append(f.Fields, FormField{
-				Label:    label,
-				Type:     "textarea",
-				Required: attr(n, "required") != "" || boolAttr(n, "required"),
-			})
-			lastText = ""
+			textareaField(&fields, n, labelByID, &lastText)
 			return
 		case "select":
-			var opts []string
-			for o := range elements(n, "option") {
-				opts = append(opts, textContent(o))
-			}
-			label := fieldLabel(n, labelByID, &lastText)
-			f.Fields = append(f.Fields, FormField{
-				Label:    label,
-				Type:     "select",
-				Options:  opts,
-				Required: boolAttr(n, "required"),
-			})
-			lastText = ""
-			return
+			selectField(&fields, n, labelByID, &lastText)
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk2(c)
+			walk(c)
 		}
 	}
-	walk2(root)
+	walk(root)
+	return fields
+}
 
-	return f, len(f.Fields) > 0
+// inputField folds one <input>: radios collapse into one option group per
+// name, checkboxes become yes/no fields, the rest are text fields;
+// unsupported types are dropped.
+func inputField(fields *[]FormField, root, n *html.Node, labelByID map[string]string, lastText *string, seenRadio map[string]bool) {
+	typ := strings.ToLower(attr(n, "type"))
+	if typ == "" {
+		typ = "text"
+	}
+	switch typ {
+	case "password", "hidden", "submit", "button", "image", "reset", "file", "date", "time":
+		return
+	case "radio", "checkbox":
+		name := attr(n, "name")
+		if typ == "radio" {
+			if name == "" || seenRadio[name] {
+				return
+			}
+			seenRadio[name] = true
+			*fields = append(*fields, radioGroup(root, n, name, labelByID, lastText))
+			return
+		}
+		// checkbox: single yes/no question
+		label := fieldLabel(n, labelByID, lastText)
+		*fields = append(*fields, FormField{Label: label, Type: "check"})
+		*lastText = ""
+		return
+	default: // text, email, tel, number, url, search...
+		label := fieldLabel(n, labelByID, lastText)
+		*fields = append(*fields, FormField{
+			Label:    label,
+			Type:     "text",
+			Required: attr(n, "required") != "" || boolAttr(n, "required"),
+		})
+		*lastText = ""
+	}
+}
+
+// textareaField folds one <textarea> into the form (placeholder is the label
+// fallback).
+func textareaField(fields *[]FormField, n *html.Node, labelByID map[string]string, lastText *string) {
+	label := fieldLabel(n, labelByID, lastText)
+	if label == "" {
+		label = attr(n, "placeholder")
+	}
+	*fields = append(*fields, FormField{
+		Label:    label,
+		Type:     "textarea",
+		Required: attr(n, "required") != "" || boolAttr(n, "required"),
+	})
+	*lastText = ""
+}
+
+// selectField folds one <select> with its options into the form.
+func selectField(fields *[]FormField, n *html.Node, labelByID map[string]string, lastText *string) {
+	var opts []string
+	for o := range elements(n, "option") {
+		opts = append(opts, textContent(o))
+	}
+	label := fieldLabel(n, labelByID, lastText)
+	*fields = append(*fields, FormField{
+		Label:    label,
+		Type:     "select",
+		Options:  opts,
+		Required: boolAttr(n, "required"),
+	})
+	*lastText = ""
 }
 
 // radioGroup collects all radios sharing name into one option-group field.

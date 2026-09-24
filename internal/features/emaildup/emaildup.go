@@ -126,50 +126,16 @@ func (f *Feature) HandleSendEmail(ctx context.Context, task queue.Task) error {
 	log := f.log()
 	accountID := p.AccountID
 
-	// Gate 1: recipient shape.
-	email := strings.ToLower(strings.TrimSpace(p.Email))
-	if !strings.Contains(email, "@") || !strings.Contains(strings.SplitN(email, "@", 2)[1], ".") {
-		f.review(ctx, accountID, "email_invalid", "emaildup: recipient address is not valid",
-			map[string]any{"employer_id": p.EmployerID, "email": p.Email})
-		return nil
-	}
-
-	// Gate 2: per-employer once.
-	if f.perEmployerOnce() {
-		if sent, _, err := f.DB.FeatureStateGet(ctx, FeatureName, accountID, "sent:"+fmt.Sprint(p.EmployerID)); err == nil && sent != "" {
-			log.Info("emaildup: employer already mailed, skipping", "employer", p.EmployerID)
-			return nil
-		}
-	}
-
-	// Gate 3: hourly and daily limits via metrics counters.
-	if blocked, err := f.limitReached(ctx, accountID); err != nil {
+	email, stop, err := f.emailGates(ctx, p, log)
+	if err != nil {
 		return err
-	} else if blocked {
-		_ = f.DB.MetricsIncr(ctx, "emaildup.skipped_limit", kit11.Day(f.now()))
-		log.Warn("emaildup: rate limit reached, email skipped", "employer", p.EmployerID)
+	} else if stop {
 		return nil
 	}
 
-	// Attachment: fetch before arming the intent (no send attempt → no intent).
-	var attachments []Attachment
-	if f.attachResume() {
-		pdf, hash, err := f.resumePDF(ctx, accountID, p.ResumeHash)
-		if err != nil {
-			if f.Cfg.Email.RequireAttach {
-				f.review(ctx, accountID, "email_attachment_missing",
-					"emaildup: resume PDF unavailable and attachment is required",
-					map[string]any{"employer_id": p.EmployerID, "err": err.Error()})
-				return nil
-			}
-			log.Warn("emaildup: resume PDF unavailable, sending without attachment", "err", err)
-		} else {
-			attachments = append(attachments, Attachment{
-				Filename:    "resume-" + hash + ".pdf",
-				Content:     pdf,
-				ContentType: "application/pdf",
-			})
-		}
+	attachments, stop, err := f.gatherAttachments(ctx, accountID, p)
+	if stop || err != nil {
+		return err
 	}
 
 	// Render subject/body.
@@ -227,60 +193,8 @@ func (f *Feature) HandleSendEmail(ctx context.Context, task queue.Task) error {
 		return fmt.Errorf("emaildup: sender: %w", err)
 	}
 
-	retries := f.Cfg.Email.Retries
-	if retries < 0 {
-		retries = 0
-	}
-	var sendErr error
-	for attempt := 0; attempt <= retries; attempt++ {
-		// Pacer before EVERY send attempt (wave-3 review #4).
-		if err := f.pace(ctx, accountID); err != nil {
-			_ = f.DB.IntentsMarkFailed(ctx, intentID)
-			return fmt.Errorf("emaildup: pacer: %w", err)
-		}
-		if attempt > 0 {
-			f.sleep(time.Duration(attempt) * 5 * time.Second)
-		}
-		sendErr = sender.Send(m)
-		if sendErr == nil {
-			break
-		}
-		if smtpPermanent(sendErr) {
-			break
-		}
-	}
-	if sendErr == nil {
-		if err := f.DB.IntentsMarkDone(ctx, intentID); err != nil {
-			return err
-		}
-		_ = f.DB.FeatureStateSet(ctx, FeatureName, accountID, "sent:"+fmt.Sprint(p.EmployerID), fmt.Sprint(p.VacancyID))
-		day := kit11.Day(f.now())
-		_ = f.DB.MetricsIncr(ctx, "emaildup.sent", day)
-		_ = f.DB.MetricsIncr(ctx, kit11.HourKey("emaildup.sent", f.now()), day)
-		log.Info("emaildup: email sent", "to", email, "employer", p.EmployerID)
-		return nil
-	}
-
-	_ = f.DB.IntentsMarkFailed(ctx, intentID)
-	if smtpPermanent(sendErr) {
-		// bounce → mark the contact invalid so WF6 does not re-trigger
-		if err := f.markContactInvalid(ctx, accountID, p.EmployerID, email); err != nil {
-			log.Error("emaildup: mark contact invalid", "err", err)
-		}
-		f.review(ctx, accountID, "email_send_failed", "emaildup: permanent rejection: "+sendErr.Error(),
-			map[string]any{"employer_id": p.EmployerID, "email": email})
-		return nil
-	}
-	// Transient failures exhausted: re-enqueue with the SAME dedup key — the
-	// queue released it after dequeue, so without this the task would be
-	// lost (wave-3 review #5). The intent is failed, so a re-run may begin
-	// a fresh send attempt; the human still sees a review (once).
-	f.requeue(ctx, task)
-	f.reviewOnce(ctx, accountID, "email_send_failed",
-		"emaildup: transient failures exhausted — task requeued",
-		map[string]any{"employer_id": p.EmployerID, "email": email},
-		"emailretry:"+intentKey)
-	return nil
+	sendErr := f.sendWithRetries(ctx, accountID, intentID, sender, m)
+	return f.afterSend(ctx, task, accountID, p, email, intentID, intentKey, sendErr)
 }
 
 // requeue puts the task back with its original dedup key (no-op when the
@@ -322,6 +236,22 @@ func (f *Feature) perEmployerOnce() bool {
 
 func (f *Feature) attachResume() bool {
 	return f.Cfg.Email.AttachResume == nil || *f.Cfg.Email.AttachResume
+}
+
+// ensureResumeHash falls back to the first API-listed resume when the task
+// carries no hash; the error covers "nothing resolvable".
+func (f *Feature) ensureResumeHash(ctx context.Context, accountID, resumeHash string) (string, error) {
+	if resumeHash != "" {
+		return resumeHash, nil
+	}
+	if f.API != nil {
+		if api, aerr := f.API(accountID); aerr == nil {
+			if resumes, lerr := api.ListResumes(ctx); lerr == nil && len(resumes) > 0 && resumes[0].HHID != "" {
+				return resumes[0].HHID, nil
+			}
+		}
+	}
+	return "", errors.New("no resume hash available")
 }
 
 // limitReached consults the metrics counters for the configured hour/day caps.
@@ -391,17 +321,9 @@ func (f *Feature) resumePDF(ctx context.Context, accountID, resumeHash string) (
 		b, err := f.PDF(ctx, accountID, resumeHash)
 		return b, resumeHash, err
 	}
-	if resumeHash == "" {
-		if f.API != nil {
-			if api, aerr := f.API(accountID); aerr == nil {
-				if resumes, lerr := api.ListResumes(ctx); lerr == nil && len(resumes) > 0 {
-					resumeHash = resumes[0].HHID
-				}
-			}
-		}
-		if resumeHash == "" {
-			return nil, "", errors.New("no resume hash available")
-		}
+	resumeHash, err := f.ensureResumeHash(ctx, accountID, resumeHash)
+	if err != nil {
+		return nil, "", err
 	}
 	url := ResumePDFURL(f.Cfg, resumeHash)
 
@@ -662,3 +584,129 @@ func (f *Feature) review(ctx context.Context, accountID, kind, reason string, pa
 
 // Compile-time conformance with the feature-module contract.
 var _ features.Feature = (*Feature)(nil)
+
+// emailGates runs gates 1-3: recipient shape, per-employer-once and the
+// hourly/daily send limits. stop=true means the task is fully handled and
+// HandleSendEmail returns nil; a non-nil error aborts the task.
+func (f *Feature) emailGates(ctx context.Context, p SendPayload, log *slog.Logger) (string, bool, error) {
+	// Gate 1: recipient shape.
+	email := strings.ToLower(strings.TrimSpace(p.Email))
+	if !strings.Contains(email, "@") || !strings.Contains(strings.SplitN(email, "@", 2)[1], ".") {
+		f.review(ctx, p.AccountID, "email_invalid", "emaildup: recipient address is not valid",
+			map[string]any{"employer_id": p.EmployerID, "email": p.Email})
+		return email, true, nil
+	}
+
+	// Gate 2: per-employer once.
+	if f.perEmployerOnce() {
+		if sent, _, err := f.DB.FeatureStateGet(ctx, FeatureName, p.AccountID, "sent:"+fmt.Sprint(p.EmployerID)); err == nil && sent != "" {
+			log.Info("emaildup: employer already mailed, skipping", "employer", p.EmployerID)
+			return email, true, nil
+		}
+	}
+
+	// Gate 3: hourly and daily limits via metrics counters.
+	if blocked, err := f.limitReached(ctx, p.AccountID); err != nil {
+		return "", false, err
+	} else if blocked {
+		_ = f.DB.MetricsIncr(ctx, "emaildup.skipped_limit", kit11.Day(f.now()))
+		log.Warn("emaildup: rate limit reached, email skipped", "employer", p.EmployerID)
+		return email, true, nil
+	}
+	return email, false, nil
+}
+
+// gatherAttachments collects the resume PDF when attach_resume is on; a
+// missing mandatory attachment writes the review item and reports stop=true
+// (the task ends without arming the intent).
+func (f *Feature) gatherAttachments(ctx context.Context, accountID string, p SendPayload) ([]Attachment, bool, error) {
+	log := f.log()
+	// Attachment: fetch before arming the intent (no send attempt → no intent).
+	var attachments []Attachment
+	if f.attachResume() {
+		pdf, hash, err := f.resumePDF(ctx, accountID, p.ResumeHash)
+		if err != nil {
+			if f.Cfg.Email.RequireAttach {
+				f.review(ctx, accountID, "email_attachment_missing",
+					"emaildup: resume PDF unavailable and attachment is required",
+					map[string]any{"employer_id": p.EmployerID, "err": err.Error()})
+				return nil, true, nil
+			}
+			log.Warn("emaildup: resume PDF unavailable, sending without attachment", "err", err)
+		} else {
+			attachments = append(attachments, Attachment{
+				Filename:    "resume-" + hash + ".pdf",
+				Content:     pdf,
+				ContentType: "application/pdf",
+			})
+		}
+	}
+	return attachments, false, nil
+}
+
+// sendWithRetries paces before EVERY attempt (wave-3 review #4) and sends
+// with linear backoff; a permanent SMTP failure stops the loop early.
+func (f *Feature) sendWithRetries(ctx context.Context, accountID, intentID string, sender Sender, m Message) error {
+	retries := f.Cfg.Email.Retries
+	if retries < 0 {
+		retries = 0
+	}
+	var sendErr error
+	for attempt := 0; attempt <= retries; attempt++ {
+		// Pacer before EVERY send attempt (wave-3 review #4).
+		if err := f.pace(ctx, accountID); err != nil {
+			_ = f.DB.IntentsMarkFailed(ctx, intentID)
+			return fmt.Errorf("emaildup: pacer: %w", err)
+		}
+		if attempt > 0 {
+			f.sleep(time.Duration(attempt) * 5 * time.Second)
+		}
+		sendErr = sender.Send(m)
+		if sendErr == nil {
+			break
+		}
+		if smtpPermanent(sendErr) {
+			break
+		}
+	}
+	return sendErr
+}
+
+// afterSend records the outcome: mark done + counters on success, contact
+// invalidation + review on a permanent bounce, requeue with the same dedup
+// key when transient failures are exhausted (wave-3 review #5).
+func (f *Feature) afterSend(ctx context.Context, task queue.Task, accountID string, p SendPayload, email, intentID, intentKey string, sendErr error) error {
+	log := f.log()
+	if sendErr == nil {
+		if err := f.DB.IntentsMarkDone(ctx, intentID); err != nil {
+			return err
+		}
+		_ = f.DB.FeatureStateSet(ctx, FeatureName, accountID, "sent:"+fmt.Sprint(p.EmployerID), fmt.Sprint(p.VacancyID))
+		day := kit11.Day(f.now())
+		_ = f.DB.MetricsIncr(ctx, "emaildup.sent", day)
+		_ = f.DB.MetricsIncr(ctx, kit11.HourKey("emaildup.sent", f.now()), day)
+		log.Info("emaildup: email sent", "to", email, "employer", p.EmployerID)
+		return nil
+	}
+
+	_ = f.DB.IntentsMarkFailed(ctx, intentID)
+	if smtpPermanent(sendErr) {
+		// bounce → mark the contact invalid so WF6 does not re-trigger
+		if err := f.markContactInvalid(ctx, accountID, p.EmployerID, email); err != nil {
+			log.Error("emaildup: mark contact invalid", "err", err)
+		}
+		f.review(ctx, accountID, "email_send_failed", "emaildup: permanent rejection: "+sendErr.Error(),
+			map[string]any{"employer_id": p.EmployerID, "email": email})
+		return nil
+	}
+	// Transient failures exhausted: re-enqueue with the SAME dedup key — the
+	// queue released it after dequeue, so without this the task would be
+	// lost (wave-3 review #5). The intent is failed, so a re-run may begin
+	// a fresh send attempt; the human still sees a review (once).
+	f.requeue(ctx, task)
+	f.reviewOnce(ctx, accountID, "email_send_failed",
+		"emaildup: transient failures exhausted — task requeued",
+		map[string]any{"employer_id": p.EmployerID, "email": email},
+		"emailretry:"+intentKey)
+	return nil
+}

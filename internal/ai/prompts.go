@@ -45,9 +45,24 @@ func NewPromptRegistry(tasks map[string]config.AITask, fsys fs.FS) (*PromptRegis
 		body:    map[TaskName]string{},
 		ver:     map[TaskName]string{},
 	}
+	if err := loadBuiltinPrompts(r, fsys); err != nil {
+		return nil, err
+	}
+	if err := requireBuiltinCoverage(r); err != nil {
+		return nil, err
+	}
+	if err := resolveOverrides(r, tasks); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// loadBuiltinPrompts reads every *.md file in fsys and registers it as the
+// builtin prompt for its front-matter task.
+func loadBuiltinPrompts(r *PromptRegistry, fsys fs.FS) error {
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
-		return nil, fmt.Errorf("ai: prompts: read embedded fs: %w", err)
+		return fmt.Errorf("ai: prompts: read embedded fs: %w", err)
 	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
@@ -55,39 +70,49 @@ func NewPromptRegistry(tasks map[string]config.AITask, fsys fs.FS) (*PromptRegis
 		}
 		raw, err := fs.ReadFile(fsys, e.Name())
 		if err != nil {
-			return nil, fmt.Errorf("ai: prompts: read %s: %w", e.Name(), err)
+			return fmt.Errorf("ai: prompts: read %s: %w", e.Name(), err)
 		}
 		meta, body, err := parsePromptFrontMatter(string(raw))
 		if err != nil {
-			return nil, fmt.Errorf("ai: prompts: %s: %w", e.Name(), err)
+			return fmt.Errorf("ai: prompts: %s: %w", e.Name(), err)
 		}
 		task := TaskName(meta.Task)
 		if _, ok := taskByName(string(task)); !ok {
-			return nil, fmt.Errorf("ai: prompts: %s: unknown task %q", e.Name(), meta.Task)
+			return fmt.Errorf("ai: prompts: %s: unknown task %q", e.Name(), meta.Task)
 		}
 		if _, dup := r.builtin[task]; dup {
-			return nil, fmt.Errorf("ai: prompts: duplicate builtin for task %q", task)
+			return fmt.Errorf("ai: prompts: duplicate builtin for task %q", task)
 		}
 		if meta.Version < 1 {
-			return nil, fmt.Errorf("ai: prompts: %s: version must be >= 1", e.Name())
+			return fmt.Errorf("ai: prompts: %s: version must be >= 1", e.Name())
 		}
 		if strings.TrimSpace(body) == "" {
-			return nil, fmt.Errorf("ai: prompts: %s: empty body", e.Name())
+			return fmt.Errorf("ai: prompts: %s: empty body", e.Name())
 		}
 		r.builtin[task] = builtinPrompt{body: body, version: meta.Version}
 	}
+	return nil
+}
+
+// requireBuiltinCoverage fails when a task has no builtin prompt.
+func requireBuiltinCoverage(r *PromptRegistry) error {
 	for name := range taskNames {
 		if _, ok := r.builtin[name]; !ok {
-			return nil, fmt.Errorf("ai: prompts: no builtin prompt for task %q", name)
+			return fmt.Errorf("ai: prompts: no builtin prompt for task %q", name)
 		}
 	}
+	return nil
+}
+
+// resolveOverrides applies the per-task prompt overrides from config.
+func resolveOverrides(r *PromptRegistry, tasks map[string]config.AITask) error {
 	for name, cfg := range tasks {
 		task := TaskName(name)
 		if _, ok := taskByName(name); !ok {
-			return nil, fmt.Errorf("ai: prompts: ai.tasks[%q]: unknown task", name)
+			return fmt.Errorf("ai: prompts: ai.tasks[%q]: unknown task", name)
 		}
 		if cfg.PromptInline != "" && cfg.PromptFile != "" {
-			return nil, fmt.Errorf("ai: prompts: ai.tasks[%q]: inline and file are mutually exclusive", name)
+			return fmt.Errorf("ai: prompts: ai.tasks[%q]: inline and file are mutually exclusive", name)
 		}
 		body := r.builtin[task].body
 		ver := fmt.Sprintf("v%d", r.builtin[task].version)
@@ -98,7 +123,7 @@ func NewPromptRegistry(tasks map[string]config.AITask, fsys fs.FS) (*PromptRegis
 		case cfg.PromptFile != "":
 			raw, err := os.ReadFile(cfg.PromptFile)
 			if err != nil {
-				return nil, fmt.Errorf("ai: prompts: ai.tasks[%q]: %w", name, err)
+				return fmt.Errorf("ai: prompts: ai.tasks[%q]: %w", name, err)
 			}
 			body = string(raw)
 			ver = customVersion(cfg.PromptVersion, body)
@@ -106,7 +131,7 @@ func NewPromptRegistry(tasks map[string]config.AITask, fsys fs.FS) (*PromptRegis
 		r.body[task] = body
 		r.ver[task] = ver
 	}
-	return r, nil
+	return nil
 }
 
 // customVersion returns the explicit version or a content hash so cache keys
