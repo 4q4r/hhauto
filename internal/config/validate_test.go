@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -102,6 +103,19 @@ func TestValidateAcceptsValidWebhooks(t *testing.T) {
 	}
 	if err := Validate(c); err != nil {
 		t.Fatalf("Validate(valid webhooks) = %v, want nil", err)
+	}
+}
+
+func TestValidateAcceptsReasoningEffortEnumAndZeroTemperature(t *testing.T) {
+	c := validConfig()
+	c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat"}}
+	for i, effort := range []string{"", "none", "minimal", "low", "medium", "high", "xhigh", "max"} {
+		c.AI.Models = map[string]AIModel{
+			fmt.Sprintf("m%d", i): {Provider: "gpt", ReasoningEffort: effort, Temperature: 0},
+		}
+		if err := Validate(c); err != nil {
+			t.Fatalf("Validate(reasoning_effort %q, temperature 0) = %v, want nil", effort, err)
+		}
 	}
 }
 
@@ -259,6 +273,22 @@ func TestValidateErrors(t *testing.T) {
 				c.AI.Models = map[string]AIModel{"m": {Provider: "gpt", FallbackModelRef: "ghost"}}
 			},
 			wantErr: "fallback",
+		},
+		{
+			name: "ai model reasoning_effort invalid",
+			mutate: func(c *Config) {
+				c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat"}}
+				c.AI.Models = map[string]AIModel{"m": {Provider: "gpt", ReasoningEffort: "extreme"}}
+			},
+			wantErr: "reasoning_effort",
+		},
+		{
+			name: "negative ai model temperature",
+			mutate: func(c *Config) {
+				c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat"}}
+				c.AI.Models = map[string]AIModel{"m": {Provider: "gpt", Temperature: -0.1}}
+			},
+			wantErr: "temperature",
 		},
 		{
 			name: "webhook without url",
