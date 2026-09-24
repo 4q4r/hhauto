@@ -2,6 +2,7 @@ package captcha
 
 import (
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -25,10 +26,14 @@ type resolver struct {
 // Supported protocols: "2captcha" (in.php/res.php) and "anticaptcha"
 // (createTask/getTaskResult); base_url selects the concrete service clone.
 //
+// logger receives solver warnings (inline-key fallback and similar); pass
+// the application's redaction-wrapped logger here. nil falls back to
+// slog.Default() so tests and minimal embedders keep working.
+//
 // Provider-level problems (unknown protocol, missing key source, negative
 // timings, malformed base_url) fail fast here; chain-level problems
 // (unknown provider name, empty chain) surface from ChainFor.
-func New(providers map[string]config.CaptchaProvider, chainFor func(accountID string) []string) (Resolver, error) {
+func New(providers map[string]config.CaptchaProvider, chainFor func(accountID string) []string, logger *slog.Logger) (Resolver, error) {
 	if len(providers) == 0 {
 		return nil, ErrNoProviders
 	}
@@ -40,13 +45,13 @@ func New(providers map[string]config.CaptchaProvider, chainFor func(accountID st
 	for name, cfg := range providers {
 		switch cfg.Protocol {
 		case "2captcha":
-			s, err := newTwoCaptcha(name, cfg)
+			s, err := newTwoCaptcha(name, cfg, logger)
 			if err != nil {
 				return nil, err
 			}
 			solvers[name] = s
 		case "anticaptcha":
-			s, err := newAntiCaptcha(name, cfg)
+			s, err := newAntiCaptcha(name, cfg, logger)
 			if err != nil {
 				return nil, err
 			}

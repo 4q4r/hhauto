@@ -82,9 +82,7 @@ func writeMapJSON(w http.ResponseWriter, m map[string]any) {
 
 func newAntiCaptchaFake(t *testing.T, f *antiCaptchaFake) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(f.handler))
-	t.Cleanup(srv.Close)
-	return srv
+	return newTLSCaptchaServer(t, http.HandlerFunc(f.handler))
 }
 
 func antiCaptchaCfg(baseURL string) config.CaptchaProvider {
@@ -110,7 +108,7 @@ func TestAntiCaptchaImageSolveSubmitPollText(t *testing.T) {
 	}
 	srv := newAntiCaptchaFake(t, fake)
 
-	s, err := newAntiCaptcha("ac-main", antiCaptchaCfg(srv.URL))
+	s, err := newAntiCaptcha("ac-main", antiCaptchaCfg(srv.URL), nil)
 	if err != nil {
 		t.Fatalf("newAntiCaptcha() error = %v, want nil", err)
 	}
@@ -175,7 +173,7 @@ func TestAntiCaptchaHCaptchaAndTurnstileTasks(t *testing.T) {
 			}
 			srv := newAntiCaptchaFake(t, fake)
 
-			s, _ := newAntiCaptcha("ac-"+tc.name, antiCaptchaCfg(srv.URL))
+			s, _ := newAntiCaptcha("ac-"+tc.name, antiCaptchaCfg(srv.URL), nil)
 
 			sol, err := s.Solve(context.Background(), tc.ch)
 			if err != nil {
@@ -206,7 +204,7 @@ func TestAntiCaptchaCreateTaskProtocolError(t *testing.T) {
 	}}
 	srv := newAntiCaptchaFake(t, fake)
 
-	s, _ := newAntiCaptcha("ac-bad", antiCaptchaCfg(srv.URL))
+	s, _ := newAntiCaptcha("ac-bad", antiCaptchaCfg(srv.URL), nil)
 
 	_, err := s.Solve(context.Background(), Challenge{Type: TypeImage, ImageB64: "aGVsbG8="})
 	var pe *ProtocolError
@@ -228,7 +226,7 @@ func TestAntiCaptchaPollProtocolError(t *testing.T) {
 	}
 	srv := newAntiCaptchaFake(t, fake)
 
-	s, _ := newAntiCaptcha("ac-unsolv", antiCaptchaCfg(srv.URL))
+	s, _ := newAntiCaptcha("ac-unsolv", antiCaptchaCfg(srv.URL), nil)
 
 	_, err := s.Solve(context.Background(), Challenge{Type: TypeImage, ImageB64: "aGVsbG8="})
 	var pe *ProtocolError
@@ -244,7 +242,7 @@ func TestAntiCaptchaSolveTimeout(t *testing.T) {
 	}
 	srv := newAntiCaptchaFake(t, fake)
 
-	s, _ := newAntiCaptcha("ac-slow", antiCaptchaCfg(srv.URL))
+	s, _ := newAntiCaptcha("ac-slow", antiCaptchaCfg(srv.URL), nil)
 	s.pollInterval = time.Millisecond
 	s.solveTimeout = 30 * time.Millisecond
 
@@ -261,7 +259,7 @@ func TestAntiCaptchaBalance(t *testing.T) {
 	fake := &antiCaptchaFake{balance: 12.3456}
 	srv := newAntiCaptchaFake(t, fake)
 
-	s, _ := newAntiCaptcha("ac-bal", antiCaptchaCfg(srv.URL))
+	s, _ := newAntiCaptcha("ac-bal", antiCaptchaCfg(srv.URL), nil)
 
 	bal, err := s.Balance(context.Background())
 	if err != nil {
@@ -290,7 +288,7 @@ func TestAntiCaptchaKeyEnvAndValidation(t *testing.T) {
 		cfg.Key = ""
 		cfg.KeyEnv = "HHAUTO_TEST_AC_KEY"
 
-		s, err := newAntiCaptcha("ac-env", cfg)
+		s, err := newAntiCaptcha("ac-env", cfg, nil)
 		if err != nil {
 			t.Fatalf("newAntiCaptcha() error = %v, want nil", err)
 		}
@@ -307,38 +305,84 @@ func TestAntiCaptchaKeyEnvAndValidation(t *testing.T) {
 	t.Run("no key is config error", func(t *testing.T) {
 		cfg := antiCaptchaCfg(srv.URL)
 		cfg.Key = ""
-		if _, err := newAntiCaptcha("ac-nokey", cfg); err == nil {
+		if _, err := newAntiCaptcha("ac-nokey", cfg, nil); err == nil {
 			t.Fatal("newAntiCaptcha() error = nil, want config error")
 		}
 	})
 
 	t.Run("bad base url is config error", func(t *testing.T) {
 		cfg := antiCaptchaCfg("javascript:alert(1)")
-		if _, err := newAntiCaptcha("ac-badurl", cfg); err == nil {
+		if _, err := newAntiCaptcha("ac-badurl", cfg, nil); err == nil {
 			t.Fatal("newAntiCaptcha() error = nil, want config error for non-http base_url")
 		}
 	})
 
 	t.Run("unsupported challenge", func(t *testing.T) {
-		s, _ := newAntiCaptcha("ac-u", antiCaptchaCfg(srv.URL))
+		s, _ := newAntiCaptcha("ac-u", antiCaptchaCfg(srv.URL), nil)
 		if _, err := s.Solve(context.Background(), Challenge{Type: "geetest"}); !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("Solve() error = %v, want ErrUnsupported", err)
 		}
 	})
 
 	t.Run("missing image body", func(t *testing.T) {
-		s, _ := newAntiCaptcha("ac-empty", antiCaptchaCfg(srv.URL))
+		s, _ := newAntiCaptcha("ac-empty", antiCaptchaCfg(srv.URL), nil)
 		if _, err := s.Solve(context.Background(), Challenge{Type: TypeImage}); err == nil {
 			t.Fatal("Solve() error = nil, want validation error for empty body")
 		}
 	})
 }
 
+func TestAntiCaptchaParallelSolveOnSharedSolver(t *testing.T) {
+	fake := &antiCaptchaFake{
+		createReply: map[string]any{"errorId": 0, "taskId": 9},
+		pollReplies: []map[string]any{ready(map[string]any{"text": "tok"})},
+	}
+	srv := newAntiCaptchaFake(t, fake)
+
+	var logBuf syncedBuffer
+	cfg := antiCaptchaCfg(srv.URL)
+	cfg.KeyEnv = "HHAUTO_TEST_PARALLEL_AC" // unset: exercises the inline-key fallback path
+	s, err := newAntiCaptcha("ac-parallel", cfg, newTestLogger(&logBuf))
+	if err != nil {
+		t.Fatalf("newAntiCaptcha() error = %v, want nil", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 24; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sol, err := s.Solve(context.Background(), Challenge{Type: TypeImage, ImageB64: "aGVsbG8="})
+			if err != nil {
+				t.Errorf("Solve() error = %v, want nil", err)
+				return
+			}
+			if sol.Token != "tok" {
+				t.Errorf("token = %q, want tok", sol.Token)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestAntiCaptchaHTTPSOnlyBaseURL(t *testing.T) {
+	s, err := newAntiCaptcha("ac-plain", antiCaptchaCfg("http://api.anticaptcha.example"), nil)
+	if err == nil {
+		t.Fatal("newAntiCaptcha() error = nil, want config error for http:// base_url (key would travel in cleartext)")
+	}
+	if !strings.Contains(err.Error(), "https") {
+		t.Fatalf("error = %v, want it to mention https", err)
+	}
+	if s != nil {
+		t.Fatal("solver must be nil on config error")
+	}
+}
+
 func TestAntiCaptchaHTTPError(t *testing.T) {
 	fake := &antiCaptchaFake{forceStatus: http.StatusBadGateway}
 	srv := newAntiCaptchaFake(t, fake)
 
-	s, _ := newAntiCaptcha("ac-502", antiCaptchaCfg(srv.URL))
+	s, _ := newAntiCaptcha("ac-502", antiCaptchaCfg(srv.URL), nil)
 	if _, err := s.Balance(context.Background()); err == nil {
 		t.Fatal("Balance() error = nil, want error for HTTP 502")
 	}
