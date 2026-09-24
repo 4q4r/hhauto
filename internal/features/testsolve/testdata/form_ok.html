@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>Анкета кандидата — Ромашка</title></head>
+<body>
+<form action="/formResponse" method="POST">
+  <h1>Анкета кандидата</h1>
+  <div role="listitem">
+    <label for="q1">Сколько лет вы разрабатываете на Go?</label>
+    <input id="q1" type="text" required>
+  </div>
+  <div role="listitem">
+    <label for="q2">Готовы ли вы к переезду?</label>
+    <select id="q2" name="relocate">
+      <option value="yes">Да, готов</option>
+      <option value="no">Нет</option>
+      <option value="later">Обсудим позже</option>
+    </select>
+  </div>
+  <div role="listitem">
+    <span>Опыт с распределёнными системами</span>
+    <input type="radio" name="dist" value="2y" id="d1"><label for="d1">До 2 лет</label>
+    <input type="radio" name="dist" value="5y" id="d2"><label for="d2">Более 2 лет</label>
+  </div>
+  <div role="listitem">
+    <textarea aria-label="Комментарий" name="comment" placeholder="Что-то ещё?"></textarea>
+  </div>
+  <div role="listitem"><input type="submit" value="Отправить"></div>
+</form>
+</body>
+</html>
