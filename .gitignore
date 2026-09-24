@@ -1,1 +1,13 @@
+/hhauto
+/hhauto.exe
+*.db
+*.db-wal
+*.db-shm
+/.hhauto/
+/artifacts/
+*.log
+coverage.out
+.env
+cookies.txt
+vendor/
 /.sdd/
