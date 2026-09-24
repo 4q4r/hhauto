@@ -16,8 +16,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
-	"strconv"
-	"strings"
 	"time"
 
 	"hhauto/internal/captcha"
@@ -46,6 +44,7 @@ type Options struct {
 	ChainFor featurekit.ChainFor // per-account captcha chain; nil = none
 	Pacer    featurekit.Pacer    // nil = no delay
 	Now      func() time.Time
+	Rand     *rand.Rand // jitter source; nil → time-seeded default
 	Log      *slog.Logger
 }
 
@@ -53,7 +52,6 @@ type Options struct {
 type Feature struct {
 	opt Options
 	log *slog.Logger
-	rnd *rand.Rand
 }
 
 // New builds the feature.
@@ -64,7 +62,10 @@ func New(o Options) *Feature {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	return &Feature{opt: o, log: o.Log, rnd: rand.New(rand.NewSource(time.Now().UnixNano()))}
+	if o.Rand == nil {
+		o.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
+	}
+	return &Feature{opt: o, log: o.Log}
 }
 
 // Name implements features.Feature.
@@ -81,29 +82,31 @@ type LiftPayload struct {
 
 // RegisterTasks registers the schedule spec and seeds one lift task per
 // enabled account for the current 4h window (queue dedup makes repeated
-// registrations idempotent).
+// registrations idempotent). The jitter range is sampled here — once, in
+// [min,max] — and baked into the seeded deadline; Spec.Jitter stays 0 so
+// the engine never adds a second layer on top (Wave 3 review fix 4).
 func (f *Feature) RegisterTasks(ctx context.Context, q queue.Queue, reg *scheduler.Registry) error {
 	cfg := f.opt.Config
-	perDay := cfg.Features.AutoLift.PerDay
-	_, maxJit, err := featurekit.ParseJitterRange(cfg.Features.AutoLift.Jitter)
+	minJ, maxJ, err := featurekit.ParseJitterRange(cfg.Features.AutoLift.Jitter)
 	if err != nil {
 		return fmt.Errorf("autolift: %w", err)
 	}
 	reg.Add(registryName, scheduler.Spec{
 		TZ:     cfg.General.Timezone,
-		Times:  scheduleTimes(perDay),
+		Times:  scheduleTimes(cfg.Features.AutoLift.PerDay),
 		Days:   scheduler.All,
-		Jitter: maxJit,
+		Jitter: 0,
 	})
 
 	window := featurekit.LiftWindow(f.opt.Now())
+	jitter := featurekit.JitterDuration(minJ, maxJ, f.opt.Rand)
 	for id := range cfg.Accounts {
 		err := q.Enqueue(ctx, queue.Task{
 			AccountID: id,
 			Kind:      queue.KindLift,
 			DedupKey:  "lift:" + window,
 			Priority:  queue.PrioLift,
-			Deadline:  f.opt.Now().Add(timer4h),
+			Deadline:  f.opt.Now().Add(timer4h + jitter),
 			Payload:   LiftPayload{AccountID: id, Window: window},
 		})
 		if err != nil {
@@ -118,7 +121,8 @@ func (f *Feature) HandleTask(ctx context.Context, t queue.Task) error {
 	return f.RunAccount(ctx, t.AccountID)
 }
 
-// scheduleTimes spreads PerDay evenly over 24h ("00:00","04:00",... for 6).
+// scheduleTimes spreads PerDay evenly over 24h with a rounded step so
+// non-divisor values leave no tail hole ("00:00","04:48",… for 5).
 func scheduleTimes(perDay int) []string {
 	if perDay <= 0 {
 		perDay = 6
@@ -126,14 +130,14 @@ func scheduleTimes(perDay int) []string {
 	if perDay > 24 {
 		perDay = 24
 	}
-	step := 24 / perDay
+	stepMin := (24*60 + perDay/2) / perDay
 	times := make([]string, 0, perDay)
 	for k := 0; k < perDay; k++ {
-		h := strconv.Itoa(k * step)
-		if len(h) == 1 {
-			h = "0" + h
+		m := k * stepMin
+		if m >= 24*60 {
+			break // never spill past midnight
 		}
-		times = append(times, h+":00")
+		times = append(times, fmt.Sprintf("%02d:%02d", m/60, m%60))
 	}
 	return times
 }
@@ -302,23 +306,9 @@ func (f *Feature) touchWithCaptchaRetry(ctx context.Context, accountID string, a
 	return api.TouchResume(ctx, hash) // the single sanctioned repeat
 }
 
-// publishedStatuses lists the status spellings hh serves for a published
-// resume: the dictionary id ("published") and the Russian display name the
-// SSR state wraps first (verified against the /shards payload shapes).
-var publishedStatuses = []string{"published", "опубликовано"}
-
-// isLiftable filters published+searchable resumes.
+// isLiftable filters published+searchable resumes (shared status helper).
 func isLiftable(r hhapi.Resume) bool {
-	if !r.Searchable {
-		return false
-	}
-	s := strings.ToLower(strings.TrimSpace(r.Status))
-	for _, ok := range publishedStatuses {
-		if s == ok {
-			return true
-		}
-	}
-	return false
+	return r.Searchable && featurekit.ResumeLiftable(r.Status)
 }
 
 func byHash(rows []store.Resume, hash string) (store.Resume, bool) {
