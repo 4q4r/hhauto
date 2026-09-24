@@ -6,9 +6,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -709,6 +711,19 @@ func captchaBalance(ctx context.Context, p config.CaptchaProvider) (float64, err
 	}
 	base := strings.TrimRight(p.BaseURL, "/")
 	client := &http.Client{Timeout: 10 * time.Second}
+	// Transport errors embed the full request URL — the balance key is in
+	// the 2captcha query string, and doctor prints errors to stdout. Cut
+	// the query before the error escapes.
+	redactURLErr := func(err error) error {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			if u, perr := url.Parse(ue.URL); perr == nil {
+				u.RawQuery = "key=REDACTED"
+				ue.URL = u.String()
+			}
+		}
+		return err
+	}
 	switch p.Protocol {
 	case "2captcha":
 		url := base + "/res.php?key=" + key + "&action=getbalance&json=1"
@@ -718,7 +733,7 @@ func captchaBalance(ctx context.Context, p config.CaptchaProvider) (float64, err
 		}
 		resp, err := client.Do(req)
 		if err != nil {
-			return 0, err
+			return 0, redactURLErr(err)
 		}
 		defer func() { _ = resp.Body.Close() }()
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
@@ -742,7 +757,7 @@ func captchaBalance(ctx context.Context, p config.CaptchaProvider) (float64, err
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := client.Do(req)
 		if err != nil {
-			return 0, err
+			return 0, redactURLErr(err)
 		}
 		defer func() { _ = resp.Body.Close() }()
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))

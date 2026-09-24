@@ -305,6 +305,31 @@ func TestValidateErrors(t *testing.T) {
 			wantErr: "preset",
 		},
 		{
+			name:    "pacing.active_window typo",
+			mutate:  func(c *Config) { c.Pacing.ActiveWindow = "08:00-2200" },
+			wantErr: "pacing.active_window",
+		},
+		{
+			name:    "pacing.active_window en-dash",
+			mutate:  func(c *Config) { c.Pacing.ActiveWindow = "08:00–22:00" },
+			wantErr: "pacing.active_window",
+		},
+		{
+			name:    "warmup.active_hours en-dash",
+			mutate:  func(c *Config) { c.Warmup.ActiveHours = "10:00–19:00" },
+			wantErr: "warmup.active_hours",
+		},
+		{
+			name:    "pacing.mode unknown",
+			mutate:  func(c *Config) { c.Pacing.Mode = "turbo" },
+			wantErr: "pacing.mode",
+		},
+		{
+			name:    "chatops qa_base enabled (reserved in v1)",
+			mutate:  func(c *Config) { c.Features.ChatOps.QABaseEnabled = true },
+			wantErr: "qa_base",
+		},
+		{
 			name: "telegram webhook without chat_id",
 			mutate: func(c *Config) {
 				c.Webhook = map[string]Webhook{"tg": {URL: "https://x", Preset: "telegram"}}

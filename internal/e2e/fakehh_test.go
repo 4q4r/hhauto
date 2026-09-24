@@ -104,6 +104,24 @@ type fakeHH struct {
 	chatDataLookups map[string]int
 	popupHits       int
 	applyTries      map[int64]int
+
+	// onMutation is the kill-switch test seam: called (under the fake's
+	// lock) on every mutation POST, before the mutation settles.
+	onMutation func()
+
+	// extraInbound carries messages injected mid-scenario (the dry-run →
+	// real seam: the real pass needs fresh inbound work to classify).
+	extraInbound map[string][]any
+}
+
+// appendInbound makes the fake serve one more inbound message in chatID.
+func (f *fakeHH) appendInbound(chatID, id, text string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.extraInbound == nil {
+		f.extraInbound = map[string][]any{}
+	}
+	f.extraInbound[chatID] = append(f.extraInbound[chatID], f.msgItem(id, chatParticipantHR, text, time.Minute))
 }
 
 func newFakeHH(t *testing.T) *fakeHH {
@@ -155,6 +173,9 @@ func (f *fakeHH) track(_ http.ResponseWriter, _ *http.Request, mutation bool) {
 	f.totalRequests++
 	if mutation {
 		f.mutationPosts++
+		if f.onMutation != nil {
+			f.onMutation() // test seam: fires on every mutation POST
+		}
 	}
 }
 
@@ -297,13 +318,17 @@ func (f *fakeHH) msgItem(id, from, text string, age time.Duration) map[string]an
 }
 
 func (f *fakeHH) chatHistory(chatID string) []any {
+	var extra []any
+	if f.extraInbound != nil {
+		extra = f.extraInbound[chatID]
+	}
 	switch chatID {
 	case chatQuestion:
-		return []any{f.msgItem(questionMessageID, chatParticipantHR, questionText, 2*time.Minute)}
+		return append(extra, f.msgItem(questionMessageID, chatParticipantHR, questionText, 2*time.Minute))
 	case chatRejection:
-		return []any{f.msgItem(rejectionMessageID, chatParticipantHR, rejectionText, 3*time.Minute)}
+		return append(extra, f.msgItem(rejectionMessageID, chatParticipantHR, rejectionText, 3*time.Minute))
 	case chatTest:
-		return []any{f.msgItem(testMessageID, chatParticipantHR, testText, 4*time.Minute)}
+		return append(extra, f.msgItem(testMessageID, chatParticipantHR, testText, 4*time.Minute))
 	case chatWarmup:
 		// Inbound first, then OUR outgoing message 10h ago: this is what
 		// makes the chat silence-expired for the warmup ladder.

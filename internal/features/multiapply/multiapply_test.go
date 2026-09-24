@@ -1,6 +1,7 @@
 package multiapply
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,6 +17,61 @@ import (
 	"hhauto/internal/store"
 	"hhauto/internal/webhook"
 )
+
+// И5 regression: a reconciled apply is a real response on the wire — the
+// funnel must see it, so recordApplied emits EvApplySent flagged reconciled.
+func TestReconciledApplyEmitsWebhook(t *testing.T) {
+	h := newHarness(t, nil)
+	h.searchItems = []string{vacItem(777025, "Go Dev", 9001, "Corp LLC", "")}
+	h.ratings[9001] = hhRating(4.5, 4.7, 100)
+	h.applyErr = func(int, int64, string) error {
+		return &respErr{status: 502, body: "bad gateway"}
+	}
+	h.negPages = [][]hhapi.Negotiation{{{ID: "n1", VacancyID: 777025, State: "ACTIVE"}}}
+	h.run(t)
+
+	if mustMetrics(t, h.db)["apply.reconciled"] != 1 {
+		t.Fatalf("metrics = %v, want apply.reconciled=1", mustMetrics(t, h.db))
+	}
+	evs := h.notify.ofType(webhook.EvApplySent)
+	if len(evs) != 1 {
+		t.Fatalf("EvApplySent emissions = %d, want 1", len(evs))
+	}
+	if evs[0].Payload["reconciled"] != true {
+		t.Fatalf("reconciled apply event payload = %+v, want reconciled:true", evs[0].Payload)
+	}
+}
+
+// И1 regression: a tripped kill switch stops the run between vacancies —
+// the vacancy in flight settles, the rest of the batch is not started.
+func TestKillSwitchStopsVacancyBatch(t *testing.T) {
+	h := newHarness(t, nil)
+	h.searchItems = []string{
+		vacItem(777001, "Go Backend", 9001, "Corp LLC", ""),
+		vacItem(777002, "Go Backend 2", 9001, "Corp LLC", ""),
+	}
+	h.searchFound = 2
+	h.ratings[9001] = hhRating(4.5, 4.7, 100)
+	h.popupByVac[777001] = popupWith(true, false, "ENABLED")
+	h.popupByVac[777002] = popupWith(true, false, "ENABLED")
+
+	f := h.feature(t)
+	h.q, h.reg = queue.New(), scheduler.NewRegistry()
+	if err := f.RegisterTasks(t.Context(), h.q, h.reg); err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	f.opt.Stopped = func(context.Context) bool {
+		seen++
+		return seen > 1 // trips after the first vacancy has settled
+	}
+	if err := f.RunProfile(t.Context(), "run1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.applyCalls) != 1 || h.applyCalls[0] != 777001 {
+		t.Fatalf("apply calls = %v, want only the first vacancy [777001]", h.applyCalls)
+	}
+}
 
 func TestHappyPathSearchSourceAppliesWithLetter(t *testing.T) {
 	h := newHarness(t, func(c *config.Config) {

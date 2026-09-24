@@ -59,17 +59,34 @@ func containsSensitiveKey(key string) bool {
 }
 
 // redactAttr masks one attribute: sensitive keys are masked entirely, other
-// string values are scanned for embedded credentials. Non-string values are
-// left untouched.
+// string values are scanned for embedded credentials. Any-typed values
+// (errors especially) are formatted and scanned the same way — but left
+// untouched when nothing fires, so structured non-string values keep their
+// type. Group values are redacted recursively.
 func redactAttr(a slog.Attr) slog.Attr {
-	if a.Value.Kind() != slog.KindString {
-		return a
+	switch a.Value.Kind() {
+	case slog.KindString:
+		s := a.Value.String()
+		if containsSensitiveKey(a.Key) {
+			return slog.String(a.Key, maskSecret(s))
+		}
+		return slog.String(a.Key, redactString(s))
+	case slog.KindGroup:
+		attrs := a.Value.Group()
+		for i := range attrs {
+			attrs[i] = redactAttr(attrs[i])
+		}
+		return slog.Attr{Key: a.Key, Value: slog.GroupValue(attrs...)}
+	case slog.KindAny:
+		s := fmt.Sprint(a.Value.Any())
+		if containsSensitiveKey(a.Key) {
+			return slog.String(a.Key, maskSecret(s))
+		}
+		if red := redactString(s); red != s {
+			return slog.String(a.Key, red)
+		}
 	}
-	s := a.Value.String()
-	if containsSensitiveKey(a.Key) {
-		return slog.String(a.Key, maskSecret(s))
-	}
-	return slog.String(a.Key, redactString(s))
+	return a
 }
 
 // redactHandler wraps another slog.Handler and redacts every record.

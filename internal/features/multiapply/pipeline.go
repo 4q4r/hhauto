@@ -372,8 +372,15 @@ func (f *Feature) recordApplied(ctx context.Context, runID, accountID, resumeHas
 	f.createApplication(ctx, runID, accountID, resumeHash, v, "applied", letter, "")
 	f.incr(ctx, metric)
 	f.bumpEmployer(ctx, accountID, v.EmployerID)
-	if f.opt.Notifier != nil && metric == "apply.ok" {
-		f.opt.Notifier.Emit(webhookEvent(accountID, runID, v))
+	// Reconciled applies land on the wire as real responses too — the
+	// funnel must see them: EvApplySent fires for both, reconciled carries
+	// the reconciled:true flag.
+	if f.opt.Notifier != nil && (metric == "apply.ok" || metric == "apply.reconciled") {
+		ev := webhookEvent(accountID, runID, v)
+		if metric == "apply.reconciled" {
+			ev.Payload["reconciled"] = true
+		}
+		f.opt.Notifier.Emit(ev)
 	}
 }
 

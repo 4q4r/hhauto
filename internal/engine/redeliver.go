@@ -52,7 +52,7 @@ func newRedeliverer(endpoints []config.Webhook, reg proxy.Registry, log *slog.Lo
 	for _, cfg := range endpoints {
 		t, err := newRedeliverTarget(cfg, reg)
 		if err != nil {
-			log.Error("outbox redelivery endpoint disabled: configuration error", "err", err)
+			log.Error("outbox redelivery endpoint disabled: configuration error", "err", webhook.MaskEndpoint(err.Error()))
 			continue
 		}
 		r.targets[cfg.URL] = t
@@ -101,11 +101,11 @@ func newRedeliverTarget(cfg config.Webhook, reg proxy.Registry) (*redeliverTarge
 func (r *redeliverer) Redeliver(ctx context.Context, item webhook.OutboxItem) error {
 	t, ok := r.targets[item.EndpointID]
 	if !ok {
-		return fmt.Errorf("outbox redelivery: unknown endpoint %q", item.EndpointID)
+		return fmt.Errorf("outbox redelivery: unknown endpoint %q", webhook.MaskEndpoint(item.EndpointID))
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.url, bytes.NewReader(item.Payload))
 	if err != nil {
-		return fmt.Errorf("outbox redelivery %s: %w", t.url, err)
+		return fmt.Errorf("outbox redelivery %s: %v", webhook.MaskEndpoint(t.url), webhook.MaskEndpoint(err.Error()))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if t.preset == "raw" {
@@ -115,7 +115,7 @@ func (r *redeliverer) Redeliver(ctx context.Context, item webhook.OutboxItem) er
 	}
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("outbox redelivery %s: POST: %w", t.url, err)
+		return fmt.Errorf("outbox redelivery %s: POST: %v", webhook.MaskEndpoint(t.url), webhook.MaskEndpoint(err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }() // body drained; close error is not actionable
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))

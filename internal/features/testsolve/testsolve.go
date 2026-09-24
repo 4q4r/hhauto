@@ -33,6 +33,7 @@ import (
 	"hhauto/internal/features/kit11"
 	"hhauto/internal/proxy"
 	"hhauto/internal/queue"
+	"hhauto/internal/review"
 	"hhauto/internal/scheduler"
 	"hhauto/internal/store"
 	"hhauto/internal/webhook"
@@ -87,6 +88,13 @@ type Solver struct {
 	Pacer featurekit.Pacer
 	Log   *slog.Logger
 	Now   func() time.Time
+
+	// Review is the review-queue fan-out (dedup + needs_human webhook).
+	// nil = storage-only adds (unwired tests).
+	Review review.Reviewer
+	// Stopped reports the kill switch. nil = never stopped (unwired tests).
+	// Checked between AI answer batches inside one form.
+	Stopped func(ctx context.Context) bool
 
 	// Fetch overrides page retrieval (tests). Signature: (ctx, accountID, url).
 	Fetch func(ctx context.Context, accountID, url string) ([]byte, error)
@@ -204,6 +212,12 @@ func (s *Solver) HandleSolveTest(ctx context.Context, task queue.Task) error {
 	var answers []testAnswerEntry
 	unsure := false
 	for start := 0; start < len(form.Fields); start += maxBatch {
+		if s.Stopped != nil && s.Stopped(ctx) {
+			// Kill switch: no further AI answer batches; the draft is
+			// stored with the answers gathered so far (graceful exit).
+			log.Info("testsolve: kill switch tripped — stopping the answer batches", "url", p.URL)
+			break
+		}
 		end := min(start+maxBatch, len(form.Fields))
 		batchAnswers, batchUnsure, err := s.answerBatch(ctx, p.AccountID, form.Fields[start:end], profileText)
 		if err != nil {
@@ -510,8 +524,16 @@ func (s *Solver) alreadyDrafted(ctx context.Context, accountID, rawURL string) (
 // review records an abort/flag in the review queue and returns nil: these are
 // terminal decisions, not retryable failures.
 func (s *Solver) review(ctx context.Context, accountID, kind, reason, url string) error {
-	if _, err := s.DB.ReviewItemsAdd(ctx, accountID, kind, reason,
-		mustJSON(map[string]any{"url": url})); err != nil {
+	payload := mustJSON(map[string]any{"url": url})
+	if s.Review != nil {
+		// Wired reviewer: dedup of open items + needs_human webhook fan-out.
+		if _, err := s.Review.Add(ctx, accountID, kind, reason, payload); err != nil {
+			return fmt.Errorf("testsolve: review add: %w", err)
+		}
+		s.log().Info("testsolve: review recorded", "kind", kind, "url", url, "account", accountID)
+		return nil
+	}
+	if _, err := s.DB.ReviewItemsAdd(ctx, accountID, kind, reason, payload); err != nil {
 		return fmt.Errorf("testsolve: review add: %w", err)
 	}
 	s.log().Info("testsolve: review recorded", "kind", kind, "url", url, "account", accountID)

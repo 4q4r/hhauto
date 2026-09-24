@@ -32,6 +32,7 @@ import (
 	"hhauto/internal/features/warmup"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/queue"
+	"hhauto/internal/review"
 	"hhauto/internal/scheduler"
 	"hhauto/internal/store"
 	"hhauto/internal/webhook"
@@ -98,6 +99,12 @@ type Feature struct {
 	LeaveDelay func() time.Duration
 	// Sleep overrides retry backoff (tests).
 	Sleep func(time.Duration)
+	// Review is the review-queue fan-out (dedup + needs_human webhook).
+	// nil = storage-only adds (unwired tests).
+	Review review.Reviewer
+	// Stopped reports the kill switch (channel 1/2/3). nil = never stopped
+	// (unwired tests). Checked between chat syncs inside one batch.
+	Stopped func(ctx context.Context) bool
 }
 
 // New wires the feature (internal detector included).
@@ -195,6 +202,12 @@ func (f *Feature) HandleChatSync(ctx context.Context, task queue.Task) error {
 			}
 		}
 		for _, c := range chats {
+			if f.Stopped != nil && f.Stopped(ctx) {
+				// Kill switch: finish the batch gracefully — the chat being
+				// processed has settled; the rest are not started.
+				f.Log.Info("chatops: kill switch tripped — stopping the sync pass", "account", accountID)
+				return nil
+			}
 			if err := f.syncChat(ctx, api, accountID, c, negStates); err != nil {
 				if kit11.IsTransient(err) {
 					return err // abort the pass; the scheduler retries
@@ -498,7 +511,8 @@ func (f *Feature) handleQuestion(ctx context.Context, api hhapi.HHAPI, accountID
 	}
 
 	draft := deref(verdict.Reply)
-	if !f.Cfg.Features.ChatOps.AutoReply {
+	autoReply := f.Cfg.Features.ChatOps.AutoReply == nil || *f.Cfg.Features.ChatOps.AutoReply
+	if !autoReply {
 		// Drafts are still produced for the review queue; a human sends them.
 		f.review(ctx, accountID, "reply_draft", "auto_reply disabled — draft for manual send",
 			map[string]any{"chat": chat.ChatikChatID, "draft": draft})
@@ -679,8 +693,12 @@ func (f *Feature) handleTestAssignment(ctx context.Context, api hhapi.HHAPI, acc
 				})
 			}
 		}
-		if err := f.recordTest(ctx, accountID, chat, artifact, testID, "solved", "submitted"); err != nil {
-			f.Log.Error("chatops: record test", "err", err)
+		// Dry-run records no solved/submitted artifact: the assessment row
+		// must reflect a fact, and in dry-run nothing was submitted.
+		if !f.Cfg.General.DryRun {
+			if err := f.recordTest(ctx, accountID, chat, artifact, testID, "solved", "submitted"); err != nil {
+				f.Log.Error("chatops: record test", "err", err)
+			}
 		}
 	case sendAmbiguous:
 		// RECONCILE by reading the chat: did our answers land?
@@ -879,8 +897,10 @@ func (f *Feature) maybeLeave(ctx context.Context, api hhapi.HHAPI, accountID str
 	}
 
 	if f.Cfg.General.DryRun {
-		_ = f.DB.IntentsMarkDone(ctx, intentID)
-		_ = f.DB.FeatureStateSet(ctx, featureName, accountID, "leave:"+c.ID, "done")
+		// Dry-run records no "left" fact and leaves the intent re-armable
+		// (§6): done would both swallow the real leave forever and suppress
+		// maybeLeave via the "done" feature state.
+		_ = f.DB.IntentsMarkAbandoned(ctx, intentID)
 		f.Log.Info("chatops: dry-run, leave skipped", "chat", c.ID)
 		return nil
 	}
@@ -1129,9 +1149,10 @@ func (f *Feature) sendWithIntent(ctx context.Context, api hhapi.HHAPI, accountID
 	}
 
 	if f.Cfg.General.DryRun {
-		if err := f.DB.IntentsMarkDone(ctx, intentID); err != nil {
-			return sendFailed, err
-		}
+		// Dry-run leaves the intent re-armable (§6): done means "really
+		// sent", so marking it done here would swallow the real send of
+		// this message forever (same ruling as warmup's ping intents).
+		_ = f.DB.IntentsMarkAbandoned(ctx, intentID)
 		f.Log.Info("chatops: dry-run, send skipped", "chat", chatikID, "text", text)
 		return sendDryRun, nil
 	}
@@ -1270,7 +1291,15 @@ func (f *Feature) leaveDelay() time.Duration {
 // review records a review item (best-effort: review failures are logged, not
 // propagated — they must never mask the decision that produced them).
 func (f *Feature) review(ctx context.Context, accountID, kind, reason string, payload map[string]any) {
-	if _, err := f.DB.ReviewItemsAdd(ctx, accountID, kind, reason, mustJSON(payload)); err != nil {
+	p := mustJSON(payload)
+	if f.Review != nil {
+		// Wired reviewer: dedup of open items + needs_human webhook fan-out.
+		if _, err := f.Review.Add(ctx, accountID, kind, reason, p); err != nil {
+			f.Log.Error("chatops: review add", "kind", kind, "err", err)
+		}
+		return
+	}
+	if _, err := f.DB.ReviewItemsAdd(ctx, accountID, kind, reason, p); err != nil {
 		f.Log.Error("chatops: review add", "kind", kind, "err", err)
 	}
 }

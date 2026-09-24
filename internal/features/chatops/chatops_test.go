@@ -18,6 +18,7 @@ import (
 	"hhauto/internal/features/warmup"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/queue"
+	"hhauto/internal/review"
 	"hhauto/internal/store"
 	"hhauto/internal/webhook"
 )
@@ -214,7 +215,8 @@ func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
 	cfg := config.Config{}
 	cfg.General.Timezone = "UTC"
 	cfg.Features.ChatOps.Enabled = true
-	cfg.Features.ChatOps.AutoReply = true
+	autoReply := true
+	cfg.Features.ChatOps.AutoReply = &autoReply
 	cfg.Features.ChatOps.RejectionMinConf = 0.8
 	api := &fakeAPI{
 		history:    map[string][]hhapi.ChatMessage{},
@@ -358,7 +360,10 @@ func TestSyncQuestionInjectionSuspectedNoReply(t *testing.T) {
 }
 
 func TestSyncQuestionAutoReplyOffSavesDraft(t *testing.T) {
-	h := newHarness(t, func(c *config.Config) { c.Features.ChatOps.AutoReply = false })
+	h := newHarness(t, func(c *config.Config) {
+		v := false
+		c.Features.ChatOps.AutoReply = &v
+	})
 	reply := "Черновик ответа"
 	h.run.reply = &reply
 	h.run.replyConf = 0.95
@@ -888,8 +893,132 @@ func TestSyncDryRunSendsNothing(t *testing.T) {
 	if len(h.api.sent) != 0 {
 		t.Fatal("dry-run must not send")
 	}
-	if _, err := h.db.IntentsBegin(t.Context(), "msg:acc:chat1:mid1", "pending", "x"); !errors.Is(err, store.ErrIntentDone) {
-		t.Fatalf("dry-run must mark the intent done (never leaks into a real send), got %v", err)
+	if _, err := h.db.IntentsBegin(t.Context(), "msg:acc:chat1:mid1", "pending", "x"); err != nil {
+		t.Fatalf("dry-run must leave the intent re-armable (§6: done = really sent; marking done would swallow the real send), got %v", err)
+	}
+}
+
+// Б2 regression: a dry-run pass must not consume send intents — after the
+// same deployment switches to a real run, the reply is actually delivered.
+func TestDryRunThenRealRunSends(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.General.DryRun = true })
+	reply := "Сухой запуск"
+	h.run.reply = &reply
+	h.run.replyConf = 0.95
+	msgAt := h.now.Add(-10 * time.Minute)
+	h.api.chats = []hhapi.Chat{chatik("chat1", 0, msgAt)}
+	h.api.history["chat1"] = []hhapi.ChatMessage{inMsg("mid1", "Вопрос?", msgAt)}
+
+	if err := h.feat.HandleChatSync(t.Context(), syncTask()); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.api.sent) != 0 {
+		t.Fatalf("dry-run must not send: %+v", h.api.sent)
+	}
+
+	// Switch the same deployment to a real run. The dry pass legitimately
+	// stored mid1 as seen (dry-run is a full-fidelity survey); the real pass
+	// must deliver on the next inbound message.
+	h.feat.Cfg.General.DryRun = false
+	h.api.history["chat1"] = append(h.api.history["chat1"], inMsg("mid2", "И ещё вопрос?", msgAt.Add(time.Minute)))
+	if err := h.feat.HandleChatSync(t.Context(), syncTask()); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.api.sent) != 1 || h.api.sent[0].Chatik != "chat1" || h.api.sent[0].Text != reply {
+		t.Fatalf("real run after dry-run must send the reply, sent = %+v", h.api.sent)
+	}
+}
+
+// Б2 regression: a dry-run leave must not burn the leave intent nor record
+// the "done" fact — the later real run still executes the leave.
+func TestDryRunLeaveThenRealRunLeaves(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) {
+		c.General.DryRun = true
+		c.Features.ChatOps.AutoLeaveRejected = true
+		c.Features.ChatOps.RejectionMinConf = 0.8
+	})
+	h.run.classCategory = "rejection"
+	h.run.classConf = 0.93
+	h.feat.LeaveDelay = func() time.Duration { return time.Minute }
+	msgAt := h.now.Add(-10 * time.Minute)
+	h.api.chats = []hhapi.Chat{chatik("chat1", 0, msgAt)}
+	h.api.history["chat1"] = []hhapi.ChatMessage{inMsg("mid1", "Отказ.", msgAt)}
+
+	// Real pass 1: schedule the leave (humanized deferral).
+	h.feat.Cfg.General.DryRun = false
+	if err := h.feat.HandleChatSync(t.Context(), syncTask()); err != nil {
+		t.Fatal(err)
+	}
+	// Dry-run pass 2: leave is due but must be skipped without a fact.
+	h.now = h.now.Add(time.Hour)
+	h.feat.Cfg.General.DryRun = true
+	if err := h.feat.HandleChatSync(t.Context(), syncTask()); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.api.left) != 0 {
+		t.Fatalf("dry-run must not leave: %v", h.api.left)
+	}
+	if val, _, _ := h.db.FeatureStateGet(t.Context(), featureName, "acc", "leave:chat1"); val == "done" {
+		t.Fatal("dry-run must not record the leave as done")
+	}
+	// Real pass 3: the leave still fires (which also proves the intent
+	// survived the dry-run re-armably — a pending probe here would spoil it).
+	h.feat.Cfg.General.DryRun = false
+	if err := h.feat.HandleChatSync(t.Context(), syncTask()); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.api.left) != 1 || h.api.left[0] != "chat1" {
+		t.Fatalf("real run after dry-run must leave, left=%v", h.api.left)
+	}
+}
+
+// И1 regression: a tripped kill switch stops the sync batch between chats —
+// the chat in flight settles, the rest of the batch is not started.
+func TestKillSwitchStopsSyncBatch(t *testing.T) {
+	h := newHarness(t, nil)
+	reply := "Ответ"
+	h.run.reply = &reply
+	h.run.replyConf = 0.95
+	msgAt := h.now.Add(-10 * time.Minute)
+	h.api.chats = []hhapi.Chat{chatik("chat1", 0, msgAt), chatik("chat2", 0, msgAt)}
+	h.api.history["chat1"] = []hhapi.ChatMessage{inMsg("mid1", "Вопрос?", msgAt)}
+	h.api.history["chat2"] = []hhapi.ChatMessage{inMsg("mid2", "Ещё вопрос?", msgAt)}
+
+	processed := 0
+	h.feat.Stopped = func(context.Context) bool {
+		processed++
+		return processed > 1 // trips after the first chat has settled
+	}
+
+	if err := h.feat.HandleChatSync(t.Context(), syncTask()); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.api.sent) != 1 || h.api.sent[0].Chatik != "chat1" {
+		t.Fatalf("batch must stop after the first chat, sent = %+v", h.api.sent)
+	}
+}
+
+// И2 regression: the wired reviewer fans a review item out to the webhook
+// contour (EvNeedsHuman) with open-item dedup, not just into the store.
+func TestReviewFanOutWebhookNeedsHuman(t *testing.T) {
+	h := newHarness(t, nil)
+	h.feat.Review = review.New(h.wh, slog.New(slog.DiscardHandler)).For(h.db)
+
+	h.feat.review(t.Context(), "acc", "reply_draft", "auto_reply disabled", map[string]any{"chat": "chat1"})
+	h.feat.review(t.Context(), "acc", "reply_draft", "auto_reply disabled", map[string]any{"chat": "chat1"})
+
+	needs := 0
+	for _, ev := range h.wh.events {
+		if ev.Type == webhook.EvNeedsHuman {
+			needs++
+		}
+	}
+	if needs != 1 {
+		t.Fatalf("EvNeedsHuman emissions = %d, want 1 (fan-out + dedup)", needs)
+	}
+	items, _ := h.db.ReviewItemsOpen(t.Context(), "acc", 10)
+	if len(items) != 1 {
+		t.Fatalf("open review items = %d, want 1 (deduped)", len(items))
 	}
 }
 

@@ -57,6 +57,7 @@ type e2eEnv struct {
 // bindings leak between tests).
 type envOptions struct {
 	dryRun        bool
+	chatsOff      bool  // disable chatops (kill-switch scenario: the only mutations are applies)
 	warmupSilence int   // hours; 0 → default 10000 (never due)
 	warmupLadder  []int // 0 → default [8, 16]
 	extraTOML     string
@@ -106,7 +107,7 @@ ai_filter = false
 min_match_percent = 60
 
 [features.chatops]
-enabled = true
+enabled = %v
 poll_interval = "5m"
 
 [warmup]
@@ -164,6 +165,7 @@ model_profile = "fast"
 		o.dryRun,
 		filepath.ToSlash(filepath.Join(dir, "hhauto.db")),
 		hh.URL(), hh.URL(), hh.URL(),
+		!o.chatsOff,
 		o.warmupSilence, intsCSV(o.warmupLadder), e2ePing,
 		resumeID,
 		ai.URL(),

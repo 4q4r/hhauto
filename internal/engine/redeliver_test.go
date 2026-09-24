@@ -23,6 +23,43 @@ import (
 
 func discardLogger() *slog.Logger { return slog.New(discardHandler{}) }
 
+// Б3c regression: outbox redelivery errors print endpoint URLs — Telegram
+// endpoint URLs carry the bot token, so the errors must come out masked.
+func TestRedeliverErrorsMaskBotToken(t *testing.T) {
+	const token = "bot123456789:AAF3supersecretTOKEN"
+	endpointURL := "http://127.0.0.1:1/" + token + "/sendMessage"
+
+	r := newRedeliverer([]config.Webhook{{
+		URL: endpointURL, Preset: "telegram",
+	}}, nil, discardLogger())
+
+	item := webhook.OutboxItem{EndpointID: endpointURL, Payload: []byte(`{}`)}
+
+	// Delivery to a dead endpoint: transport error must be masked.
+	err := r.Redeliver(context.Background(), item)
+	if err == nil {
+		t.Fatal("expected a transport error")
+	}
+	if strings.Contains(err.Error(), token) || strings.Contains(err.Error(), "AAF3supersecretTOKEN") {
+		t.Fatalf("transport error leaks the bot token: %s", err)
+	}
+	if !strings.Contains(err.Error(), "bot***") {
+		t.Fatalf("transport error must mask the endpoint URL, got: %s", err)
+	}
+
+	// Unknown endpoint: the id must be masked too.
+	err = r.Redeliver(context.Background(), webhook.OutboxItem{EndpointID: "http://127.0.0.1:1/" + token + "/other", Payload: []byte(`{}`)})
+	if err == nil {
+		t.Fatal("expected an unknown-endpoint error")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("unknown-endpoint error leaks the bot token: %s", err)
+	}
+	if !strings.Contains(err.Error(), "bot***") {
+		t.Fatalf("unknown-endpoint error must mask the endpoint id, got: %s", err)
+	}
+}
+
 func TestRedelivererRawPresetSignsAndDelivers(t *testing.T) {
 	t.Setenv("T12_OUTBOX_SECRET", "s3cret-outbox-key")
 

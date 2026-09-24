@@ -49,6 +49,30 @@ func validateGlobals(c *Config) error {
 	if _, err := time.LoadLocation(c.General.Timezone); err != nil {
 		return fmt.Errorf("general.timezone %q: %w", c.General.Timezone, err)
 	}
+	// Fail-closed windows and mode enum: an unparsable window previously
+	// degraded to "always active" at runtime — reject it at startup instead.
+	// An empty pacing.active_window is legal ("always active", the pacer's
+	// documented default) — but applyDefaults normally fills it first.
+	if c.Pacing.ActiveWindow != "" {
+		if _, _, err := ParseActiveWindow(c.Pacing.ActiveWindow); err != nil {
+			return fmt.Errorf("pacing.active_window %q: %w", c.Pacing.ActiveWindow, err)
+		}
+	}
+	switch mode := strings.ToLower(strings.TrimSpace(c.Pacing.Mode)); mode {
+	case "", "adaptive", "uniform", "burst": // "" = unset, defaults fill "adaptive"
+	default:
+		return fmt.Errorf("pacing.mode %q: must be \"adaptive\", \"uniform\" or \"burst\"", c.Pacing.Mode)
+	}
+	if c.Warmup.ActiveHours != "" {
+		if _, _, err := ParseActiveWindow(c.Warmup.ActiveHours); err != nil {
+			return fmt.Errorf("warmup.active_hours %q: %w", c.Warmup.ActiveHours, err)
+		}
+	}
+	// R14: the qa_base toggle has no v1 implementation — reject enabling it
+	// instead of silently ignoring the flag.
+	if c.Features.ChatOps.QABaseEnabled {
+		return fmt.Errorf("features.chatops.qa_base=true: не реализовано в v1 (зарезервировано)")
+	}
 	return checkNegatives(map[string]float64{
 		"storage.busy_timeout_ms":    float64(c.Storage.BusyTimeoutMS),
 		"ai.daily_budget_tokens":     float64(c.AI.DailyBudgetTokens),

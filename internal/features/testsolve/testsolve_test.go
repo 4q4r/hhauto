@@ -389,6 +389,40 @@ func TestHandleSolveTestBatchesMaxFive(t *testing.T) {
 	}
 }
 
+// И1 regression: a tripped kill switch stops the answer batches between AI
+// calls; the draft is still stored with the answers gathered so far — a
+// graceful exit, not an aborted task.
+func TestKillSwitchStopsAnswerBatches(t *testing.T) {
+	db := newDB(t)
+	seedResume(t, db)
+	runner := &fakeRunner{}
+	html := `<form><h1>big</h1>` +
+		`<label for="q1">Вопрос 1?</label><input id="q1">` +
+		`<label for="q2">Вопрос 2?</label><input id="q2">` +
+		`<label for="q3">Вопрос 3?</label><input id="q3">` +
+		`<label for="q4">Вопрос 4?</label><input id="q4">` +
+		`<label for="q5">Вопрос 5?</label><input id="q5">` +
+		`<label for="q6">Вопрос 6?</label><input id="q6">` +
+		`<label for="q7">Вопрос 7?</label><input id="q7">` +
+		`</form>`
+	s := solver(t, db, runner, &fakeNotifier{}, func() (string, error) { return html, nil })
+	seen := 0
+	s.Stopped = func(context.Context) bool {
+		seen++
+		return seen > 1 // trips after the first batch has settled
+	}
+	if err := s.HandleSolveTest(t.Context(), solveTask(okFormURL)); err != nil {
+		t.Fatalf("HandleSolveTest: %v", err)
+	}
+	if len(runner.calls) != 1 || runner.calls[0] != 5 {
+		t.Fatalf("batches = %v, want only the first batch [5]", runner.calls)
+	}
+	rows, err := db.AssessmentsListByAccount(t.Context(), "acc")
+	if err != nil || len(rows) != 1 || rows[0].Status != "in_progress" {
+		t.Fatalf("graceful draft expected, rows = %+v err = %v", rows, err)
+	}
+}
+
 func TestHandleSolveTestParseFailureRecorded(t *testing.T) {
 	db := newDB(t)
 	seedResume(t, db)
