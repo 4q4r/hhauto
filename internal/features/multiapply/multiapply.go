@@ -1,0 +1,314 @@
+// Package multiapply implements WF2 (discovery → filters → apply): it walks
+// the configured run profiles, collects vacancies from the suitable-vacancies
+// or search source, runs the filter cascade (F2 exclude words, F3 blacklist/
+// whitelist with stage bypass, F4 employer rating, F5 dedup, F6 AI relevance,
+// F6.5 apply-popup feasibility, F7 daily quotas) and applies (F8) with an
+// AI cover letter, an idempotency intent per (account, vacancy), a captcha
+// chain retry and an AMBIGUOUS reconcile through the negotiations list.
+package multiapply
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"hhauto/internal/ai"
+	"hhauto/internal/config"
+	"hhauto/internal/features/featurekit"
+	"hhauto/internal/hhapi"
+	"hhauto/internal/profile"
+	"hhauto/internal/queue"
+	"hhauto/internal/scheduler"
+	"hhauto/internal/store"
+	"hhauto/internal/webhook"
+)
+
+// Pipeline limits and policies.
+const (
+	// maxPages caps source pagination (contract: constant, not configurable).
+	maxPages = 5
+	// perEmployerDailyCap is the per-employer daily apply limit.
+	perEmployerDailyCap = 2
+	// defaultMinMatch is the AI relevance threshold when unset.
+	defaultMinMatch = 60
+	// defaultAccountCap backs an unset account daily_apply_cap.
+	defaultAccountCap = 200
+	// feature namespaces feature_state keys.
+	feature = "multiapply"
+)
+
+// ErrDisabled reports a disabled feature or run profile.
+var ErrDisabled = errors.New("multiapply: run disabled")
+
+// Options wires the feature to its dependencies.
+type Options struct {
+	Config     config.Config
+	DB         *store.DB
+	APIFor     featurekit.APIFor
+	ChainFor   featurekit.ChainFor
+	Runner     ai.Runner // nil = AI tasks unavailable (ai_filter degrades to off)
+	ProfileFor func(ctx context.Context, accountID string) (profile.Profile, error)
+	Pacer      featurekit.Pacer
+	Notifier   webhook.Notifier
+	Now        func() time.Time
+	Log        *slog.Logger
+}
+
+// RunPayload is the typed queue payload for KindApply run tasks.
+type RunPayload struct {
+	RunID string `json:"run_id"`
+}
+
+// Feature is the WF2 implementation of features.Feature.
+type Feature struct {
+	opt Options
+	log *slog.Logger
+	q   queue.Queue
+}
+
+// New builds the feature. A nil logger falls back to slog.Default().
+func New(o Options) *Feature {
+	if o.Log == nil {
+		o.Log = slog.Default()
+	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
+	return &Feature{opt: o, log: o.Log}
+}
+
+// Name implements features.Feature.
+func (f *Feature) Name() string { return "multiapply" }
+
+// Enabled implements features.Feature.
+func (f *Feature) Enabled() bool { return f.opt.Config.Features.MultiApply.Enabled }
+
+// RegisterTasks registers per-run window specs and seeds one run task per
+// enabled profile (queue dedup keeps repeated registrations idempotent).
+func (f *Feature) RegisterTasks(ctx context.Context, q queue.Queue, reg *scheduler.Registry) error {
+	f.q = q
+	for id, run := range f.opt.Config.Runs {
+		if !run.Enabled {
+			continue
+		}
+		if len(run.Windows) > 0 {
+			spec, err := f.windowSpec(id, run)
+			if err != nil {
+				return err
+			}
+			reg.Add("runs."+id, spec)
+		}
+		if err := q.Enqueue(ctx, queue.Task{
+			AccountID: run.Account,
+			Kind:      queue.KindApply,
+			RunID:     id,
+			DedupKey:  "multiapply:" + id,
+			Priority:  queue.PrioApply,
+			Payload:   RunPayload{RunID: id},
+		}); err != nil {
+			return fmt.Errorf("multiapply: seed run %s: %w", id, err)
+		}
+	}
+	return nil
+}
+
+// windowSpec merges the run's windows into one scheduler spec (times and
+// days union; the first window's TZ wins, falling back to general.timezone).
+func (f *Feature) windowSpec(runID string, run config.Run) (scheduler.Spec, error) {
+	tz := f.opt.Config.General.Timezone
+	var times []string
+	var days []string
+	for i, w := range run.Windows {
+		if i == 0 && w.TZ != "" {
+			tz = w.TZ
+		}
+		times = append(times, w.Time...)
+		days = append(days, w.Days...)
+	}
+	spec, err := scheduler.Parse(tz, times, days)
+	if err != nil {
+		return spec, fmt.Errorf("multiapply: runs.%s.windows: %w", runID, err)
+	}
+	return spec, nil
+}
+
+// HandleTask executes one queued run task.
+func (f *Feature) HandleTask(ctx context.Context, t queue.Task) error {
+	runID := t.RunID
+	if p, ok := t.Payload.(RunPayload); ok && p.RunID != "" {
+		runID = p.RunID
+	}
+	return f.RunProfile(ctx, runID)
+}
+
+// dayUTC is the feature clock's UTC day.
+func (f *Feature) dayUTC() string { return featurekit.DayUTC(f.opt.Now()) }
+
+func (f *Feature) incr(ctx context.Context, key string) {
+	if err := f.opt.DB.MetricsIncr(ctx, key, f.dayUTC()); err != nil {
+		f.log.Warn("multiapply: metric incr failed", "key", key, "err", err)
+	}
+}
+
+func (f *Feature) review(ctx context.Context, accountID, kind, reason, payload string) {
+	if _, err := f.opt.DB.ReviewItemsAdd(ctx, accountID, kind, reason, payload); err != nil {
+		f.log.Error("multiapply: review item add failed", "kind", kind, "err", err)
+	}
+}
+
+// stopAccount parks the account for human attention (session expired).
+func (f *Feature) stopAccount(ctx context.Context, accountID, reason string) {
+	if err := f.opt.DB.AccountsSetStatus(ctx, accountID, "logged_out"); err != nil {
+		f.log.Error("multiapply: account status set failed", "account", accountID, "err", err)
+	}
+	f.review(ctx, accountID, "account_logged_out", reason, `{}`)
+	f.incr(ctx, "apply.logged_out")
+	f.log.Warn("multiapply: account stopped (logged out)", "account", accountID)
+}
+
+// RunProfile executes one run profile end-to-end.
+func (f *Feature) RunProfile(ctx context.Context, runID string) error {
+	cfg := f.opt.Config
+	if !f.Enabled() {
+		return ErrDisabled
+	}
+	run, ok := cfg.Runs[runID]
+	if !ok {
+		return fmt.Errorf("multiapply: unknown run %q", runID)
+	}
+	if !run.Enabled {
+		return ErrDisabled
+	}
+	accountID := run.Account
+	api, err := f.opt.APIFor(accountID)
+	if err != nil {
+		return fmt.Errorf("multiapply: api for %s: %w", accountID, err)
+	}
+	resumeHash, err := f.resolveResumeHash(ctx, accountID, api, run)
+	if err != nil {
+		return fmt.Errorf("multiapply: resolve resume for %s: %w", runID, err)
+	}
+	prof, err := f.loadProfile(ctx, accountID, api)
+	if err != nil {
+		return fmt.Errorf("multiapply: profile for %s: %w", accountID, err)
+	}
+
+	vacancies, err := f.collect(ctx, run, api, resumeHash)
+	if err != nil {
+		f.incr(ctx, "apply.error")
+		return fmt.Errorf("multiapply: collect for %s: %w", runID, err)
+	}
+	if cfg.Features.MultiApply.PrioritizeOnlineHR {
+		vacancies = prioritizeOnline(vacancies)
+	}
+
+	batch := map[int64]bool{}
+	for _, v := range vacancies {
+		stop, skip := f.processVacancy(ctx, runID, run, accountID, api, prof, resumeHash, v, batch)
+		switch {
+		case stop != "":
+			f.incr(ctx, "apply.stop."+stop)
+			if stop != stopLoggedOut { // a logged-out account needs a human, not a tomorrow retry
+				f.queueTomorrow(ctx, accountID, runID)
+			}
+			return nil
+		case skip != "":
+			f.incr(ctx, "apply.skip."+skip)
+		}
+	}
+	return nil
+}
+
+// stopLoggedOut marks a profile stop that must not be rescheduled.
+const stopLoggedOut = "account_logged_out"
+
+// prioritizeOnline stably moves employer-online vacancies to the front.
+func prioritizeOnline(in []hhapi.Vacancy) []hhapi.Vacancy {
+	out := make([]hhapi.Vacancy, 0, len(in))
+	for _, v := range in {
+		if v.EmployerOnline {
+			out = append(out, v)
+		}
+	}
+	for _, v := range in {
+		if !v.EmployerOnline {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// queueTomorrow re-arms the run for the next day (on_limit=queue_tomorrow).
+func (f *Feature) queueTomorrow(ctx context.Context, accountID, runID string) {
+	if f.q == nil {
+		f.log.Warn("multiapply: queue not installed; cannot re-arm run for tomorrow", "run", runID)
+		return
+	}
+	tomorrow := f.opt.Now().Add(24 * time.Hour)
+	err := f.q.Enqueue(ctx, queue.Task{
+		AccountID: accountID,
+		Kind:      queue.KindApply,
+		RunID:     runID,
+		DedupKey:  "multiapply:" + runID + ":" + featurekit.DayUTC(tomorrow),
+		Priority:  queue.PrioApply,
+		Deadline:  tomorrow,
+		Payload:   RunPayload{RunID: runID},
+	})
+	if err != nil {
+		f.log.Warn("multiapply: tomorrow enqueue failed", "run", runID, "err", err)
+	}
+}
+
+// collect walks the run's source with the maxPages pagination cap: a
+// non-empty run.Query uses the search source, otherwise the per-resume
+// suitable-vacancies source.
+func (f *Feature) collect(ctx context.Context, run config.Run, api hhapi.HHAPI, resumeHash string) ([]hhapi.Vacancy, error) {
+	var out []hhapi.Vacancy
+	if run.Query == "" {
+		for page := 0; page < maxPages; page++ {
+			vp, err := api.SuitableVacancies(ctx, resumeHash, page)
+			if err != nil {
+				return out, err
+			}
+			out = append(out, vp.Items...)
+			if page+1 >= vp.Pages || len(vp.Items) == 0 {
+				break
+			}
+		}
+		return out, nil
+	}
+	q := f.searchQuery(run)
+	for page := 0; page < maxPages; page++ {
+		q.Page = page
+		vp, err := api.SearchVacancies(ctx, q)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, vp.Items...)
+		if page+1 >= vp.Pages || len(vp.Items) == 0 {
+			break
+		}
+	}
+	return out, nil
+}
+
+// searchQuery maps the run profile onto the native hh search filters (F1).
+func (f *Feature) searchQuery(run config.Run) hhapi.SearchQuery {
+	flt := run.Filters
+	return hhapi.SearchQuery{
+		Text:            run.Query,
+		Areas:           flt.Areas,
+		Experience:      flt.Experience,
+		Schedule:        flt.Schedule,
+		Employment:      flt.Employment,
+		Industries:      flt.Industries,
+		SalaryFrom:      flt.SalaryFrom,
+		Currency:        flt.SalaryCurrency,
+		LabelNoAgencies: flt.ExcludeAgencies || f.opt.Config.Features.MultiApply.ExcludeAgenciesDef,
+		SearchMode:      run.SearchMode,
+		PeriodDays:      flt.SearchPeriodDays,
+		PerPage:         50,
+	}
+}
