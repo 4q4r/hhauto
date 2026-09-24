@@ -1,0 +1,206 @@
+# Representative hhauto.toml fixture (docs/PLAN.md §5).
+# Used by TestLoad — ${HHAUTO_TEST_*} placeholders are set via t.Setenv.
+
+[general]
+data_dir = "~/hhauto-data"
+timezone = "Europe/Moscow"
+
+[storage]
+path = "{data_dir}/state.db"
+busy_timeout_ms = 3000
+
+[log]
+level = "debug"
+format = "json"
+file = "{data_dir}/logs/hhauto.log"
+redact_secrets = true
+
+[api]
+kind = "web"
+
+[api.endpoints]
+site = "https://hh.ru"
+chatik = "https://chatik.hh.ru"
+search_page = "https://hh.ru/search/vacancy"
+
+[api.endpoints.override]
+vacancy_search = "https://custom.example/vacancies"
+
+[captcha.cap1]
+protocol = "2captcha"
+base_url = "https://2captcha.com"
+key_env = "HHAUTO_TEST_CAP1_KEY"
+poll_interval_ms = 5000
+timeout_s = 120
+
+[captcha.cap2]
+protocol = "anticaptcha"
+base_url = "https://api.anti-captcha.com"
+key_env = "HHAUTO_TEST_CAP2_KEY"
+
+[proxy.p1]
+type = "socks5"
+host = "10.0.0.1"
+port = 1080
+user = "proxyuser"
+pass_env = "HHAUTO_TEST_PROXY_PASS"
+
+[accounts.main]
+display_name = "Main account"
+cookie_file = "{data_dir}/cookies/main.json"
+proxy_ref = "p1"
+user_agent = "hhauto-test/1.0"
+headers = { "X-Test" = "1" }
+concurrency = 3
+rps = 0.8
+daily_apply_cap = 200
+captcha_chain = ["cap1", "cap2"]
+profile_file = "{data_dir}/profiles/main.md"
+
+[accounts.direct]
+display_name = "Direct account"
+cookie_file = "~/cookies/direct.json"
+concurrency = 1
+rps = 0.3
+daily_apply_cap = 50
+
+[ai]
+daily_budget_tokens = 0
+daily_budget_usd = 5.0
+on_budget_exceed = "needs_human_only"
+
+[ai.providers.gpt]
+dialect = "openai-chat"
+base_url = "https://api.openai.com/v1"
+api_key_env = "HHAUTO_TEST_AI_KEY"
+timeout_seconds = 60
+
+[ai.models.cheap]
+provider = "gpt"
+model = "gpt-4o-mini"
+reasoning_effort = "low"
+max_output_tokens = 512
+temperature = 0.2
+
+[ai.tasks.cover_letter]
+model_profile = "cheap"
+inline = "Write a short cover letter"
+version = "v1"
+cache_ttl_hours = 24
+
+[ai.pricing.cheap]
+input_per_mtok_usd = 0.15
+output_per_mtok_usd = 0.6
+
+[features]
+emaildup = false
+resume_visibility = true
+
+[features.auto_lift]
+enabled = false
+per_day = 6
+jitter = "20-40m"
+respect_4h_timer = true
+
+[features.multiapply]
+enabled = true
+ai_filter = true
+min_match_percent = 60
+
+[features.testsolve]
+mode = "draft_only"
+submit_policy = "human"
+
+[features.chatops]
+poll_interval = "30s"
+
+[features.interview]
+link_domains = ["forms.gle"]
+
+[features.contacts]
+from_card = true
+from_messages = true
+
+[features.relevance]
+min_match_score = 60
+
+[pacing]
+active_window = "08:00-22:00"
+mode = "adaptive"
+night_pause = true
+min_delay_seconds = 30
+jitter = "10-20s"
+
+[webhook.tg1]
+url = "https://api.telegram.org/bot${HHAUTO_TEST_WEBHOOK_TOKEN}/sendMessage"
+preset = "telegram"
+secret_env = "HHAUTO_TEST_WEBHOOK_SECRET"
+proxy_ref = ""
+events = ["run_started", "run_finished"]
+retry_max = 3
+chat_id = "12345"
+
+[runs.backend]
+enabled = true
+account = "main"
+resume_id = "${HHAUTO_TEST_RESUME_ID}"
+title = "Backend vacancies"
+query = "golang"
+search_mode = "normal"
+max_per_day = 50
+min_match_percent = 60
+letter_template = "Hello, I am interested in this role."
+
+[[runs.backend.windows]]
+tz = "Europe/Moscow"
+time = ["08:00", "12:30"]
+days = ["mon", "tue", "wed", "thu", "fri"]
+
+[runs.backend.filters]
+salary_from = 100000
+only_with_salary = true
+experience = ["between1And3"]
+exclude_words = ["sales"]
+company_blacklist = ["ACME"]
+exclude_agencies = true
+no_reviews_policy = "skip"
+
+[runs.backend.ai_filter_overrides]
+min_score = 70
+
+[review]
+sla_hours_default = 24
+
+[forms]
+allowed_domains = ["hh.ru", "forms.gle"]
+mode = "draft_only"
+submit_policy = "human"
+abort_on_password_field = true
+page_timeout_sec = 45
+
+[email]
+smtp_host = "smtp.example.com"
+smtp_port = 587
+username = "user"
+pass_env = "HHAUTO_TEST_EMAIL_PASS"
+from = "me@example.com"
+subject_template = "Follow-up"
+body_template = "Hello!"
+attach_resume = true
+per_employer_once = true
+limits_per_hour = 5
+limits_per_day = 20
+retries = 2
+
+[warmup]
+enabled = false
+silence_hours = 24
+ladder_hours = [24, 48, 96]
+max_pings = 3
+source = "list"
+respect_weekend = true
+
+[schedule]
+jitter_minutes = 10
+missed_run_policy = "run_once"
+max_catchup_hours = 6
