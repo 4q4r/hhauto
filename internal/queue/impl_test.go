@@ -312,35 +312,38 @@ func TestConcurrentProducersConsumers(t *testing.T) {
 		}(p)
 	}
 
-	var got syncGuard
+	var mu sync.Mutex
+	seenIDs := make(map[string]bool, total) // every ID exactly once
+	consumed := 0
+	accountTally := map[string]int{}
+
 	consumerCtx, cancel := context.WithCancel(ctx)
 	var consWG sync.WaitGroup
+	consAccount := func(accountID string) {
+		defer consWG.Done()
+		for {
+			task, ok := q.Dequeue(consumerCtx, accountID)
+			if !ok {
+				return
+			}
+			mu.Lock()
+			if seenIDs[task.ID] {
+				t.Errorf("task %s consumed twice", task.ID)
+			}
+			seenIDs[task.ID] = true
+			consumed++
+			accountTally[task.AccountID]++
+			mu.Unlock()
+		}
+	}
 	for range consumers {
 		consWG.Add(1)
-		go func() {
-			defer consWG.Done()
-			for {
-				_, ok := q.Dequeue(consumerCtx, "a")
-				if !ok {
-					return
-				}
-				got.add(1)
-			}
-		}()
+		go consAccount("a")
 	}
 	// A second consumer family for the other account.
 	for range consumers {
 		consWG.Add(1)
-		go func() {
-			defer consWG.Done()
-			for {
-				_, ok := q.Dequeue(consumerCtx, "b")
-				if !ok {
-					return
-				}
-				got.add(1)
-			}
-		}()
+		go consAccount("b")
 	}
 
 	prodWG.Wait()
@@ -352,8 +355,48 @@ func TestConcurrentProducersConsumers(t *testing.T) {
 	cancel()
 	consWG.Wait()
 
-	if n := got.val(); n != total {
-		t.Fatalf("consumed %d tasks, want exactly %d (no task lost or duplicated)", n, total)
+	mu.Lock()
+	defer mu.Unlock()
+	if consumed != total {
+		t.Fatalf("consumed %d tasks, want exactly %d (no task lost or duplicated)", consumed, total)
+	}
+	if len(seenIDs) != total {
+		t.Fatalf("%d distinct task IDs, want %d", len(seenIDs), total)
+	}
+	for _, acct := range []string{"a", "b"} {
+		if accountTally[acct] != total/accounts {
+			t.Fatalf("account %q consumed %d tasks, want %d", acct, accountTally[acct], total/accounts)
+		}
+	}
+}
+
+func TestDedupKeyReusableAfterPop(t *testing.T) {
+	// Contract: dedup is queued-scoped — after a task is popped its
+	// (AccountID,Kind,DedupKey) is free again, a re-Enqueue must queue a
+	// fresh task.
+	q := New()
+	defer q.Close(context.Background(), 0)
+	ctx := context.Background()
+
+	if err := q.Enqueue(ctx, newTask("a", PrioApply, "vac-9")); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	first, ok := q.Dequeue(ctx, "a")
+	if !ok {
+		t.Fatal("Dequeue = !ok, want task")
+	}
+	if err := q.Enqueue(ctx, newTask("a", PrioApply, "vac-9")); err != nil {
+		t.Fatalf("re-Enqueue after pop: %v", err)
+	}
+	if got := q.Len("a"); got != 1 {
+		t.Fatalf("Len(a) = %d, want 1 (key was released by the pop)", got)
+	}
+	second, ok := q.Dequeue(ctx, "a")
+	if !ok {
+		t.Fatal("Dequeue = !ok, want re-enqueued task")
+	}
+	if second.ID == first.ID {
+		t.Fatalf("re-enqueued task reused ID %q, want a fresh ULID", first.ID)
 	}
 }
 
@@ -394,6 +437,117 @@ func TestCloseWakesUnknownAccountWaiter(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Dequeue for unknown account leaked past Close without ctx cancellation")
+	}
+}
+
+// TestConcurrentEnqueueDequeueCloseStorm exercises producers, consumers and
+// Close(drain) running at the same time. Guarantees checked: consumed IDs
+// are unique and a subset of accepted enqueues, nothing survives past final
+// close, and every goroutine terminates on its own (no lost wakeups, no ctx
+// cancellation needed).
+func TestConcurrentEnqueueDequeueCloseStorm(t *testing.T) {
+	q := New()
+	ctx := context.Background()
+
+	const (
+		producers = 4
+		consumers = 3
+		perProd   = 20
+	)
+
+	var mu sync.Mutex
+	seenIDs := map[string]bool{}
+	accepted := 0 // successful Enqueues
+	consumed := 0
+
+	var prodWG sync.WaitGroup
+	for p := range producers {
+		prodWG.Add(1)
+		go func(p int) {
+			defer prodWG.Done()
+			for i := range perProd {
+				acct := string(rune('a' + p%2))
+				err := q.Enqueue(ctx, newTask(acct, Priority(i%int(PrioLift+1)), ""))
+				mu.Lock()
+				if err == nil {
+					accepted++
+				}
+				mu.Unlock()
+				if err != nil && !errors.Is(err, ErrClosed) {
+					t.Errorf("producer Enqueue = %v, want nil or ErrClosed", err)
+					return
+				}
+				time.Sleep(time.Millisecond) // stretch the race window
+			}
+		}(p)
+	}
+
+	// Close races the producers: it starts while they are still enqueueing.
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		if err := q.Close(ctx, 150*time.Millisecond); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
+
+	var consWG sync.WaitGroup
+	consDone := make(chan struct{})
+	for c := range consumers {
+		consWG.Add(1)
+		go func(c int) {
+			defer consWG.Done()
+			acct := string(rune('a' + c%2))
+			for {
+				task, ok := q.Dequeue(ctx, acct) // plain Background ctx: must return by itself
+				if !ok {
+					return
+				}
+				mu.Lock()
+				if seenIDs[task.ID] {
+					t.Errorf("task %s consumed twice", task.ID)
+				}
+				seenIDs[task.ID] = true
+				consumed++
+				mu.Unlock()
+			}
+		}(c)
+	}
+	go func() {
+		consWG.Wait()
+		close(consDone)
+	}()
+
+	// No lost wakeups: every goroutine finishes on its own, without ctx
+	// cancellation and within a bounded timeout.
+	prodDone := make(chan struct{})
+	go func() {
+		prodWG.Wait()
+		close(prodDone)
+	}()
+	select {
+	case <-prodDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("producers did not terminate within 5s")
+	}
+	select {
+	case <-consDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("consumers did not terminate within 5s of Close (lost wakeup leak)")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if consumed > accepted {
+		t.Fatalf("consumed %d > accepted %d", consumed, accepted)
+	}
+	if len(seenIDs) != consumed {
+		t.Fatalf("%d distinct consumed IDs != consumed count %d", len(seenIDs), consumed)
+	}
+	if l := q.Len("a") + q.Len("b"); l != 0 {
+		t.Errorf("Len after final close = %d, want 0", l)
+	}
+	if err := q.Close(ctx, 0); err != nil {
+		t.Errorf("idempotent second Close = %v, want nil", err)
 	}
 }
 
