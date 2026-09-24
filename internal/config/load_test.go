@@ -109,7 +109,7 @@ func TestLoadMinimalAppliesDefaults(t *testing.T) {
 	if cfg.General.Timezone != "Local" {
 		t.Errorf("general.timezone = %q, want Local", cfg.General.Timezone)
 	}
-	if cfg.Pacing.ActiveWindow != "08:00-22:00" || cfg.Pacing.Mode != "adaptive" || !cfg.Pacing.NightPause {
+	if cfg.Pacing.ActiveWindow != "08:00-22:00" || cfg.Pacing.Mode != "adaptive" || cfg.Pacing.NightPause == nil || !*cfg.Pacing.NightPause {
 		t.Errorf("pacing defaults not applied: %+v", cfg.Pacing)
 	}
 	if len(cfg.Forms.AllowedDomains) != 4 {

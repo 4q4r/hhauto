@@ -51,7 +51,10 @@ func applyDefaults(c *Config) {
 	if c.Features.AutoLift.PerDay == 0 {
 		c.Features.AutoLift.PerDay = 6
 	}
-	c.Features.AutoLift.Respect4hTimer = true
+	if c.Features.AutoLift.Respect4hTimer == nil {
+		v := true
+		c.Features.AutoLift.Respect4hTimer = &v
+	}
 
 	if c.Pacing.ActiveWindow == "" {
 		c.Pacing.ActiveWindow = "08:00-22:00"
@@ -59,7 +62,10 @@ func applyDefaults(c *Config) {
 	if c.Pacing.Mode == "" {
 		c.Pacing.Mode = "adaptive"
 	}
-	c.Pacing.NightPause = true
+	if c.Pacing.NightPause == nil {
+		v := true
+		c.Pacing.NightPause = &v
+	}
 
 	if c.Review.SLADefaultHours == 0 {
 		c.Review.SLADefaultHours = 24
@@ -76,8 +82,19 @@ func applyDefaults(c *Config) {
 		c.Forms.AllowedDomains = []string{"hh.ru", "forms.gle", "docs.google.com", "forms.yandex.ru"}
 	}
 
-	c.Email.PerEmployerOnce = true
+	if c.Email.PerEmployerOnce == nil {
+		v := true
+		c.Email.PerEmployerOnce = &v
+	}
+	if c.Email.AttachResume == nil {
+		v := true
+		c.Email.AttachResume = &v
+	}
 
+	if c.Warmup.RespectWeekend == nil {
+		v := true
+		c.Warmup.RespectWeekend = &v
+	}
 	if c.Warmup.SilenceHours == 0 {
 		c.Warmup.SilenceHours = 24
 	}

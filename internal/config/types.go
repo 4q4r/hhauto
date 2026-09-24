@@ -146,9 +146,9 @@ type Features struct {
 
 type AutoLift struct {
 	Enabled        bool   `toml:"enabled"`
-	PerDay         int    `toml:"per_day"` // default 6
-	Jitter         string `toml:"jitter"`  // e.g. "20-40m"
-	Respect4hTimer bool   `toml:"respect_4h_timer"`
+	PerDay         int    `toml:"per_day"`          // default 6
+	Jitter         string `toml:"jitter"`           // e.g. "20-40m"
+	Respect4hTimer *bool  `toml:"respect_4h_timer"` // default true; explicit false respected
 }
 
 type MultiApply struct {
@@ -200,7 +200,7 @@ type Warmup struct {
 	Source         string   `toml:"source"` // list | ai
 	PingList       []string `toml:"ping_list"`
 	ActiveHours    string   `toml:"active_hours"`
-	RespectWeekend bool     `toml:"respect_weekend"`
+	RespectWeekend *bool    `toml:"respect_weekend"` // default true; explicit false respected
 }
 
 type Relevance struct {
@@ -210,7 +210,7 @@ type Relevance struct {
 type Pacing struct {
 	ActiveWindow string `toml:"active_window"` // "08:00-22:00"
 	Mode         string `toml:"mode"`          // adaptive | uniform | burst
-	NightPause   bool   `toml:"night_pause"`
+	NightPause   *bool  `toml:"night_pause"`   // default true; explicit false respected
 	MinDelaySec  int    `toml:"min_delay_seconds"`
 	Jitter       string `toml:"jitter"`
 }
@@ -295,12 +295,12 @@ type Email struct {
 	From            string `toml:"from"`
 	SubjectTemplate string `toml:"subject_template"`
 	BodyTemplate    string `toml:"body_template"`
-	AttachResume    bool   `toml:"attach_resume"`
+	AttachResume    *bool  `toml:"attach_resume"` // default true; explicit false respected
 	RequireAttach   bool   `toml:"require_attachment"`
 	PerHourLimit    int    `toml:"limits_per_hour"`
 	PerDayLimit     int    `toml:"limits_per_day"`
 	Retries         int    `toml:"retries"`
-	PerEmployerOnce bool   `toml:"per_employer_once"`
+	PerEmployerOnce *bool  `toml:"per_employer_once"` // default true; explicit false respected
 }
 
 type Schedule struct {
