@@ -46,11 +46,17 @@ type Client struct {
 
 // NewClient builds the per-account web client. dialer comes from the proxy
 // registry; nil means explicitly-direct (the fail-closed proxy decision
-// belongs to the caller). cfg.UserAgent is mandatory: a missing UA would
-// fingerprint every request as a bot.
+// belongs to the caller). cfg.UserAgent is mandatory and exclusive: a UA
+// override via cfg.Headers would desynchronize the derived client hints
+// (a classic bot marker), so it is rejected up front.
 func NewClient(cfg config.Account, endpoints config.APIEndpoints, dialer proxy.Dialer, log *slog.Logger) (*Client, error) {
 	if strings.TrimSpace(cfg.UserAgent) == "" {
 		return nil, errors.New("hhapi: config.Account.UserAgent is required")
+	}
+	for k := range cfg.Headers {
+		if http.CanonicalHeaderKey(k) == "User-Agent" {
+			return nil, errors.New("hhapi: config.Account.Headers must not set User-Agent: use Account.UserAgent so derived client hints stay in sync")
+		}
 	}
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -155,6 +161,11 @@ type response struct {
 // maxBodyBytes caps response reads: SSR pages run ~1.5MB; 16MB is generous.
 const maxBodyBytes = 16 << 20
 
+// retryAfterGiveUp is the longest Retry-After the client is willing to sleep
+// inline. Larger values stop the retry loop and surface the duration on the
+// StatusError so the scheduler can pace the account properly.
+const retryAfterGiveUp = 30 * time.Second
+
 // do runs the full pipeline: rate limit -> send (with redirect recording)
 // -> classify -> retry per kind. It never returns a redirect-followed
 // intermediate response, only the final one or a typed error.
@@ -166,12 +177,24 @@ func (c *Client) do(ctx context.Context, spec requestSpec) (*response, error) {
 		}
 		resp, err := c.attempt(ctx, spec)
 		if err != nil {
+			var off *offsiteRedirectError
+			if errors.As(err, &off) {
+				// The fence fired inside CheckRedirect: net/http closed the
+				// response, retrying cannot change the answer, and the
+				// redirect itself is the finding (soft block / SSO bounce).
+				return nil, &StatusError{
+					Kind:        ErrForbidden,
+					URL:         spec.url,
+					Chain:       off.chain,
+					BodySnippet: "redirect left the site registrable domain",
+				}
+			}
 			lastErr = err
 			if !spec.retryable() {
 				// The request went on the wire; a transport failure leaves
 				// the outcome unknown unless the dial never completed.
 				if isDialError(err) {
-					return nil, &StatusError{Kind: ErrNetwork, URL: spec.url, BodySnippet: err.Error()}
+					return nil, &StatusError{Kind: ErrNetwork, URL: spec.url, BodySnippet: redactSnippet(err.Error())}
 				}
 				return nil, &AmbiguousError{Err: err}
 			}
@@ -181,7 +204,7 @@ func (c *Client) do(ctx context.Context, spec requestSpec) (*response, error) {
 				}
 				continue
 			}
-			return nil, &StatusError{Kind: ErrNetwork, URL: spec.url, BodySnippet: err.Error()}
+			return nil, &StatusError{Kind: ErrNetwork, URL: spec.url, BodySnippet: redactSnippet(err.Error())}
 		}
 
 		c.absorbAndPersist(ctx, resp)
@@ -191,6 +214,19 @@ func (c *Client) do(ctx context.Context, spec requestSpec) (*response, error) {
 		kind := classifyStatus(resp.status, string(resp.body), resp.header.Get("Location"))
 		if kind == nil {
 			return resp, nil
+		}
+		if errors.Is(kind, ErrRateLimited) && resp.retryAfter > retryAfterGiveUp {
+			// The server demands a wait longer than we ever sleep inline:
+			// surface the instruction to the scheduler instead of stalling
+			// the caller or ignoring the header. Resolve state by reading.
+			return resp, &StatusError{
+				Kind:        kind,
+				StatusCode:  resp.status,
+				URL:         spec.url,
+				BodySnippet: snippet(resp.body),
+				Chain:       resp.chain,
+				RetryAfter:  resp.retryAfter,
+			}
 		}
 		lastErr = &StatusError{
 			Kind:        kind,
@@ -249,9 +285,11 @@ func (c *Client) jitter(attempt int) time.Duration {
 }
 
 // retryWait honors Retry-After for 429, falling back to exponential jitter.
+// Waits are capped at retryAfterGiveUp; anything longer trips the give-up
+// branch in do() instead (see Test429RetryAfterBeyondCapStopsRetrying).
 func (c *Client) retryWait(attempt int, se *StatusError) time.Duration {
 	if se != nil && se.RetryAfter > 0 {
-		return min(se.RetryAfter, 30*time.Second)
+		return min(se.RetryAfter, retryAfterGiveUp)
 	}
 	return c.jitter(attempt)
 }
@@ -288,10 +326,11 @@ func (c *Client) attempt(ctx context.Context, spec requestSpec) (*response, erro
 	}, nil
 }
 
-// retryAfterFrom parses (and caps) the Retry-After response header.
+// retryAfterFrom parses the Retry-After response header verbatim (no cap):
+// give-up decisions belong to the retry policy, not the parser.
 func retryAfterFrom(h http.Header) time.Duration {
 	if d, ok := parseRetryAfter(h.Get("Retry-After")); ok {
-		return min(d, 30*time.Second)
+		return d
 	}
 	return 0
 }
@@ -302,7 +341,7 @@ func snippet(b []byte) string {
 	if len(s) > n {
 		s = s[:n]
 	}
-	return s
+	return redactSnippet(s)
 }
 
 // withXSRF stamps the X-XSRFToken header onto a mutation spec.

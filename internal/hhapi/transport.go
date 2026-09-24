@@ -80,12 +80,30 @@ func (rc *redirectChain) snapshot() []RedirectHop {
 	return append([]RedirectHop(nil), rc.hops...)
 }
 
+// errOffsiteRedirect is the sentinel returned by CheckRedirect when a hop
+// would leave the site's registrable domain. net/http closes the response
+// body on any CheckRedirect error, so the recorded chain travels inside
+// offsiteRedirectError instead of the response.
+var errOffsiteRedirect = errors.New("hhapi: redirect leaves the site registrable domain")
+
+// offsiteRedirectError carries the recorded chain across the response-loss
+// boundary (see errOffsiteRedirect).
+type offsiteRedirectError struct {
+	chain []RedirectHop
+}
+
+func (e *offsiteRedirectError) Error() string { return errOffsiteRedirect.Error() }
+
+func (e *offsiteRedirectError) Unwrap() error { return errOffsiteRedirect }
+
 // checkRedirect follows redirects while (a) the hop budget lasts and
 // (b) each hop stays on the same registrable domain as the configured site
 // host. Cross-domain hops stop following (a browser would have navigated
 // away; our API client must not chase SSO/offsite links). Every hop pins
 // the effective site host so subsequent requests reuse the regional
-// subdomain the edge assigned (M0: hh.ru -> taganrog.hh.ru).
+// subdomain the edge assigned (M0: hh.ru -> taganrog.hh.ru) and folds the
+// hop's Set-Cookie into the persistence book — challenge pages set
+// __ddg_* right on the 302, before any final response exists.
 func (c *Client) checkRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= maxRedirects {
 		return errors.New("hhapi: stopped after 10 redirects")
@@ -98,12 +116,15 @@ func (c *Client) checkRedirect(req *http.Request, via []*http.Request) error {
 	if rc := redirectChainFromContext(req.Context()); rc != nil {
 		rc.add(res.StatusCode, loc)
 	}
+	c.book.absorb(res.Cookies()...)
 	if sameSite(req.URL.Host, c.eps.siteHost()) {
 		c.pinHost(req.URL.Host)
+		return nil
 	}
-	if !sameSite(req.URL.Host, c.eps.siteHost()) {
-		// Offsite redirect: keep the response, do not chase it.
-		return errors.New("hhapi: redirect leaves the site registrable domain")
+	// Offsite redirect: keep the response, do not chase it.
+	var chain []RedirectHop
+	if rc := redirectChainFromContext(req.Context()); rc != nil {
+		chain = rc.snapshot()
 	}
-	return nil
+	return &offsiteRedirectError{chain: chain}
 }

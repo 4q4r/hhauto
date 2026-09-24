@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -21,11 +22,15 @@ var ErrXSRF = errors.New("hhapi: xsrf token rejected")
 
 // StatusError is a typed HTTP failure. errors.Is(err, ErrCaptcha) and the
 // other contract sentinels match through Kind.
+//
+// BodySnippet is diagnostics-only: it is masked by redactSnippet (hh bodies
+// can embed _xsrf/hhtoken values) and must never be constructed from raw
+// body bytes without it.
 type StatusError struct {
 	Kind        error         // contract sentinel (ErrRateLimited, ErrCaptcha, ...)
 	StatusCode  int           // 0 for non-HTTP (redirect-marker) classifications
 	URL         string        // request URL (never contains credentials)
-	BodySnippet string        // first bytes of the body, for diagnostics
+	BodySnippet string        // masked body fragment (see redactSnippet)
 	Redirect    string        // Location header when the failure was a redirect
 	RetryAfter  time.Duration // honored 429 Retry-After, if any
 	Chain       []RedirectHop // redirect chain leading to this response
@@ -179,6 +184,22 @@ func parseRetryAfter(v string) (time.Duration, bool) {
 		return d, true
 	}
 	return 0, false
+}
+
+// redact patterns: diagnostics must never carry session credentials. hh
+// bodies and URLs can embed _xsrf / hhtoken values in JSON (key: "value"),
+// form/query (key=value) and header (key: value) shapes.
+var (
+	redactJSONRe   = regexp.MustCompile(`(?i)("[^"\[\]{}:]*(?:xsrf|hhtoken|authorization|cookie|token)[^"]*"\s*:\s*)"(?:[^"]*)"`)
+	redactAssignRe = regexp.MustCompile(`(?i)((?:^|[&\s,;([])[a-z_.-]*(?:xsrf|hhtoken|authorization|cookie|token)[a-z_.-]*\s*[:=]\s*)(?:("[^"&]*")|[^&\s;,}"]+)`)
+)
+
+// redactSnippet masks sensitive token assignments, keeping key names for
+// debuggability. Non-sensitive text passes through byte-identical.
+func redactSnippet(s string) string {
+	s = redactJSONRe.ReplaceAllString(s, `${1}"***"`)
+	s = redactAssignRe.ReplaceAllString(s, `${1}***`)
+	return s
 }
 
 // isDialError reports whether err is a dial-phase network failure: the
