@@ -88,9 +88,11 @@ func (k *fsKillSwitch) Stop() {
 
 // Tripped implements KillSwitch.
 func (k *fsKillSwitch) Tripped(ctx context.Context) bool {
-	// Channel 1: signal-induced context cancellation.
+	// The caller's context is already cancelled (per-task ctx during
+	// shutdown, test teardown): report tripped for THIS check so nothing
+	// mutates past a dead context, but do NOT latch the switch — a
+	// cancelled ctx is not a kill-switch trip.
 	if err := ctx.Err(); err != nil {
-		k.tripOnce()
 		return true
 	}
 	// Channel 3: programmatic stop.

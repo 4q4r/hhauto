@@ -20,6 +20,12 @@ import (
 // featureName is the feature_state namespace used for the SLA latch.
 const featureName = "review"
 
+// dedupScanLimit caps the open-items idempotency scan per Add/ScanSLA
+// account pass. Open review queues are small (items are human-resolved);
+// past this cap a duplicate could slip through — accepted in exchange for
+// a bounded scan (the DAO has no "open by target" lookup).
+const dedupScanLimit = 500
+
 // Service owns the review workflow. The notifier may be nil (storage-only
 // operation, tests); the logger may be nil (slog.Default is used).
 type Service struct {
@@ -50,7 +56,7 @@ func (s *Service) Add(ctx context.Context, db *store.DB, accountID, kind, reason
 
 	// Idempotency scan over open items (accounts hold few open items; the
 	// generous limit keeps the scan complete in practice).
-	open, err := db.ReviewItemsOpen(ctx, accountID, 500)
+	open, err := db.ReviewItemsOpen(ctx, accountID, dedupScanLimit)
 	if err != nil {
 		return 0, fmt.Errorf("review: open items scan: %w", err)
 	}
@@ -134,7 +140,7 @@ func (s *Service) ScanSLA(ctx context.Context, db *store.DB, slaHours int, accou
 	day := audit.DayAt(now)
 
 	for _, accountID := range accounts {
-		open, err := db.ReviewItemsOpen(ctx, accountID, 500)
+		open, err := db.ReviewItemsOpen(ctx, accountID, dedupScanLimit)
 		if err != nil {
 			return fmt.Errorf("review: sla scan %s: %w", accountID, err)
 		}

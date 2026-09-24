@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"hhauto/internal/config"
@@ -131,4 +132,29 @@ func redeliverSign(secret, timestamp string, body []byte) string {
 	mac.Write([]byte("v1." + timestamp + "."))
 	mac.Write(body)
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// redeliveryBook tracks per-item redelivery attempt counters (in-memory;
+// a process restart resets them, which only costs one backoff step).
+type redeliveryBook struct {
+	mu       sync.Mutex
+	attempts map[int64]int
+}
+
+func (b *redeliveryBook) next(id int64) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.attempts == nil {
+		b.attempts = map[int64]int{}
+	}
+	b.attempts[id]++
+	return b.attempts[id]
+}
+
+// clear resets an item's counter — called on every successful delivery so
+// the next failure starts from the base backoff again.
+func (b *redeliveryBook) clear(id int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.attempts, id)
 }

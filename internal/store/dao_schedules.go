@@ -90,3 +90,46 @@ func scanSchedule(rs rowScanner) (*Schedule, error) {
 	}
 	return &s, nil
 }
+
+// SchedulesListAll returns every schedule row (enabled and disabled),
+// ordered by ID. The engine's startup materialization uses it to preserve
+// persisted last_run_at/next_run_at across restarts (full-row Upsert would
+// re-roll the one-shot jitter and erase last-run bookkeeping).
+func (db *DB) SchedulesListAll(ctx context.Context) ([]Schedule, error) {
+	rows, err := db.conn.QueryContext(ctx, `
+		SELECT id, account_id, spec, enabled, last_run_at, next_run_at, updated_at
+		FROM schedules ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("store: SchedulesListAll: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Schedule
+	for rows.Next() {
+		s, err := scanSchedule(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: SchedulesListAll scan: %w", err)
+		}
+		out = append(out, *s)
+	}
+	return out, rows.Err()
+}
+
+// SchedulesSetEnabled flips only the enabled column — last_run_at and
+// next_run_at are never touched (partial update: the persisted schedule
+// plan belongs to the scheduler, not to enable toggles).
+func (db *DB) SchedulesSetEnabled(ctx context.Context, id string, enabled bool) error {
+	db.writeMu.Lock()
+	defer db.writeMu.Unlock()
+
+	res, err := db.conn.ExecContext(ctx,
+		"UPDATE schedules SET enabled = ?, updated_at = ? WHERE id = ?",
+		boolInt(enabled), fmtTime(time.Now()), id)
+	if err != nil {
+		return fmt.Errorf("store: SchedulesSetEnabled: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("store: SchedulesSetEnabled: schedule %q not found", id)
+	}
+	return nil
+}

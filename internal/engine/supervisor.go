@@ -66,10 +66,9 @@ const (
 	killSwitchPoll       = 500 * time.Millisecond
 	shutdownStepTimeout  = 5 * time.Second
 
-	schedulesDueLimit   = 100
-	materializeLimit    = 10000
-	outboxDueLimit      = 50
-	defaultMaxCatchupHr = 6
+	schedulesDueLimit = 100
+	outboxDueLimit    = 50
+	defaultMaxCatchup = 6 * time.Hour
 )
 
 // Deps is the engine's whole environment, assembled by the CLI (T13):
@@ -105,8 +104,14 @@ type Deps struct {
 
 // Run drives the engine until ctx is cancelled, a kill-switch channel
 // trips, or a fatal startup error occurs. Shutdown order (documented
-// graceful sequence): stop the scheduler → drain the queue (up to 30s) →
-// stop workers → flush cookies → close webhooks → close the store.
+// graceful sequence): stop the scheduler → drain the queue (up to 30s,
+// workers stay alive and finish queued work) → stop workers → flush
+// cookies → close webhooks → close the store.
+//
+// Ownership: a fatal error BEFORE the loops start (feature seeding,
+// schedule materialization) leaves deps untouched — closing DB/Webhooks on
+// that error-path is the CALLER's (CLI's) responsibility. On any shutdown
+// path that reaches the graceful sequence, Run closes them itself.
 func Run(ctx context.Context, deps Deps) error {
 	if deps.Cfg == nil {
 		return errors.New("engine: Deps.Cfg is nil")
@@ -152,7 +157,6 @@ func Run(ctx context.Context, deps Deps) error {
 		bootstrap: map[string]time.Time{},
 		pause:     map[string]time.Time{},
 		backoff:   map[string]int{},
-		attempts:  map[int64]int{},
 	}
 
 	// runCtx: parent + SIGINT/SIGTERM (signal channel of the kill switch).
@@ -217,9 +221,13 @@ func Run(ctx context.Context, deps Deps) error {
 		close(outboxDone)
 	}
 
-	// Account supervisors: workers keep serving the drain after the
-	// scheduler stopped, so their context cancels only after Close.
-	workerCtx, cancelWorkers := context.WithCancel(sigCtx)
+	// Account supervisors: workers must SURVIVE the signal that started the
+	// shutdown — the whole point of the queue drain is that they finish the
+	// queued work. Their context therefore hangs off the BASE ctx with its
+	// own cancel, which fires only after Queue.Close has drained. The
+	// kill switch is still checked before every task: a signal drains
+	// gracefully, a tripped switch drops the remaining tasks.
+	workerCtx, cancelWorkers := context.WithCancel(ctx)
 	var workerWG sync.WaitGroup
 	accounts := s.sortedAccounts()
 	for _, id := range accounts {
@@ -250,6 +258,8 @@ func Run(ctx context.Context, deps Deps) error {
 	if err := deps.Queue.Close(closeCtx, DrainTimeout); err != nil {
 		deps.Log.Warn("engine: queue drain", "err", err)
 	}
+	// Only after the drain: cancelling earlier would abort in-flight and
+	// queued work the drain is supposed to finish.
 	cancelWorkers()
 	workerWG.Wait()
 
@@ -288,7 +298,7 @@ type supervisor struct {
 	bootstrap map[string]time.Time // account → last successful bootstrap
 	pause     map[string]time.Time // account → paused until
 	backoff   map[string]int       // account → consecutive 429 level
-	attempts  map[int64]int        // outbox id → redelivery attempts
+	attempts  redeliveryBook       // outbox id → redelivery attempts
 }
 
 func (s *supervisor) sortedAccounts() []string {
@@ -348,45 +358,75 @@ func (s *supervisor) specWithDefaultTZ(spec scheduler.Spec) (scheduler.Spec, err
 	return spec, nil
 }
 
-// materializeSchedules persists one schedule row per (binding × account).
-// next_run is computed ONCE with jitter at first materialization; rows
-// already due in the store are left alone so the first tick applies the
-// missed-run policy to them (store exposes no list DAO, so "already
-// exists" is approximated by "is due right now" — documented deviation).
+// materializeSchedules persists schedule rows for the registered bindings.
+// Restart-safe by design: rows already in the store are NEVER re-upserted
+// (a full-row upsert would erase persisted last_run_at and re-roll the
+// one-shot next_run jitter) — an existing disabled row is only re-enabled
+// via the partial SchedulesSetEnabled update. Rows already due are left
+// alone so the first tick applies the missed-run policy to them.
+//
+// Fan-out bindings (RegisterSchedule) materialize one row per configured
+// account; single-account bindings (RegisterScheduleForAccount, R11)
+// materialize exactly one row for their bound account.
 func (s *supervisor) materializeSchedules(ctx context.Context) error {
 	now := s.deps.Clock.Now()
-	dueRows, err := s.deps.DB.SchedulesDue(ctx, now, materializeLimit)
+	existingRows, err := s.deps.DB.SchedulesListAll(ctx)
 	if err != nil {
-		return fmt.Errorf("engine: schedules due scan: %w", err)
+		return fmt.Errorf("engine: schedules list: %w", err)
 	}
-	existing := make(map[string]struct{}, len(dueRows))
-	for _, r := range dueRows {
-		existing[r.ID] = struct{}{}
+	existing := make(map[string]bool, len(existingRows)) // id → enabled
+	for _, r := range existingRows {
+		existing[r.ID] = r.Enabled
 	}
-	for _, accountID := range s.sortedAccounts() {
-		for _, name := range s.sortedBindingNames() {
-			b := s.bindings[name]
-			id := scheduleRowID(name, accountID)
-			if _, ok := existing[id]; ok {
+
+	for _, name := range s.sortedBindingNames() {
+		b := s.bindings[name]
+		if b.accountID != "" {
+			if _, configured := s.deps.Cfg.Accounts[b.accountID]; !configured {
+				s.deps.Log.Warn("engine: single-account schedule skipped: account not configured", "schedule", name, "account", b.accountID)
 				continue
 			}
-			spec, err := s.specWithDefaultTZ(b.spec)
-			if err != nil {
-				s.deps.Log.Error("engine: schedule skipped: bad timezone", "schedule", name, "err", err)
-				continue
+			if err := s.materializeOne(ctx, name, b, b.accountID, existing, now); err != nil {
+				return err
 			}
-			next := spec.Next(now, s.rnd)
-			doc, _ := json.Marshal(scheduleSpecJSON{Name: name, Spec: spec})
-			if err := s.deps.DB.SchedulesUpsert(ctx, &store.Schedule{
-				ID:        id,
-				AccountID: accountID,
-				Spec:      string(doc),
-				Enabled:   true,
-				NextRunAt: &next,
-			}); err != nil {
-				return fmt.Errorf("engine: materialize %s: %w", id, err)
+			continue
+		}
+		for _, accountID := range s.sortedAccounts() {
+			if err := s.materializeOne(ctx, name, b, accountID, existing, now); err != nil {
+				return err
 			}
 		}
+	}
+	return nil
+}
+
+func (s *supervisor) materializeOne(ctx context.Context, name string, b scheduleBinding, accountID string, existing map[string]bool, now time.Time) error {
+	id := scheduleRowID(name, accountID)
+	if enabled, ok := existing[id]; ok {
+		if !enabled {
+			// Partial flip only: last_run/next_run stay untouched.
+			if err := s.deps.DB.SchedulesSetEnabled(ctx, id, true); err != nil {
+				return fmt.Errorf("engine: re-enable %s: %w", id, err)
+			}
+			s.deps.Log.Info("engine: schedule row re-enabled", "schedule", id)
+		}
+		return nil
+	}
+	spec, err := s.specWithDefaultTZ(b.spec)
+	if err != nil {
+		s.deps.Log.Error("engine: schedule skipped: bad timezone", "schedule", name, "err", err)
+		return nil
+	}
+	next := spec.Next(now, s.rnd)
+	doc, _ := json.Marshal(scheduleSpecJSON{Name: name, Spec: spec})
+	if err := s.deps.DB.SchedulesUpsert(ctx, &store.Schedule{
+		ID:        id,
+		AccountID: accountID,
+		Spec:      string(doc),
+		Enabled:   true,
+		NextRunAt: &next,
+	}); err != nil {
+		return fmt.Errorf("engine: materialize %s: %w", id, err)
 	}
 	return nil
 }
@@ -460,7 +500,7 @@ func (s *supervisor) handleDueSchedule(ctx context.Context, row store.Schedule, 
 	late := now.Sub(*row.NextRunAt)
 	maxCatchup := time.Duration(s.deps.Cfg.Schedule.MaxCatchupHours) * time.Hour
 	if maxCatchup <= 0 {
-		maxCatchup = defaultMaxCatchupHr * time.Hour
+		maxCatchup = defaultMaxCatchup
 	}
 	expired := late > maxCatchup
 	if expired && s.missedRunPolicy() == "skip" {
@@ -759,10 +799,7 @@ func (s *supervisor) outboxTick(ctx context.Context) {
 }
 
 func (s *supervisor) redeliverOne(ctx context.Context, item webhook.OutboxItem) {
-	s.mu.Lock()
-	s.attempts[item.ID]++
-	attempt := s.attempts[item.ID]
-	s.mu.Unlock()
+	attempt := s.attempts.next(item.ID)
 
 	if err := s.redeliver.Redeliver(ctx, item); err != nil {
 		delay := outboxBackoff(attempt)
@@ -773,13 +810,14 @@ func (s *supervisor) redeliverOne(ctx context.Context, item webhook.OutboxItem) 
 			"id", item.ID, "endpoint", item.EndpointID, "attempt", attempt, "next", delay.Round(time.Second), "err", err)
 		return
 	}
+	// The endpoint accepted the payload: the attempt counter resets NOW
+	// (before bookkeeping), so a later MarkDelivered hiccups can't inflate
+	// the next failure's backoff.
+	s.attempts.clear(item.ID)
 	if err := s.deps.Outbox.MarkDelivered(item.ID); err != nil {
 		s.deps.Log.Error("engine: outbox mark delivered", "id", item.ID, "err", err)
 		return
 	}
-	s.mu.Lock()
-	delete(s.attempts, item.ID)
-	s.mu.Unlock()
 	s.deps.Log.Info("engine: outbox redelivered", "id", item.ID, "endpoint", item.EndpointID, "attempt", attempt)
 }
 

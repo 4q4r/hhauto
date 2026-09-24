@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -817,5 +819,191 @@ func TestRegistryAPI(t *testing.T) {
 	// Nil handler rejected.
 	if err := RegisterHandler(testKind, nil); err == nil {
 		t.Fatal("nil handler must be rejected")
+	}
+}
+
+func TestGracefulDrainProcessesQueuedTask(t *testing.T) {
+	resetRegistrations()
+	h := newHarness(t, nil)
+
+	var phase atomic.Int32 // 1 = first task, 2 = second task
+	h1Started := make(chan struct{})
+	release1 := make(chan struct{})
+	var handled2 atomic.Int32
+	mustRegisterHandler(t, testKind, func(_ context.Context, tc *TaskContext, task queue.Task) error {
+		switch task.DedupKey {
+		case "one":
+			if !phase.CompareAndSwap(0, 1) {
+				t.Error("task one executed twice")
+			}
+			close(h1Started)
+			<-release1
+		case "two":
+			phase.CompareAndSwap(1, 2)
+			handled2.Add(1)
+		}
+		return nil
+	})
+
+	_ = h.deps.Queue.Enqueue(context.Background(), queue.Task{
+		AccountID: "a1", Kind: testKind, Priority: queue.PrioApply, DedupKey: "one",
+	})
+	// Task two waits IN THE QUEUE while the signal arrives: the drain must
+	// hand it to the (still alive) worker.
+	_ = h.deps.Queue.Enqueue(context.Background(), queue.Task{
+		AccountID: "a1", Kind: testKind, Priority: queue.PrioApply, DedupKey: "two",
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), h.deps) }()
+
+	<-h1Started // Run's signal handler and workers are up by now
+
+	// SIG-имитация: a real SIGINT drops Run's NotifyContext (sigCtx) while
+	// the BASE context stays alive — that is the drain window under test.
+	// A plain ctx cancel would hard-cancel the workers via parent
+	// propagation and test nothing.
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatalf("SIGINT: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	close(release1) // let task one finish; the drain must serve task two
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Run did not return after graceful drain")
+	}
+	if n := handled2.Load(); n != 1 {
+		t.Fatalf("queued task processed %d times during drain, want 1", n)
+	}
+	if got := phase.Load(); got != 2 {
+		t.Fatalf("phase = %d, want 2 (task two completed)", got)
+	}
+}
+
+func TestRestartPreservesScheduleRow(t *testing.T) {
+	resetRegistrations()
+	h := newHarness(t, nil)
+	mustRegisterHandler(t, testKind, func(context.Context, *TaskContext, queue.Task) error { return nil })
+
+	// Simulate a previous run: a1 has an ENABLED row with persisted
+	// last_run/next_run (not due); a2's row is missing.
+	now := h.clock.Now()
+	last := now.Add(-2 * time.Hour)
+	next := now.Add(20 * time.Hour)
+	doc, _ := json.Marshal(scheduleSpecJSON{Name: testSchedule, Spec: scheduler.Spec{
+		TZ: "UTC", Times: []string{"08:00"}, Days: scheduler.All,
+	}})
+	if err := h.db.SchedulesUpsert(context.Background(), &store.Schedule{
+		ID: testSchedule + "@a1", AccountID: "a1", Spec: string(doc), Enabled: true,
+		LastRunAt: &last, NextRunAt: &next, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stop, _ := h.run(ctx)
+	defer stop()
+
+	waitFor(t, "a2 row materialized", func() bool {
+		rows, err := h.db.SchedulesListAll(context.Background())
+		return err == nil && len(rows) == 2
+	})
+
+	rows, err := h.db.SchedulesListAll(context.Background())
+	if err != nil {
+		t.Fatalf("SchedulesListAll: %v", err)
+	}
+	for _, r := range rows {
+		if r.ID != testSchedule+"@a1" {
+			continue
+		}
+		if r.LastRunAt == nil || !r.LastRunAt.Equal(last) {
+			t.Errorf("restart changed last_run_at: got %v, want %v", r.LastRunAt, last)
+		}
+		if r.NextRunAt == nil || !r.NextRunAt.Equal(next) {
+			t.Errorf("restart re-synthesized next_run_at: got %v, want %v (jitter must persist)", r.NextRunAt, next)
+		}
+	}
+}
+
+func TestRegisterScheduleForAccountSingleRow(t *testing.T) {
+	resetRegistrations()
+	h := newHarness(t, nil)
+
+	soloKind := queue.TaskKind("t12_solo")
+	spec, err := scheduler.Parse("UTC", []string{"08:00"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Jitter = 0
+	if err := RegisterScheduleForAccount("solo", "a2", spec,
+		func(_ context.Context, accountID string) (queue.Task, error) {
+			return queue.Task{AccountID: accountID, Kind: soloKind, Priority: queue.PrioWarmup, DedupKey: "fire"}, nil
+		}); err != nil {
+		t.Fatalf("RegisterScheduleForAccount: %v", err)
+	}
+
+	var mu sync.Mutex
+	var firedAccounts []string
+	mustRegisterHandler(t, soloKind, func(_ context.Context, tc *TaskContext, _ queue.Task) error {
+		mu.Lock()
+		firedAccounts = append(firedAccounts, tc.AccountID)
+		mu.Unlock()
+		return nil
+	})
+	// Keep the default fan-out schedule quiet.
+	mustRegisterHandler(t, testKind, func(context.Context, *TaskContext, queue.Task) error { return nil })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stop, _ := h.run(ctx)
+	defer stop()
+
+	waitFor(t, "schedule rows materialized", func() bool {
+		rows, err := h.db.SchedulesListAll(context.Background())
+		return err == nil && len(rows) == 3 // t12sched@a1, t12sched@a2, solo@a2
+	})
+
+	rows, err := h.db.SchedulesListAll(context.Background())
+	if err != nil {
+		t.Fatalf("SchedulesListAll: %v", err)
+	}
+	solo := 0
+	for _, r := range rows {
+		if strings.HasPrefix(r.ID, "solo@") {
+			solo++
+			if r.AccountID != "a2" {
+				t.Errorf("solo row bound to %q, want a2", r.AccountID)
+			}
+		}
+	}
+	if solo != 1 {
+		t.Fatalf("single-account binding materialized %d rows, want exactly 1", solo)
+	}
+
+	waitFor(t, "scheduler parked", func() bool {
+		return h.clock.hasPendingTimerAt(h.clock.Now().Add(SchedulerTick))
+	})
+	h.clock.Advance(26 * time.Hour)
+	waitFor(t, "solo fired", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(firedAccounts) >= 1
+	})
+	time.Sleep(150 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(firedAccounts) != 1 {
+		t.Fatalf("solo fired %d times (%v), want exactly 1", len(firedAccounts), firedAccounts)
+	}
+	if firedAccounts[0] != "a2" {
+		t.Fatalf("factory received accountID %q, want a2", firedAccounts[0])
 	}
 }
