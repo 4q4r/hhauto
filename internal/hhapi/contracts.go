@@ -39,6 +39,13 @@ type Resume struct {
 	Searchable bool            `json:"searchable"`
 	UpdatedAt  time.Time       `json:"updated_at"`
 	Raw        json.RawMessage `json:"raw,omitempty"`
+
+	// T28 lineage fields (native clone discovery): the resume this one was
+	// cloned from (hh sets it on native clones) and the creation instant.
+	// Both empty/zero for resumes hh reports without those attributes, so
+	// the serialized shape stays backwards compatible.
+	ParentResumeID string    `json:"parent_resume_id,omitempty"`
+	CreatedAt      time.Time `json:"created_at,omitempty"`
 }
 
 // Salary is the vacancy salary band as published.

@@ -1,0 +1,198 @@
+{
+ "resumes": [
+  {
+   "forbidden": null,
+   "_attributes": {
+    "canPublishOrUpdate": false,
+    "canTouch": false,
+    "created": 1788000000000,
+    "hasConditions": false,
+    "hasErrors": false,
+    "hasPublicVisibility": false,
+    "hash": "a00000000000000000000000000000000000000000000000000000000000000",
+    "hhid": "111111111",
+    "id": "285600000",
+    "isSearchable": true,
+    "lang": "RU",
+    "lastEditTime": 1788100000000,
+    "markServiceExpireTime": null,
+    "marked": false,
+    "moderated": null,
+    "nextPublishAt": null,
+    "nextTouchAt": null,
+    "parentResumeId": "285600000",
+    "percent": 0,
+    "permission": "edit",
+    "publishState": null,
+    "renewal": false,
+    "renewalServiceExpireTime": null,
+    "siteId": 10,
+    "sitePlatform": "HEADHUNTER",
+    "source": "flexible_resume_builder",
+    "status": "new",
+    "tags": [],
+    "update_timeout": 14400000,
+    "updated": 1788100000000,
+    "user": "111111111",
+    "vacancySearchLastUsageDate": 1790290586,
+    "validation_schema": ""
+   },
+   "_conditions": {
+    "title": {
+     "status": "ok",
+     "weight": 2,
+     "mincount": 1,
+     "maxcount": 1,
+     "parts": [
+      {
+       "string": {
+        "required": true,
+        "type": "string",
+        "minlength": 2,
+        "maxlength": 100,
+        "not_in": [
+         "Тестовое резюме One",
+         "Тестовое резюме Two"
+        ]
+       }
+      }
+     ]
+    }
+   },
+   "professionalRole": [
+    {
+     "string": 96
+    }
+   ]
+  },
+  {
+   "forbidden": null,
+   "_attributes": {
+    "canPublishOrUpdate": false,
+    "canTouch": false,
+    "created": 1788000001000,
+    "hasConditions": false,
+    "hasErrors": false,
+    "hasPublicVisibility": false,
+    "hash": "a00000000000000000000000000000000000000000000000000000000000001",
+    "hhid": "111111111",
+    "id": "285600001",
+    "isSearchable": true,
+    "lang": "RU",
+    "lastEditTime": 1788100001000,
+    "markServiceExpireTime": "2031-08-29T19:35:33+0300",
+    "marked": true,
+    "moderated": "2026-08-30T19:00:58+03:00",
+    "nextPublishAt": null,
+    "nextTouchAt": null,
+    "parentResumeId": null,
+    "percent": 0,
+    "permission": "edit",
+    "publishState": null,
+    "renewal": true,
+    "renewalServiceExpireTime": "2031-08-29T19:35:31+0300",
+    "siteId": 10,
+    "sitePlatform": "HEADHUNTER",
+    "source": "flexible_resume_builder",
+    "status": "modified",
+    "tags": [
+     "RESUME_MARK",
+     "RESUME_RENEWAL"
+    ],
+    "update_timeout": 14400000,
+    "updated": 1788100001000,
+    "user": "111111111",
+    "vacancySearchLastUsageDate": 1790290586,
+    "validation_schema": ""
+   },
+   "_conditions": {
+    "title": {
+     "status": "ok",
+     "weight": 2,
+     "mincount": 1,
+     "maxcount": 1,
+     "parts": [
+      {
+       "string": {
+        "required": true,
+        "type": "string",
+        "minlength": 2,
+        "maxlength": 100,
+        "not_in": [
+         "Тестовое резюме One",
+         "Тестовое резюме Two"
+        ]
+       }
+      }
+     ]
+    }
+   },
+   "professionalRole": [
+    {
+     "string": 96
+    }
+   ]
+  },
+  {
+   "forbidden": null,
+   "_attributes": {
+    "canPublishOrUpdate": false,
+    "canTouch": false,
+    "created": 1788000002000,
+    "hasConditions": false,
+    "hasErrors": false,
+    "hasPublicVisibility": false,
+    "hash": "a00000000000000000000000000000000000000000000000000000000000002",
+    "hhid": "111111111",
+    "id": "285600002",
+    "isSearchable": false,
+    "lang": "RU",
+    "lastEditTime": 1788100002000,
+    "markServiceExpireTime": null,
+    "marked": false,
+    "moderated": null,
+    "nextPublishAt": null,
+    "nextTouchAt": null,
+    "parentResumeId": null,
+    "percent": 0,
+    "permission": "edit",
+    "publishState": null,
+    "renewal": false,
+    "renewalServiceExpireTime": null,
+    "siteId": 10,
+    "sitePlatform": "HEADHUNTER",
+    "source": "flexible_resume_builder",
+    "status": "not_finished",
+    "tags": [],
+    "update_timeout": 14400000,
+    "updated": 1788100002000,
+    "user": "111111111",
+    "vacancySearchLastUsageDate": 1790290586,
+    "validation_schema": ""
+   },
+   "_conditions": {
+    "title": {
+     "status": "ok",
+     "weight": 2,
+     "mincount": 1,
+     "maxcount": 1,
+     "parts": [
+      {
+       "string": {
+        "required": true,
+        "type": "string",
+        "minlength": 2,
+        "maxlength": 100,
+        "not_in": [
+         "Тестовое резюме One",
+         "Тестовое резюме Two"
+        ]
+       }
+      }
+     ]
+    }
+   },
+   "professionalRole": []
+  }
+ ]
+}

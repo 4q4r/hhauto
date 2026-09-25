@@ -32,6 +32,11 @@ const (
 	// internal/hhapi/clone.go). Overridable via config like every endpoint.
 	epResumeGetByHash = "resume_get_by_hash" // GET  /profile/shards/resume/get_by_hash?resumeHash=
 	epResumeUpdate    = "resume_update"      // POST /profile/shards/resume/update
+	// T28 native full clone (live-verified 2026-09-25 — one call creates a
+	// complete searchable duplicate). The default lives on the
+	// resume-profile-front service host and is used verbatim (never
+	// regional-host pinned); overridable via config like every endpoint.
+	epResumeCloneResumes = "resume_clone_resumes" // POST /profile/shards/resume/clone_resumes
 )
 
 // endpointSet resolves endpoint URLs from config with defaults and
@@ -90,6 +95,17 @@ func (e endpointSet) resolve(name, defaultURL string) string {
 
 // siteDefault is site + path used as the resolve() fallback.
 func (e endpointSet) siteDefault(path string) string { return e.site + path }
+
+// resolveExternal returns the override URL for name or defaultURL, used
+// verbatim in BOTH cases: the default belongs to a distinct hh service
+// host (resume-profile-front.hh.ru), which regional-host pinning must
+// never rewrite — pinning exists for hh.ru regional redirects only.
+func (e endpointSet) resolveExternal(name, defaultURL string) string {
+	if o := strings.TrimSpace(e.overrides[name]); o != "" {
+		return strings.TrimRight(o, "/")
+	}
+	return defaultURL
+}
 
 func (e endpointSet) chatikDefault(path string) string { return e.chatik + path }
 

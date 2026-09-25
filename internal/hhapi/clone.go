@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -20,40 +21,76 @@ import (
 //     lineage is tracked locally (internal/store). The owner-visible
 //     behaviour is "требует дозаполнить данные, даже титула нет".
 //
-// T27 full-clone flow (CloneResume): shell clone → materialize → verify.
+// T28 NATIVE FULL CLONE (live-verified 2026-09-25, owner session): hh's
+// own "похожее резюме" flow is ONE call to the resume-profile-front
+// service:
 //
-// The materialization rides the resume-profile builder surface (the web UI
-// behind /profile/resume/...):
+//	POST https://resume-profile-front.hh.ru/profile/shards/resume/clone_resumes
+//	{"resumeHash":"<hash>","resumesCreationProperties":[{"title":"<new unique
+//	 title>","roleIds":["<professionalRole id>"]}],"userPrint":{}}
 //
-//   - GET  /profile/shards/resume/get_by_hash?resumeHash=<hash> — the builder
-//     state: {nextIncompleteScreenId, screens:[{screenId}], resume:{...},
-//     profile:{fields:{...}}, additionalProperties} (live-verified read).
-//   - POST /profile/shards/resume/update — the per-screen save the editor
-//     SPA issues: {resumeHash, currentScreenId, resume, profile,
-//     questionToAnswerMap, additionalProperties, userSkillLevels, userPrint}
-//     (contract decoded from the deployed resume_profile_front bundles:
-//     thunk P in chunk 6069, hM split in module 64673, axios wrapper in
-//     module 70147/21440). The response carries {nextIncompleteScreenId,
-//     errors|error}; null nextIncompleteScreenId = the builder considers the
-//     resume complete (the SPA then treats it as created/published — no
-//     separate publish call exists on this surface; hh flips the visibility
-//     itself, so we never touch it).
-//   - The resume/profile sides are the editor's hM split: personal fields
-//     (area, metro, name, birthday, citizenship, ..., education lists) plus
-//     experience ride `profile`; the resume content (title, professionalRole,
-//     key skills, about-text, work conditions) stays on `resume`. Values use
-//     the conditional read format ([{"string":v}]); we transfer them verbatim.
+// with the SPA-exact header set (reverse-engineered from the deployed
+// resume_profile_front bundle, chunk 6069 module 11154 + axios wiring in
+// modules 70147/11981/21440 + the editor page's globalServiceVars):
 //
-// LIVE STATUS 2026-09-25: the update endpoint rejects every off-browser
-// request shape with a bare 400 (and the hh.ru /profile/** POST class is
-// edge-gated: non-browser TLS gets a spoofed 405 "allow: GET" while a real
-// Chrome reaches the app). A freshly cloned shell therefore fails
-// materialization with ErrCloneMaterialize, and any clone that still reads
-// back incomplete fails the gate with ErrCloneIncomplete — callers (the
-// multiapply autoclone) park for review instead of driving an empty shell.
-// The endpoint defaults point at the site host; config may override
-// "resume_update"/"resume_get_by_hash" (e.g. to the resume-profile-front
-// origin) once hh accepts the surface from API clients.
+//	Accept: application/json            (axios default — no */*)
+//	Content-Type: application/json      (axios default)
+//	X-Requested-With: XMLHttpRequest    (interceptor u)
+//	X-Xsrftoken: <_xsrf>                (interceptor v)
+//	X-hhtmSource: resume_professional_role, X-hhtmFrom/-Label: ""
+//	                                    (interceptor 11981 <- analyticsParams)
+//	Origin/Referer: the hh.ru page; Sec-Fetch-Site: same-site
+//
+// Missing any piece of that set earns a bare empty 400 from the service
+// (the T27 wall). The live success envelope is HTTP 200 {} — NO hash in
+// the body; the new resume is found through the resumes shard
+// (_attributes.parentResumeId == parent numeric id). The clone arrives
+// COMPLETE in one call: hh copies the whole parent content server-side,
+// sets parentResumeId itself, status "new", isSearchable true. hh enforces
+// unique resume titles (BUSINESS DUPLICATE), so the clone rides a fresh
+// title derived from the parent's (hh's own modal clones under a NEW
+// position name; a byte-identical title is impossible).
+//
+// Fallback: on a DEFINITIVE native rejection (hh answered; no entity was
+// created) the T27 shell-clone + builder-update pipeline still runs. On a
+// transport-level failure the native call is ambiguous (the clone may
+// exist) — no fallback, the AmbiguousError propagates so callers resolve
+// by reading.
+//
+// T27 FALLBACK SURFACE (kept for definitive native rejections): shell
+// clone (above) then the resume-profile builder — GET get_by_hash (builder
+// state) and POST update (per-screen save; chunk 6069 thunk P, hM split in
+// module 64673: personal fields + experience ride `profile`, content stays
+// on `resume`; values use the conditional format [{"string":v}]). LIVE
+// STATUS: the update endpoint rejects every off-browser shape with a bare
+// 400 (2026-09-25), so the fallback terminates in ErrCloneMaterialize
+// unless hh reopens it.
+
+// ErrCloneNative marks a failed native clone_resumes attempt where hh gave
+// a definitive answer and no entity was created.
+var ErrCloneNative = errors.New("hhapi: native clone_resumes failed")
+
+// StageNative is the CloneError stage for a native clone_resumes attempt
+// that never produced an entity (definitive hh rejection).
+const StageNative = "native"
+
+// cloneResumesURL is the resume-profile-front service endpoint (never
+// pinned to a regional host; see endpointSet.resolveExternal).
+const cloneResumesURL = "https://resume-profile-front.hh.ru/profile/shards/resume/clone_resumes"
+
+// cloneHhtmSource is the X-hhtmSource the deployed editor sends from the
+// screen the clone modal rides on (resume_professional_role route).
+const cloneHhtmSource = "resume_professional_role"
+
+// Title-suffix scheme for the fresh clone title ("(копия)", "(копия 2)",
+// ...): hh enforces unique resume titles, so the clone cannot reuse the
+// parent's verbatim.
+const (
+	cloneTitleSuffixA   = " (копия)"
+	cloneTitleSuffixFmt = " (копия %d)"
+	maxCloneTitleLength = 100 // hh title maxlength (_conditions)
+	maxCloneAttempts    = 3   // at most three clone_resumes POSTs per CloneResume
+)
 
 // ErrResumeLimit is the hh resume-count quota rejection (T26).
 // It extends the contract sentinels (same pattern as ErrXSRF in
@@ -118,18 +155,333 @@ type ResumeCloner interface {
 	// CloneResume clones the resume identified by its hash (the multiapply
 	// pipeline passes run.ResumeID, which the web surface keys by hash) and
 	// returns the new resume hash ONLY if the clone reads back complete:
-	// title present, status left not_finished. Any shorter outcome is a
-	// typed error (ErrResumeLimit / *CloneError) — callers must never drive
+	// title present, status not in_flight. Any shorter outcome is a typed
+	// error (ErrResumeLimit / *CloneError) — callers must never drive
 	// applications against an unverified shell.
 	CloneResume(ctx context.Context, resumeID string) (newHash string, err error)
 }
 
-// CloneResume runs the full-clone pipeline: (а) shell clone, (б) content
-// materialization through the resume-profile builder update endpoint, (в)
-// completion walk until the builder reports no incomplete screen (hh
-// publishes on completion; we never touch visibility), (г) verify read-back.
-// The hash is returned only when (г) passes.
+// CloneResume runs the native full clone (T28, live-verified): one
+// clone_resumes call — hh copies the whole parent content server-side,
+// parents the clone (parentResumeId) and publishes it searchable; the new
+// hash is discovered from the resumes shard and verified by read-back. On
+// a definitive native rejection (no entity created) it falls back to the
+// T27 pipeline (shell clone + builder materialization + verify). The hash
+// is returned only when the verify gate passes.
 func (c *Client) CloneResume(ctx context.Context, resumeID string) (string, error) {
+	newHash, nerr := c.cloneResumeNative(ctx, resumeID)
+	if nerr == nil {
+		return newHash, nil
+	}
+	var amb *AmbiguousError
+	if errors.As(nerr, &amb) || !isDefinitiveCloneReject(nerr) {
+		// The native call may or may not have landed: creating another
+		// clone through the fallback could duplicate the resume. Resolve
+		// by reading, never by repeating.
+		return "", nerr
+	}
+	c.log.Debug("hhapi: native clone rejected definitively, falling back to shell+update", "err", nerr)
+	return c.cloneResumeShellFlow(ctx, resumeID)
+}
+
+// cloneResumesRequest is the exact SPA body (chunk 6069 module 11154):
+// roleIds are STRINGS in hh's dictionaries ({ids:["40"],...}) and
+// userPrint rides as an object ({} when the fingerprint slice is empty —
+// the SPA sends the key regardless).
+type cloneResumesRequest struct {
+	ResumeHash    string                    `json:"resumeHash"`
+	CreationProps []cloneResumePropertySpec `json:"resumesCreationProperties"`
+	UserPrint     json.RawMessage           `json:"userPrint"`
+}
+
+type cloneResumePropertySpec struct {
+	Title   string   `json:"title"`
+	RoleIDs []string `json:"roleIds"`
+}
+
+// cloneResumesResponse covers every live envelope: success {};
+// business validation {"errors":[{field,type,code,...}]} (HTTP 200!);
+// legacy rejects {"@code":"403","$":"..."}; builder errors
+// {"error":[{key}]}.
+type cloneResumesResponse struct {
+	Errors []struct {
+		Field string `json:"field"`
+		Type  string `json:"type"`
+		Code  string `json:"code"`
+	} `json:"errors"`
+	Error []struct {
+		Key string `json:"key"`
+	} `json:"error"`
+	Code string `json:"@code"`
+	Msg  string `json:"$"`
+}
+
+// cloneResumesHeaders is the SPA-exact header set (see the file doc):
+// xhrHeaders for the UA/client-hints/X-Requested-With base, then the
+// axios-instance defaults and hhtm interceptor values the bundle adds.
+func (c *Client) cloneResumesHeaders() http.Header {
+	h := c.xhrHeaders(c.withPinnedHost(c.eps.site + "/profile/resume"))
+	h.Set("Accept", "application/json")
+	h.Set("Origin", c.eps.site)
+	h.Set("Sec-Fetch-Site", "same-site")
+	h.Set("X-hhtmSource", cloneHhtmSource)
+	h.Set("X-hhtmFrom", "")
+	h.Set("X-hhtmSourceLabel", "")
+	h.Set("X-hhtmFromLabel", "")
+	return h
+}
+
+// conditionInts renders a conditional-format field whose "string" parts
+// are numbers (professionalRole: [{"string":160}]) as strings — the format
+// hh's dictionaries use for roleIds.
+func conditionInts(raw json.RawMessage) []string {
+	var parts []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		v, ok := p["string"]
+		if !ok {
+			continue
+		}
+		var n float64
+		if err := json.Unmarshal(v, &n); err == nil {
+			out = append(out, strconv.FormatInt(int64(n), 10))
+			continue
+		}
+		var s string
+		if err := json.Unmarshal(v, &s); err == nil && s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// cloneTitleTaken reads the parent builder state's title conditions
+// (_conditions.title.parts[].string.not_in): every title hh already has.
+func cloneTitleTaken(st *builderState) map[string]bool {
+	taken := map[string]bool{}
+	raw, ok := st.Resume["_conditions"]
+	if !ok {
+		return taken
+	}
+	var conds struct {
+		Title struct {
+			Parts []struct {
+				String struct {
+					NotIn []string `json:"not_in"`
+				} `json:"string"`
+			} `json:"parts"`
+		} `json:"title"`
+	}
+	if err := json.Unmarshal(raw, &conds); err != nil {
+		return taken
+	}
+	for _, p := range conds.Title.Parts {
+		for _, t := range p.String.NotIn {
+			taken[t] = true
+		}
+	}
+	return taken
+}
+
+// cloneTitleCandidate derives the fresh clone title: "<parent> (копия)",
+// then "(копия N)", truncated to hh's maxlength.
+func cloneTitleCandidate(parent string, attempt int) string {
+	suffix := cloneTitleSuffixA
+	if attempt > 1 {
+		suffix = fmt.Sprintf(cloneTitleSuffixFmt, attempt)
+	}
+	base := parent
+	if len(base)+len(suffix) > maxCloneTitleLength {
+		base = strings.TrimSpace(base[:maxCloneTitleLength-len(suffix)])
+	}
+	return base + suffix
+}
+
+// cloneResumeNative fires the native full clone (live contract above).
+// Definitive rejections wrap ErrCloneNative; transport loss surfaces as
+// AmbiguousError.
+func (c *Client) cloneResumeNative(ctx context.Context, parentHash string) (string, error) {
+	parent, err := c.fetchBuilderState(ctx, parentHash)
+	if err != nil {
+		return "", fmt.Errorf("%w: parent state: %v", ErrCloneNative, err)
+	}
+	parentTitle := parent.Title()
+	if parentTitle == "" {
+		return "", fmt.Errorf("%w: parent has no title", ErrCloneNative)
+	}
+	var parentID string
+	if attrs, ok := parent.Resume["_attributes"]; ok {
+		var a struct {
+			ID string `json:"id"`
+		}
+		if jerr := json.Unmarshal(attrs, &a); jerr == nil {
+			parentID = a.ID
+		}
+	}
+	if parentID == "" {
+		return "", fmt.Errorf("%w: parent has no numeric id", ErrCloneNative)
+	}
+	roleIDs := conditionInts(parent.Resume["professionalRole"])
+	if roleIDs == nil {
+		roleIDs = []string{}
+	}
+	taken := cloneTitleTaken(parent)
+
+	attempt := 1
+	for {
+		resp, err := c.doMutation(ctx, func() requestSpec {
+			return c.buildCloneResumes(parentHash, parentTitle, roleIDs, taken, attempt)
+		})
+		if err != nil {
+			// Transport loss after send or a non-2xx HTTP verdict: the
+			// mutation path never auto-retries, so this is terminal and
+			// typed by the pipeline (AmbiguousError stays ambiguous).
+			return "", err
+		}
+		if bodyHasAny(string(resp.body), captchaMarkers) {
+			return "", &StatusError{Kind: ErrCaptcha, StatusCode: resp.status, URL: resp.finalURL, BodySnippet: snippet(resp.body), Chain: resp.chain}
+		}
+		if _, verr := parseCloneResumesVerdict(resp.body); verr == nil {
+			break // created
+		} else if !errors.Is(verr, errCloneTitleDuplicate) || attempt >= maxCloneAttempts {
+			return "", verr
+		}
+		attempt++
+	}
+
+	// Discovery: the clone does not come back in the response body — read
+	// the shard lineage (parentResumeId == parent numeric id), newest first.
+	clone, derr := c.discoverNativeClone(ctx, parentID)
+	if derr != nil {
+		return "", fmt.Errorf("%w: %v", ErrCloneNative, derr)
+	}
+
+	// Verify read-back: titled, finished, searchable — the one-call
+	// duplicate the T28 criterion demands.
+	state, verr := c.fetchBuilderState(ctx, clone)
+	if verr != nil {
+		return "", &CloneError{Stage: StageVerify, Hash: clone, Err: verr}
+	}
+	if state.Title() == "" || state.Status() == "" || state.Status() == "not_finished" || !state.IsSearchable {
+		return "", &CloneError{
+			Stage: StageVerify,
+			Hash:  clone,
+			Err:   fmt.Errorf("%w: title=%q status=%q searchable=%t", ErrCloneIncomplete, state.Title(), state.Status(), state.IsSearchable),
+		}
+	}
+	return clone, nil
+}
+
+// errCloneTitleDuplicate marks the live BUSINESS DUPLICATE verdict on the
+// title field (unique resume titles).
+var errCloneTitleDuplicate = errors.New("hhapi: clone title duplicate")
+
+// buildCloneResumes renders one clone_resumes requestSpec with the
+// attempt-th title candidate (the candidate is pre-registered in taken so
+// two attempts never reuse one title within a call).
+func (c *Client) buildCloneResumes(parentHash, parentTitle string, roleIDs []string, taken map[string]bool, attempt int) requestSpec {
+	title := cloneTitleCandidate(parentTitle, attempt)
+	for taken[title] {
+		attempt++
+		title = cloneTitleCandidate(parentTitle, attempt)
+	}
+	taken[title] = true
+	body, _ := json.Marshal(cloneResumesRequest{
+		ResumeHash:    parentHash,
+		CreationProps: []cloneResumePropertySpec{{Title: title, RoleIDs: roleIDs}},
+		UserPrint:     json.RawMessage(`{}`),
+	})
+	h := c.cloneResumesHeaders()
+	h.Set("Content-Type", "application/json")
+	return requestSpec{
+		kind:      kindMutation,
+		operation: "resume_clone_resumes",
+		method:    http.MethodPost,
+		url:       c.resolveCloneResumesURL(),
+		header:    h,
+		body:      body,
+	}
+}
+
+func (c *Client) resolveCloneResumesURL() string {
+	return c.eps.resolveExternal(epResumeCloneResumes, cloneResumesURL)
+}
+
+// parseCloneResumesVerdict classifies the live response envelopes. ok=true
+// means the clone was created ({}).
+func parseCloneResumesVerdict(body []byte) (ok bool, err error) {
+	var out cloneResumesResponse
+	if uerr := json.Unmarshal(body, &out); uerr != nil {
+		return false, fmt.Errorf("%w: decode response: %v", ErrCloneNative, uerr)
+	}
+	if len(out.Errors) > 0 {
+		codes := make([]string, 0, len(out.Errors))
+		dup := false
+		for _, e := range out.Errors {
+			codes = append(codes, e.Field+":"+e.Code)
+			if e.Code == "DUPLICATE" {
+				dup = true
+			}
+		}
+		joined := strings.Join(codes, ",")
+		if dup {
+			return false, fmt.Errorf("%w: %s", errCloneTitleDuplicate, joined)
+		}
+		return false, fmt.Errorf("%w: validation: %s", ErrCloneNative, joined)
+	}
+	if len(out.Error) > 0 {
+		keys := make([]string, 0, len(out.Error))
+		for _, e := range out.Error {
+			keys = append(keys, e.Key)
+		}
+		return false, fmt.Errorf("%w: builder error: %s", ErrCloneNative, strings.Join(keys, ","))
+	}
+	if out.Code != "" {
+		return false, fmt.Errorf("%w: %s %s", ErrCloneNative, out.Code, out.Msg)
+	}
+	return true, nil
+}
+
+// discoverNativeClone reads the resumes shard and returns the hash of the
+// newest resume parented to parentID — the clone hh just created.
+func (c *Client) discoverNativeClone(ctx context.Context, parentID string) (string, error) {
+	resumes, err := c.ListResumes(ctx)
+	if err != nil {
+		return "", err
+	}
+	best := ""
+	var bestCreated int64
+	for _, r := range resumes {
+		if r.ParentResumeID != parentID {
+			continue
+		}
+		var created int64
+		if !r.CreatedAt.IsZero() {
+			created = r.CreatedAt.UnixMilli()
+		}
+		if best == "" || created >= bestCreated {
+			best, bestCreated = r.HHID, created
+		}
+	}
+	if best == "" {
+		return "", errors.New("no shard entry carries the parent lineage")
+	}
+	return best, nil
+}
+
+// isDefinitiveCloneReject reports whether the native error proves hh
+// answered WITHOUT creating an entity (so the shell fallback is safe).
+func isDefinitiveCloneReject(err error) bool {
+	return errors.Is(err, ErrCloneNative) || errors.Is(err, errCloneTitleDuplicate)
+}
+
+// cloneResumeShellFlow is the T27 pipeline (fallback): shell clone,
+// content materialization through the builder update endpoint, verify
+// read-back. The hash is returned only when the verify gate passes.
+func (c *Client) cloneResumeShellFlow(ctx context.Context, resumeID string) (string, error) {
 	// (а) shell clone (T26 live contract).
 	resp, err := c.doMutation(ctx, func() requestSpec {
 		body, _ := json.Marshal(struct {
