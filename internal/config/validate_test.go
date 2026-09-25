@@ -82,6 +82,14 @@ func TestValidateAcceptsDisabledRunWithNoFields(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsValidSearchFields(t *testing.T) {
+	c := validConfig()
+	mutateRun(c, "daily", func(r *Run) { r.SearchFields = []string{"name", "company_name", "description"} })
+	if err := Validate(c); err != nil {
+		t.Fatalf("Validate(valid search_fields) = %v, want nil", err)
+	}
+}
+
 func TestValidateAcceptsValidAIChain(t *testing.T) {
 	c := validConfig()
 	c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat"}}
@@ -181,6 +189,13 @@ func TestValidateErrors(t *testing.T) {
 				mutateRun(c, "daily", func(r *Run) { r.MaxPerDay = 0 })
 			},
 			wantErr: "enabled=false",
+		},
+		{
+			name: "run search_fields invalid",
+			mutate: func(c *Config) {
+				mutateRun(c, "daily", func(r *Run) { r.SearchFields = []string{"name", "body"} })
+			},
+			wantErr: `search_fields "body"`,
 		},
 		{
 			name: "negative daily_apply_cap",

@@ -171,7 +171,7 @@
 # account = "main"
 # resume_id = ""                        # "" = first published resume
 # query = "golang OR backend"
-# search_mode = "normal"                # exact | normal | wide
+# search_fields = ["name"]              # name | company_name | description; empty = all fields (для "python backend", remote+RU, 2026-09-25: name=28, description=319, все поля=375)
 # max_per_day = 30
 # min_match_percent = 60
 # letter_template = ""                  # static fallback when the AI is off
@@ -306,7 +306,9 @@ UA и заголовки, `rps` и `concurrency` — локальные лими
 
 ### `[runs.<id>]`
 Профили мультиотклика — всё из настроек автоотклика hh: поисковый запрос
-(OR/AND/NOT/кавычки/скобки), `search_mode = exact | normal | wide`,
+(OR/AND/NOT/кавычки/скобки), `search_fields = ["name" | "company_name" |
+"description"]` (пусто = все поля; живые счётчики для "python backend",
+remote+RU, 2026-09-25: name=28, description=319, все поля=375),
 дневные лимиты и пороги, окна (`tz`, `time[]`, `days[]`), фильтры (зарплата,
 опыт, график, занятость, отрасли, регионы, exclude-слова, ЧС/БС компаний,
 рейтинг работодателя с политикой «без отзывов»). `resume_id = ""` — первое

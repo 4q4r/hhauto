@@ -153,7 +153,7 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # account = "main"
 # resume_id = ""                        # "" = first published resume
 # query = "golang OR backend"
-# search_mode = "normal"                # exact | normal | wide
+# search_fields = ["name"]              # name | company_name | description; empty = all fields (для "python backend", remote+RU, 2026-09-25: name=28, description=319, все поля=375)
 # max_per_day = 30
 # min_match_percent = 60
 # letter_template = ""                  # static fallback when the AI is off

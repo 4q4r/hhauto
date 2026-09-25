@@ -73,7 +73,9 @@ func TestDryRunThenLiveRunApplies(t *testing.T) {
 		t.Fatalf("upgraded row must carry applied_at")
 	}
 	// The upgraded row counts toward today's quota (status applied).
-	if n, _ := h.db.ApplicationsCountToday(t.Context(), "acc1", "run1", featurekit.DayUTC(now)); n != 1 {
+	// "Today" = the day the row was actually applied (store stamps applied_at
+	// with its own clock; the harness now is pinned and may differ).
+	if n, _ := h.db.ApplicationsCountToday(t.Context(), "acc1", "run1", featurekit.DayUTC(*app.AppliedAt)); n != 1 {
 		t.Fatalf("count today = %d, want 1", n)
 	}
 	if mustMetrics(t, h.db)["apply.ok"] != 1 {
