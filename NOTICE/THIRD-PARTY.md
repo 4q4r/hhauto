@@ -10,6 +10,7 @@
 |---|---|---|---|
 | github.com/99designs/keyring | v1.2.2 | MIT | OS-keyring для хранения кук |
 | github.com/agnivade/levenshtein | v1.2.1 | MIT | Fuzzy-детект инъекций в промптах |
+| github.com/bogdanfinn/tls-client | v1.16.0 | BSD-4-Clause | Браузерный TLS-отпечаток (uTLS) для транспорта hhapi [api].transport=tls-client |
 | github.com/oklog/ulid/v2 | v2.1.2 | Apache-2.0 | ULID-идентификаторы |
 | github.com/pelletier/go-toml/v2 | v2.4.3 | MIT | Разбор TOML-конфига |
 | github.com/santhosh-tekuri/jsonschema/v6 | v6.0.3 | Apache-2.0 | Валидация JSON-ответов ИИ |
@@ -22,7 +23,12 @@
 | modernc.org/sqlite | v1.59.0 | BSD-3-Clause | SQLite без CGO (pure Go, WAL) |
 
 Транзитивные зависимости наследуют лицензии своих проектов (MIT / BSD-3-Clause
-/ Apache-2.0); полный дерево-список: `go list -m all`.
+/ BSD-4-Clause / Apache-2.0); полный дерево-список: `go list -m all`.
+Ключевое транзитивное ядро tls-client: `bogdanfinn/utls` (fork
+refraction-networking/utls; LICENSE в module cache — BSD-3, Go Authors),
+`bogdanfinn/quic-go-utls` (MIT) и `bogdanfinn/fhttp` (fork net/http из
+stdlib Go; апстрим — BSD-3, файла LICENSE в module cache модуля нет —
+отмечено как остаточный риск, сверено по происхождению апстрима).
 
 ## Доноры идей (код не копировался)
 

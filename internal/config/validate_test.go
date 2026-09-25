@@ -11,6 +11,9 @@ func validConfig() *Config {
 	return &Config{
 		General: General{Timezone: "Local"},
 		Log:     Log{Level: "info", Format: "text", RedactSecrets: true},
+		// Transport is normally filled by applyDefaults; Validate is also
+		// exercised on raw literals, so spell it out (T24).
+		API: API{Kind: "web", Transport: TransportTLSClient},
 		Captcha: map[string]CaptchaProvider{
 			"cap1": {Protocol: "2captcha"},
 		},

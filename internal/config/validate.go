@@ -46,6 +46,11 @@ func validateGlobals(c *Config) error {
 	default:
 		return fmt.Errorf("log.format %q: must be \"text\" or \"json\"", c.Log.Format)
 	}
+	switch c.API.Transport {
+	case TransportTLSClient, TransportHTTP:
+	default:
+		return fmt.Errorf("api.transport %q: must be %q or %q", c.API.Transport, TransportTLSClient, TransportHTTP)
+	}
 	if _, err := time.LoadLocation(c.General.Timezone); err != nil {
 		return fmt.Errorf("general.timezone %q: %w", c.General.Timezone, err)
 	}

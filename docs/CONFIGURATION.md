@@ -48,6 +48,7 @@
 
 [api]
 # kind = "web"                          # "web" (cookie surface) is the only v1 mode
+# transport = "tls-client"              # "tls-client" (default) | "http" (stdlib, debugging)
 [api.endpoints]
 # site = "https://hh.ru"
 # chatik = "https://chatik.hh.ru"
@@ -249,6 +250,21 @@
 `kind = "web"` — единственный режим v1 (веб-API по кукам; публичный API закрыт
 с 15.12.2025). `[api.endpoints]` задаёт базовые URL; `[api.endpoints.override]`
 пинирует **любой** эндпоинт по имени — страховка от дрейфа неофициального API.
+
+`transport = "tls-client" | "http"` (дефолт `tls-client`, T24). hh.ru
+фингерпринтит TLS-хендшейк (JA3/JA3S): стек Go `crypto/tls` получает
+документные поверхности без SSR-узла состояния, поэтому дефолтный транспорт —
+`bogdanfinn/tls-client` (pure-Go uTLS) с браузерным профилем, подобранным под
+`user_agent` аккаунта: то же семейство (Chrome/Edge → `chrome_*`, Firefox →
+`firefox_*`), старший профиль с версией ≤ версии UA (Chrome/138 → `chrome_133`,
+Firefox/155 → `firefox_148`). Точного совпадения мажора в библиотеке нет —
+WARN в лог при старте; неизвестное семейство UA → дефолтный профиль
+библиотеки + WARN. Поведение (куки/персистентность, retry/backoff,
+rate-лимит, редиректы с региональным пиннингом и хоп-куками, прокси из
+`[proxy.*]` через `SetProxy` — socks5/http/https с кредами в userinfo,
+таймаут 30 с на хоп) сохранено; редиректы водятся вручную — у tls-client нет
+хуков на хоп. `transport = "http"` — прежний stdlib-транспорт, оставлен как
+fallback для отладки (диагностики транспортных различий).
 
 ### `[captcha.<id>]`
 Только платные API-сервисы: `protocol = "2captcha" | "anticaptcha"`
