@@ -77,10 +77,15 @@ type Options struct {
 	DB       *store.DB                 // lineage invariant + diff persistence
 	Review   review.Reviewer           // review parking (optional in tests)
 	Registry *PromptRegistry           // per-field prompts
-	Cfg      config.AutoCloneImprove
-	DryRun   bool
-	Now      func() time.Time
-	Log      *slog.Logger
+	// Editor applies the plan through the real editor pages in a browser
+	// (T30): the /profile/** POST family is edge-gated for off-browser
+	// TLS clients, so the browser path is the working apply. nil = the
+	// builder-update API path (its live degradation: parked statuses).
+	Editor EditorRunner
+	Cfg    config.AutoCloneImprove
+	DryRun bool
+	Now    func() time.Time
+	Log    *slog.Logger
 }
 
 // pending is one planned mutation awaiting the apply step.
@@ -149,10 +154,72 @@ func (im *Improver) ImproveClone(ctx context.Context, accountID, parentHash, clo
 		return artifact, nil
 	}
 
-	im.applyPending(ctx, cloneHash, live, mutated, pendings, artifact)
+	if im.opt.Editor != nil {
+		if aerr := im.applyPendingViaEditor(ctx, accountID, cloneHash, live, pendings, artifact); aerr != nil {
+			return nil, aerr
+		}
+	} else {
+		im.applyPending(ctx, cloneHash, live, mutated, pendings, artifact)
+	}
 	artifact.Applied = artifactHasStatus(artifact, StatusImproved)
 	im.persist(ctx, cloneHash, artifact)
 	return artifact, nil
+}
+
+// applyPendingViaEditor applies the plan through the browser editor
+// runner (T30). A degradation-class failure (Chrome missing, cookies
+// unavailable, browser start failure) parks the whole plan for manual
+// apply — the review semantics — and flips the planned fields to error;
+// per-change failures land as StatusError on their own fields. Invariant
+// failures (not a tracked clone, read failures) return an error.
+func (im *Improver) applyPendingViaEditor(ctx context.Context, accountID, cloneHash string,
+	live *hhapi.ResumeContent, pendings []pending, artifact *DiffArtifact,
+) error {
+	plan := make([]FieldChange, 0, len(pendings))
+	for _, p := range pendings {
+		plan = append(plan, FieldChange{
+			Field: p.spec.ID, Locator: p.locator, Screen: editorScreensFor(p.spec.ID, live),
+			Kind: p.spec.Kind, Label: p.spec.Label, Item: p.item,
+			Value: editorNaturalValue(p.spec, p.value),
+		})
+	}
+	res, err := im.opt.Editor.ApplyFieldPlan(ctx, cloneHash, plan)
+	if err != nil {
+		if !errors.Is(err, ErrEditorUnavailable) && !errors.Is(err, ErrChromeMissingEditor) {
+			return err
+		}
+		for i := range artifact.Fields {
+			if artifact.Fields[i].Status != StatusImproved {
+				continue
+			}
+			artifact.Fields[i].Status = StatusError
+			artifact.Fields[i].Reason = err.Error()
+		}
+		im.parkReview(ctx, accountID, ReviewKindImproveNeedsHuman,
+			"improve plan parked: the browser editor is unavailable, apply manually ("+err.Error()+")",
+			cloneHash, "", json.RawMessage(reviewPlannedValues(plan)))
+		return nil
+	}
+	failed := make(map[string]string, len(res.Failed))
+	for _, f := range res.Failed {
+		failed[f.Field] = f.Err
+	}
+	for i := range artifact.Fields {
+		f := &artifact.Fields[i]
+		if f.Status != StatusImproved {
+			continue
+		}
+		if reason, bad := failed[f.Locator]; bad {
+			f.Status, f.Reason = StatusError, reason
+		}
+	}
+	return nil
+}
+
+// reviewPlannedValues renders the parked plan for the review payload.
+func reviewPlannedValues(plan []FieldChange) string {
+	b, _ := json.Marshal(map[string]any{"planned": plan})
+	return string(b)
 }
 
 // requireCloneLineage enforces the base-resume invariant: only a tracked

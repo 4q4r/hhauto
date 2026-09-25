@@ -62,20 +62,20 @@ func TestBuildImprove(t *testing.T) {
 
 	// Disabled → nil.
 	cfg.Features.AutoClone.Improve.Enabled = false
-	if imp, err := buildImprove(cfg, nil, nil, testLoggerT29()); err != nil || imp != nil {
+	if imp, err := buildImprove(cfg, nil, nil, nil, nil, testLoggerT29()); err != nil || imp != nil {
 		t.Fatalf("disabled improve = %v, %v", imp, err)
 	}
 
 	// Enabled but the runner does not implement FieldPromptRunner → error.
 	cfg.Features.AutoClone.Improve.Enabled = true
-	if _, err := buildImprove(cfg, stubRunnerT29{}, nil, testLoggerT29()); err == nil {
+	if _, err := buildImprove(cfg, stubRunnerT29{}, nil, nil, nil, testLoggerT29()); err == nil {
 		t.Fatal("improve with a plain runner must fail (no FieldPromptRunner)")
 	}
 
 	// Unknown field fails at wiring.
 	cfg.Features.AutoClone.Improve.Fields = []string{"bogus"}
 	stub := &fieldPromptRunnerStubT29{}
-	if _, err := buildImprove(cfg, stub, nil, testLoggerT29()); err == nil {
+	if _, err := buildImprove(cfg, stub, nil, nil, nil, testLoggerT29()); err == nil {
 		t.Fatal("unknown improve field must fail at wiring")
 	}
 }
