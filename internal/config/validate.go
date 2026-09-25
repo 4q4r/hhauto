@@ -279,50 +279,55 @@ func validateRuns(c *Config) error {
 		if !r.Enabled {
 			continue
 		}
-		if r.Account == "" {
-			return fmt.Errorf("runs[%q].account: required when enabled", id)
-		}
-		if r.ResumeID == "" {
-			return fmt.Errorf("runs[%q].resume_id: required when enabled", id)
-		}
-		if r.MaxPerDay == 0 {
-			return fmt.Errorf("runs[%q].max_per_day=0: use enabled=false to disable the run", id)
-		}
-		if _, ok := c.Accounts[r.Account]; !ok {
-			return fmt.Errorf("runs[%q].account %q: unknown account", id, r.Account)
-		}
-		switch r.LetterMode {
-		case "", LetterModeTemplate, LetterModeTemplateAI, LetterModeAICompany: // "" = unset, defaults fill ai_company
-		default:
-			return fmt.Errorf("runs[%q].letter_mode %q: must be one of template | template_ai | ai_company", id, r.LetterMode)
-		}
-		if (r.LetterMode == LetterModeTemplate || r.LetterMode == LetterModeTemplateAI) &&
-			strings.TrimSpace(r.LetterTemplate) == "" {
-			return fmt.Errorf("runs[%q].letter_mode=%q requires letter_template", id, r.LetterMode)
-		}
-		if err := checkNegatives(map[string]float64{
-			fmt.Sprintf("runs[%q].max_per_day", id):       float64(r.MaxPerDay),
-			fmt.Sprintf("runs[%q].min_match_percent", id): float64(r.MinMatchPct),
-		}); err != nil {
-			return err
-		}
-		for _, f := range r.SearchFields {
-			switch f {
-			case "name", "company_name", "description":
-			default:
-				return fmt.Errorf("runs[%q].search_fields %q: must be one of name | company_name | description (empty = all fields)", id, f)
-			}
-		}
-		for i, w := range r.Windows {
-			if err := validateWindow(fmt.Sprintf("runs[%q].windows[%d]", id, i), w); err != nil {
-				return err
-			}
-		}
-		if err := validateRunFilters(fmt.Sprintf("runs[%q].filters", id), r.Filters); err != nil {
+		if err := validateRun(id, r, c); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// validateRun checks a single enabled run profile.
+func validateRun(id string, r Run, c *Config) error {
+	if r.Account == "" {
+		return fmt.Errorf("runs[%q].account: required when enabled", id)
+	}
+	if r.ResumeID == "" {
+		return fmt.Errorf("runs[%q].resume_id: required when enabled", id)
+	}
+	if r.MaxPerDay == 0 {
+		return fmt.Errorf("runs[%q].max_per_day=0: use enabled=false to disable the run", id)
+	}
+	if _, ok := c.Accounts[r.Account]; !ok {
+		return fmt.Errorf("runs[%q].account %q: unknown account", id, r.Account)
+	}
+	switch r.LetterMode {
+	case "", LetterModeTemplate, LetterModeTemplateAI, LetterModeAICompany: // "" = unset, defaults fill ai_company
+	default:
+		return fmt.Errorf("runs[%q].letter_mode %q: must be one of template | template_ai | ai_company", id, r.LetterMode)
+	}
+	if (r.LetterMode == LetterModeTemplate || r.LetterMode == LetterModeTemplateAI) &&
+		strings.TrimSpace(r.LetterTemplate) == "" {
+		return fmt.Errorf("runs[%q].letter_mode=%q requires letter_template", id, r.LetterMode)
+	}
+	if err := checkNegatives(map[string]float64{
+		fmt.Sprintf("runs[%q].max_per_day", id):       float64(r.MaxPerDay),
+		fmt.Sprintf("runs[%q].min_match_percent", id): float64(r.MinMatchPct),
+	}); err != nil {
+		return err
+	}
+	for _, f := range r.SearchFields {
+		switch f {
+		case "name", "company_name", "description":
+		default:
+			return fmt.Errorf("runs[%q].search_fields %q: must be one of name | company_name | description (empty = all fields)", id, f)
+		}
+	}
+	for i, w := range r.Windows {
+		if err := validateWindow(fmt.Sprintf("runs[%q].windows[%d]", id, i), w); err != nil {
+			return err
+		}
+	}
+	return validateRunFilters(fmt.Sprintf("runs[%q].filters", id), r.Filters)
 }
 
 // validateRunFilters rejects values hh would silently ignore. hh does not
