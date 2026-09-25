@@ -249,6 +249,13 @@ func validateRuns(c *Config) error {
 		}); err != nil {
 			return err
 		}
+		for _, f := range r.SearchFields {
+			switch f {
+			case "name", "company_name", "description":
+			default:
+				return fmt.Errorf("runs[%q].search_fields %q: must be one of name | company_name | description (empty = all fields)", id, f)
+			}
+		}
 		for i, w := range r.Windows {
 			if err := validateWindow(fmt.Sprintf("runs[%q].windows[%d]", id, i), w); err != nil {
 				return err

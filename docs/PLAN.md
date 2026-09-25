@@ -128,7 +128,7 @@ Chrome — фича opt-in), santhosh-tekuri/jsonschema/v6, agnivade/levenshtein
 - `[webhook.<id>]` url, preset="raw"|"telegram"|"discord", secret_env (HMAC), proxy_ref?,
   events=[...], retry
 - `[runs.<id>]` профили мультиотклика (всё из настроек автоотклика hh):
-  account, resume_id, query (OR/AND/NOT/кавычки/скобки), search_mode=exact|normal|wide,
+  account, resume_id, query (OR/AND/NOT/кавычки/скобки), search_fields=[name|company_name|description],
   max_per_day, min_match_percent, окна (tz, time[], days[]), filters{salary, experience,
   schedule/remote, travel_time, employment, industries, areas, labels}, exclude_words,
   company_blacklist/whitelist (+whitelist_bypass), exclude_agencies,

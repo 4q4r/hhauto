@@ -257,7 +257,7 @@ type Run struct {
 	ResumeID          string           `toml:"resume_id"`
 	Title             string           `toml:"title"`
 	Query             string           `toml:"query"`
-	SearchMode        string           `toml:"search_mode"` // exact | normal | wide
+	SearchFields      []string         `toml:"search_fields"` // name | company_name | description; empty = all fields. Live counts for query "python backend" (remote+RU, 2026-09-25): name=28, description=319, all fields=375.
 	MaxPerDay         int              `toml:"max_per_day"`
 	MinMatchPct       int              `toml:"min_match_percent"`
 	Windows           []Window         `toml:"windows"`

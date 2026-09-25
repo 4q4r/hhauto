@@ -609,17 +609,12 @@ func (c *Client) SearchVacancies(ctx context.Context, q SearchQuery) (VacancyPag
 }
 
 // searchURL maps SearchQuery onto the hh.ru search-page query parameters.
-// Modes: exact => quoted phrase; wide => widens the searched fields;
-// normal => default fields, unquoted.
+// SearchFields repeats the search_field param in order; an empty list sends
+// no search_field (hh searches all fields). Quoting is the caller's query
+// responsibility — the hh query syntax supports "..." inside text.
 func (c *Client) searchURL(q SearchQuery) string {
 	v := url.Values{}
-	text := q.Text
-	switch strings.ToLower(q.SearchMode) {
-	case "exact":
-		v.Set("text", `"`+text+`"`)
-	default:
-		v.Set("text", text)
-	}
+	v.Set("text", q.Text)
 	multi := func(key string, vals []string) {
 		for _, val := range vals {
 			if val != "" {
@@ -632,6 +627,7 @@ func (c *Client) searchURL(q SearchQuery) string {
 	multi("schedule", q.Schedule)
 	multi("employment", q.Employment)
 	multi("industry", q.Industries)
+	multi("search_field", q.SearchFields)
 	if q.SalaryFrom > 0 {
 		v.Set("salary", strconv.Itoa(q.SalaryFrom))
 	}
@@ -643,11 +639,6 @@ func (c *Client) searchURL(q SearchQuery) string {
 	}
 	if q.PeriodDays > 0 {
 		v.Set("search_period", strconv.Itoa(q.PeriodDays))
-	}
-	if strings.EqualFold(q.SearchMode, "wide") {
-		v.Add("search_field", "name")
-		v.Add("search_field", "company_name")
-		v.Add("search_field", "description")
 	}
 	page := q.Page
 	if page < 0 {

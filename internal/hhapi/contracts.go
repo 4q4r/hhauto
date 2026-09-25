@@ -191,7 +191,7 @@ type SearchQuery struct {
 	SalaryFrom      int
 	Currency        string
 	LabelNoAgencies bool
-	SearchMode      string // exact | normal | wide
+	SearchFields    []string // repeated search_field params: name | company_name | description; empty = param not sent (all hh fields)
 	PeriodDays      int
 	Page            int
 	PerPage         int
