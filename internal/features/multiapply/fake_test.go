@@ -77,6 +77,10 @@ func newApplyEnv(t *testing.T) *applyEnv {
 		http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: "tok_test", Path: "/"})
 		_, _ = io.WriteString(w, xsrfPage)
 	})
+	mux.HandleFunc("GET /shards/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: "tok_test", Path: "/"})
+		_, _ = io.WriteString(w, `{"resumes":[]}`)
+	})
 	mux.HandleFunc("GET /applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
 		e.mu.Lock()
 		items := append([]string(nil), e.suitable...)

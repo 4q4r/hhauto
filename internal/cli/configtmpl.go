@@ -36,6 +36,7 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # search_page = "https://hh.ru/search/vacancy"
 # [api.endpoints.override]              # pin ANY endpoint by name (anti-drift)
 # settings = "https://hh.ru/applicant/settings"
+# bootstrap = "https://hh.ru/shards/applicant/resumes"
 # resumes = "https://hh.ru/shards/applicant/resumes"
 # touch = "https://hh.ru/applicant/resumes/touch"
 # resume_pdf = "https://hh.ru/resume/{resume_id}?pdf=1"
