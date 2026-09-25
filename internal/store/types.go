@@ -27,6 +27,19 @@ type Resume struct {
 	UpdatedAt  time.Time
 }
 
+// ResumeClone is one hhauto-tracked clone lineage edge: clone_hash was
+// created as a clone of parent_hash at the given depth (root resume depth 0,
+// direct clones 1, …). hh.ru does not expose the clone parent (no
+// parentResumeId on live clones), so this table is the single source of
+// lineage truth (T26, migration 0003).
+type ResumeClone struct {
+	CloneHash  string
+	ParentHash string
+	Depth      int
+	AccountID  string
+	CreatedAt  time.Time // filled when zero
+}
+
 // VacancySeen deduplicates vacancies per account+vacancy (UNIQUE).
 type VacancySeen struct {
 	AccountID   string

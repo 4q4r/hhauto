@@ -85,6 +85,33 @@ func (db *DB) ChatsDueWarmup(ctx context.Context, accountID string, limit int) (
 	return out, rows.Err()
 }
 
+// ChatsListRejected returns the account's rejected chats, newest last
+// message first. The rejection date source for the T26 reapply policy:
+// chats.state='rejected' + last_message_at.
+func (db *DB) ChatsListRejected(ctx context.Context, accountID string) ([]Chat, error) {
+	rows, err := db.conn.QueryContext(ctx, `
+		SELECT id, account_id, chatik_chat_id, topic_id, vacancy_id, employer_id,
+		       employer_name, state, rejection_confidence, last_message_at,
+		       last_outgoing_at, leave_count, updated_at
+		FROM chats
+		WHERE account_id = ? AND state = 'rejected'
+		ORDER BY last_message_at DESC`, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("store: ChatsListRejected: %w", err)
+	}
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
+
+	var out []Chat
+	for rows.Next() {
+		c, err := scanChat(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: ChatsListRejected scan: %w", err)
+		}
+		out = append(out, *c)
+	}
+	return out, rows.Err()
+}
+
 // chatsByChatikID is an in-package lookup used by tests.
 func (db *DB) chatsByChatikID(ctx context.Context, accountID, chatikChatID string) (*Chat, error) {
 	rs := db.conn.QueryRowContext(ctx, `

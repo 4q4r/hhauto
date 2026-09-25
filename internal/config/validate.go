@@ -34,7 +34,50 @@ func Validate(c *Config) error {
 	if err := validateAI(c); err != nil {
 		return err
 	}
+	if err := validateAutoClone(c); err != nil {
+		return err
+	}
 	return validateRuns(c)
+}
+
+// validateAutoClone checks the [features.autoclone] section (T26).
+func validateAutoClone(c *Config) error {
+	ac := c.Features.AutoClone
+	if !ac.Enabled {
+		return nil
+	}
+	switch ac.ReapplyMode {
+	case ReapplyAll, ReapplyNewOnly, ReapplySkipRecentRejections:
+	default:
+		return fmt.Errorf("features.autoclone.reapply_mode %q: must be one of all | new_only | skip_recent_rejections", ac.ReapplyMode)
+	}
+	if err := checkNegatives(map[string]float64{
+		"features.autoclone.max_clones_per_resume": float64(ac.MaxClonesPerResume),
+		"features.autoclone.max_clone_depth":       float64(ac.MaxCloneDepth),
+		"features.autoclone.skip_rejection_days":   float64(ac.SkipRejectionDays),
+		"features.autoclone.finish_timeout_min":    float64(ac.FinishTimeoutMin),
+	}); err != nil {
+		return err
+	}
+	if ac.MaxClonesPerResume == 0 {
+		return fmt.Errorf("features.autoclone.max_clones_per_resume=0: autoclone could never create a clone; disable features.autoclone.enabled instead")
+	}
+	if ac.MaxCloneDepth == 0 {
+		return fmt.Errorf("features.autoclone.max_clone_depth=0: depth is counted from the root resume; use 1 (no chains) or higher")
+	}
+	if ac.ReapplyMode == ReapplySkipRecentRejections && ac.SkipRejectionDays <= 0 {
+		return fmt.Errorf("features.autoclone.skip_rejection_days=%d: must be positive for skip_recent_rejections", ac.SkipRejectionDays)
+	}
+	ov := ac.RunOverride
+	switch ov.LetterMode {
+	case "", LetterModeTemplate, LetterModeTemplateAI, LetterModeAICompany:
+	default:
+		return fmt.Errorf("features.autoclone.run_override.letter_mode %q: must be one of template | template_ai | ai_company", ov.LetterMode)
+	}
+	if ov.MaxPerDay < 0 {
+		return fmt.Errorf("features.autoclone.run_override.max_per_day: negative values are not allowed (got %d)", ov.MaxPerDay)
+	}
+	return nil
 }
 
 func validateGlobals(c *Config) error {
@@ -236,41 +279,55 @@ func validateRuns(c *Config) error {
 		if !r.Enabled {
 			continue
 		}
-		if r.Account == "" {
-			return fmt.Errorf("runs[%q].account: required when enabled", id)
-		}
-		if r.ResumeID == "" {
-			return fmt.Errorf("runs[%q].resume_id: required when enabled", id)
-		}
-		if r.MaxPerDay == 0 {
-			return fmt.Errorf("runs[%q].max_per_day=0: use enabled=false to disable the run", id)
-		}
-		if _, ok := c.Accounts[r.Account]; !ok {
-			return fmt.Errorf("runs[%q].account %q: unknown account", id, r.Account)
-		}
-		if err := checkNegatives(map[string]float64{
-			fmt.Sprintf("runs[%q].max_per_day", id):       float64(r.MaxPerDay),
-			fmt.Sprintf("runs[%q].min_match_percent", id): float64(r.MinMatchPct),
-		}); err != nil {
-			return err
-		}
-		for _, f := range r.SearchFields {
-			switch f {
-			case "name", "company_name", "description":
-			default:
-				return fmt.Errorf("runs[%q].search_fields %q: must be one of name | company_name | description (empty = all fields)", id, f)
-			}
-		}
-		for i, w := range r.Windows {
-			if err := validateWindow(fmt.Sprintf("runs[%q].windows[%d]", id, i), w); err != nil {
-				return err
-			}
-		}
-		if err := validateRunFilters(fmt.Sprintf("runs[%q].filters", id), r.Filters); err != nil {
+		if err := validateRun(id, r, c); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// validateRun checks a single enabled run profile.
+func validateRun(id string, r Run, c *Config) error {
+	if r.Account == "" {
+		return fmt.Errorf("runs[%q].account: required when enabled", id)
+	}
+	if r.ResumeID == "" {
+		return fmt.Errorf("runs[%q].resume_id: required when enabled", id)
+	}
+	if r.MaxPerDay == 0 {
+		return fmt.Errorf("runs[%q].max_per_day=0: use enabled=false to disable the run", id)
+	}
+	if _, ok := c.Accounts[r.Account]; !ok {
+		return fmt.Errorf("runs[%q].account %q: unknown account", id, r.Account)
+	}
+	switch r.LetterMode {
+	case "", LetterModeTemplate, LetterModeTemplateAI, LetterModeAICompany: // "" = unset, defaults fill ai_company
+	default:
+		return fmt.Errorf("runs[%q].letter_mode %q: must be one of template | template_ai | ai_company", id, r.LetterMode)
+	}
+	if (r.LetterMode == LetterModeTemplate || r.LetterMode == LetterModeTemplateAI) &&
+		strings.TrimSpace(r.LetterTemplate) == "" {
+		return fmt.Errorf("runs[%q].letter_mode=%q requires letter_template", id, r.LetterMode)
+	}
+	if err := checkNegatives(map[string]float64{
+		fmt.Sprintf("runs[%q].max_per_day", id):       float64(r.MaxPerDay),
+		fmt.Sprintf("runs[%q].min_match_percent", id): float64(r.MinMatchPct),
+	}); err != nil {
+		return err
+	}
+	for _, f := range r.SearchFields {
+		switch f {
+		case "name", "company_name", "description":
+		default:
+			return fmt.Errorf("runs[%q].search_fields %q: must be one of name | company_name | description (empty = all fields)", id, f)
+		}
+	}
+	for i, w := range r.Windows {
+		if err := validateWindow(fmt.Sprintf("runs[%q].windows[%d]", id, i), w); err != nil {
+			return err
+		}
+	}
+	return validateRunFilters(fmt.Sprintf("runs[%q].filters", id), r.Filters)
 }
 
 // validateRunFilters rejects values hh would silently ignore. hh does not

@@ -159,6 +159,19 @@ func (f *Feature) RunAccount(ctx context.Context, accountID string) error {
 	}
 	stored := f.writeThrough(ctx, accountID, got)
 
+	// T26: clones are full resumes and lift on the same 4h store timer, but
+	// [features.autoclone] autolift=false excludes the tracked clone pool.
+	exclude := map[string]bool{}
+	if f.opt.Config.Features.AutoClone.Autolift != nil && !*f.opt.Config.Features.AutoClone.Autolift {
+		clones, cerr := f.opt.DB.ResumeClonesListByAccount(ctx, accountID)
+		if cerr != nil {
+			f.log.Warn("autolift: clone pool lookup failed; lifting everything", "account", accountID, "err", cerr)
+		}
+		for _, c := range clones {
+			exclude[c.CloneHash] = true
+		}
+	}
+
 	respectTimer := f.opt.Config.Features.AutoLift.Respect4hTimer == nil ||
 		*f.opt.Config.Features.AutoLift.Respect4hTimer
 	dryRun := f.opt.Config.General.DryRun
@@ -168,6 +181,11 @@ func (f *Feature) RunAccount(ctx context.Context, accountID string) error {
 	for _, r := range got {
 		if !isLiftable(r) {
 			f.incr(ctx, day, "lift.skip_unpublished")
+			continue
+		}
+		if exclude[r.HHID] {
+			f.log.Debug("autolift: clone excluded by autoclone.autolift=false", "account", accountID, "resume", r.HHID)
+			f.incr(ctx, day, "lift.skip_clone")
 			continue
 		}
 		row, ok := byHash(stored, r.HHID)

@@ -31,14 +31,22 @@ const (
 // processVacancy runs the F2..F8 cascade for one vacancy.
 // stop is a non-empty stop reason (profile ends; rescheduled unless it is
 // stopLoggedOut); skip is a non-empty per-vacancy skip reason.
+// rc != nil marks a clone run: the reapply policy gates the vacancy and the
+// intent fence is scoped to the clone resume.
 func (f *Feature) processVacancy(ctx context.Context, runID string, run config.Run, accountID string,
-	api hhapi.HHAPI, prof profile.Profile, resumeHash string, v hhapi.Vacancy, batch map[int64]bool,
+	api hhapi.HHAPI, prof profile.Profile, resumeHash string, v hhapi.Vacancy, batch map[int64]bool, rc *cloneRunState,
 ) (stop, skip string) {
 	// In-batch dedup: the same vacancy from two sources is processed once.
 	if batch[v.ID] {
 		return "", "dup_batch"
 	}
 	batch[v.ID] = true
+
+	// T26 reapply policy (clone runs only): which vacancies may this clone
+	// (re)apply to.
+	if skip := rc.reapplySkip(v); skip != "" {
+		return "", skip
+	}
 
 	// F2-F5: static filters, rating and dedup (the seen row is written
 	// through as audit trail, never as a skip condition).
@@ -67,13 +75,14 @@ func (f *Feature) processVacancy(ctx context.Context, runID string, run config.R
 	}
 
 	// F8: apply.
-	return f.applyOne(ctx, runID, run, accountID, api, prof, resumeHash, v, letterRequired)
+	return f.applyOne(ctx, runID, run, accountID, api, prof, resumeHash, v, letterRequired, rc)
 }
 
 // applyOne performs the mutation with intent, letter, captcha retry and
-// ambiguous reconcile.
+// ambiguous reconcile. rc (clone run state) scopes the intent fence and the
+// retry path to the clone resume.
 func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, accountID string,
-	api hhapi.HHAPI, prof profile.Profile, resumeHash string, v hhapi.Vacancy, letterRequired bool,
+	api hhapi.HHAPI, prof profile.Profile, resumeHash string, v hhapi.Vacancy, letterRequired bool, rc *cloneRunState,
 ) (stop, skip string) {
 	// Cover letter: required by the popup or configured by the run.
 	letter, skip := f.prepareLetter(ctx, runID, run, accountID, prof, v, resumeHash, letterRequired)
@@ -92,7 +101,7 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 	}
 
 	claim, err := featurekit.BeginIntent(ctx, f.opt.DB,
-		"apply:"+accountID+":"+strconv.FormatInt(v.ID, 10),
+		rc.intentKey(accountID, v.ID),
 		featurekit.IntentPayload(RunPayload{RunID: runID}))
 	if err != nil {
 		f.log.Error("multiapply: begin intent failed", "vacancy", v.ID, "err", err)
@@ -135,7 +144,7 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 	// reading, never by repeating.
 	var amb *hhapi.AmbiguousError
 	if errors.As(err, &amb) {
-		handled, _ := f.resolveAmbiguous(ctx, runID, accountID, api, resumeHash, v, letter, claim, err)
+		handled, _ := f.resolveAmbiguous(ctx, runID, accountID, api, resumeHash, v, letter, claim, err, rc)
 		if handled {
 			return "", ""
 		}
@@ -158,10 +167,10 @@ func (f *Feature) sendApply(ctx context.Context, api hhapi.HHAPI, v hhapi.Vacanc
 
 // retryApplyOnce re-arms the key and repeats the apply a single time.
 func (f *Feature) retryApplyOnce(ctx context.Context, runID, accountID string, api hhapi.HHAPI,
-	v hhapi.Vacancy, resumeHash, letter string,
+	v hhapi.Vacancy, resumeHash, letter string, rc *cloneRunState,
 ) (featurekit.IntentClaim, error) {
 	claim, err := featurekit.BeginIntent(ctx, f.opt.DB,
-		"apply:"+accountID+":"+strconv.FormatInt(v.ID, 10),
+		rc.intentKey(accountID, v.ID),
 		featurekit.IntentPayload(RunPayload{RunID: runID}))
 	if err != nil {
 		return claim, fmt.Errorf("multiapply: re-arm intent: %w", err)
@@ -255,29 +264,55 @@ func (f *Feature) createApplication(ctx context.Context, runID, accountID, resum
 // errLetterNeedsHuman marks a cover-letter verdict that must not be sent.
 var errLetterNeedsHuman = errors.New("multiapply: cover letter needs human")
 
-// buildLetter produces the outgoing cover letter through the AI runner
-// (TaskCoverLetter), falling back to the run's static template; the result
-// still passes through NoLinksRule at the call site.
+// buildLetter produces the outgoing cover letter per the run's letter_mode
+// (T26): template sends the static template verbatim, template_ai polishes
+// it with the AI (falling back to the raw template), ai_company composes for
+// the company/vacancy through the AI runner with the template as context and
+// fallback (the pre-T26 behavior).
 func (f *Feature) buildLetter(ctx context.Context, runID string, run config.Run, accountID string,
 	prof profile.Profile, v hhapi.Vacancy, _ string,
 ) (string, error) {
-	if f.opt.Runner != nil {
-		letter, aerr := f.aiLetter(ctx, runID, run, accountID, prof, v)
-		if aerr == nil {
-			return letter, nil
+	switch run.LetterMode {
+	case config.LetterModeTemplate:
+		if strings.TrimSpace(run.LetterTemplate) == "" {
+			return "", errors.New("multiapply: letter_mode=template requires letter_template")
 		}
-		f.log.Warn("multiapply: cover letter task failed", "vacancy", v.ID, "err", aerr)
-	}
-	if run.LetterTemplate != "" {
 		return run.LetterTemplate, nil
+	case config.LetterModeTemplateAI:
+		if strings.TrimSpace(run.LetterTemplate) == "" {
+			return "", errors.New("multiapply: letter_mode=template_ai requires letter_template")
+		}
+		if f.opt.Runner != nil {
+			letter, aerr := f.aiLetter(ctx, runID, run, accountID, prof, v)
+			if aerr == nil {
+				return letter, nil
+			}
+			f.log.Warn("multiapply: cover letter polish failed; using the raw template", "vacancy", v.ID, "err", aerr)
+		}
+		return run.LetterTemplate, nil
+	default: // config.LetterModeAICompany
+		if f.opt.Runner != nil {
+			letter, aerr := f.aiLetter(ctx, runID, run, accountID, prof, v)
+			if aerr == nil {
+				return letter, nil
+			}
+			f.log.Warn("multiapply: cover letter task failed", "vacancy", v.ID, "err", aerr)
+		}
+		if run.LetterTemplate != "" {
+			return run.LetterTemplate, nil
+		}
+		return "", errors.New("multiapply: no cover letter available")
 	}
-	return "", errors.New("multiapply: no cover letter available")
 }
 
 // aiLetter asks the runner for the cover-letter verdict; needs_human,
 // injection-flagged or empty letters are refused (errLetterNeedsHuman).
 func (f *Feature) aiLetter(ctx context.Context, runID string, run config.Run, accountID string,
 	prof profile.Profile, v hhapi.Vacancy) (string, error) {
+	mode := run.LetterMode
+	if mode == "" {
+		mode = config.LetterModeAICompany
+	}
 	raw, _, err := f.opt.Runner.Run(ctx, accountID, "vacancy",
 		strconv.FormatInt(v.ID, 10), runID, ai.TaskCoverLetter, letterInput{
 			Vacancy:           v,
@@ -285,6 +320,7 @@ func (f *Feature) aiLetter(ctx context.Context, runID string, run config.Run, ac
 			ProfileText:       prof.ProfileText,
 			Facts:             prof.Facts,
 			Template:          run.LetterTemplate,
+			LetterMode:        mode,
 			ExtraInstructions: run.AIFilterOverrides.ExtraInstructions,
 		})
 	if err != nil {
@@ -313,6 +349,7 @@ type letterInput struct {
 	ProfileText       string            `json:"profile_text"`
 	Facts             map[string]string `json:"facts"`
 	Template          string            `json:"template,omitempty"`
+	LetterMode        string            `json:"letter_mode,omitempty"` // T26: template | template_ai | ai_company
 	ExtraInstructions string            `json:"extra_instructions,omitempty"`
 }
 
@@ -822,7 +859,8 @@ func (f *Feature) solveCaptchaOrBreak(ctx context.Context, accountID string) boo
 // found → applied; not found → the single sanctioned retry; unreadable →
 // park for a human. handled=true means applyOne returns cleanly.
 func (f *Feature) resolveAmbiguous(ctx context.Context, runID string, accountID string, api hhapi.HHAPI,
-	resumeHash string, v hhapi.Vacancy, letter string, claim featurekit.IntentClaim, _ error) (bool, error) {
+	resumeHash string, v hhapi.Vacancy, letter string, claim featurekit.IntentClaim, _ error, rc *cloneRunState,
+) (bool, error) {
 	found, rerr := f.reconcileNegotiations(ctx, api, v.ID)
 	switch {
 	case rerr == nil && found:
@@ -834,7 +872,7 @@ func (f *Feature) resolveAmbiguous(ctx context.Context, runID string, accountID 
 		if aerr := featurekit.AbandonIntent(ctx, f.opt.DB, claim); aerr != nil {
 			f.log.Error("multiapply: intent abandon failed", "err", aerr)
 		}
-		claim2, retryErr := f.retryApplyOnce(ctx, runID, accountID, api, v, resumeHash, letter)
+		claim2, retryErr := f.retryApplyOnce(ctx, runID, accountID, api, v, resumeHash, letter, rc)
 		if retryErr == nil {
 			f.recordApplied(ctx, runID, accountID, resumeHash, v, claim2, letter, "apply.ok")
 			return true, nil
