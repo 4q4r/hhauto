@@ -11,6 +11,7 @@ files: `/tmp/opencode/live/{chats-list,resumes,popup,counts,rating}.json`.
 | `popup.json` | `GET /applicant/vacancy_response/popup?vacancyId=N` | JSON envelope; structured data in `responseStatus` (test/shortVacancy/resumeInconsistencies-dict/negotiations.topicList/alreadyApplied/responseImpossible) and `responsePopup`; letterRequired = `responseStatus.shortVacancy["@responseLetterRequired"]` |
 | `rating.json` | `GET /employer_reviews/proxy_components/small_widget?employerId=N` | proxied-component envelope; `employerReviews.totalRating` is a STRING; `last3MonthsReviewsInfo` has NO totalRating (only counts); review entries carry `totalRating` (string) + `creationTime` (RFC3339) |
 | `chats-list.json` | `GET chatik/api/chats?page=N` | `chats.items[].id` is an INT; per-chat `resources.{VACANCY,RESUME,NEGOTIATION_TOPIC}` are string-id lists; `lastMessage.workflowTransition{topicId,applicantState}`; top-level `resources.negotiation_topics{topicId:{...,currentApplicantState}}` (DISCARD = structural refusal) and `resources.vacancies{vacId:{@responseLetterRequired,chatWritePossibility,autoResponse,...}}`; `chatsDisplayInfo[chatId]{title,subtitle,icon}` |
+| `resume_lineage.json` | `GET /shards/applicant/resumes` | T28 (2026-09-25): native clones carry `_attributes.parentResumeId` (numeric parent resume id) and `_attributes.created` (ms-epoch); clone entries have status `new`, `isSearchable` true, `professionalRole` `[{"string":N}]` at the entry top level |
 
 ## Scrub policy
 

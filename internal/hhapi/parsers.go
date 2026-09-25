@@ -128,6 +128,10 @@ func parseResumes(body []byte) ([]Resume, error) {
 		if updated.IsZero() {
 			updated = epochMS(m["updated"])
 		}
+		created := epochMS(attrs["created"])
+		if created.IsZero() {
+			created = epochMS(m["created"])
+		}
 		if updated.IsZero() {
 			updated = timeFrom(m, "updated_at", "updatedAt", "modify_time")
 		}
@@ -139,6 +143,9 @@ func parseResumes(body []byte) ([]Resume, error) {
 			Searchable: boolv(attrs, "isSearchable") || boolv(m, "isSearchable", "is_searchable"),
 			UpdatedAt:  updated,
 			Raw:        raw,
+
+			ParentResumeID: str(attrs, "parentResumeId"),
+			CreatedAt:      created,
 		})
 	}
 	return resumes, nil

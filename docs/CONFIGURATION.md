@@ -127,7 +127,7 @@
 # exclude_agencies_default = true
 # prioritize_online_hr = true
 # dedup_native_autoresponse = true
-[features.autoclone]                    # T26: автоклонирование резюме (hh не отдаёт parentResumeId — lineage хранится локально)
+[features.autoclone]                    # T26/T28: автоклонирование резюме (нативный hh-клон clone_resumes: hh сам копирует контент и ставит parentResumeId; lineage дублируется локально)
 # enabled = false
 # max_clones_per_resume = 2             # прямых клонов на одно резюме
 # max_clone_depth = 1                   # глубина цепочек клон-от-клона (1 = без цепочек)
