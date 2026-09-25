@@ -54,3 +54,10 @@
 Полный список прямых зависимостей с лицензиями —
 [NOTICE/THIRD-PARTY.md](../NOTICE/THIRD-PARTY.md); лицензии сверены по
 файлам LICENSE в module cache актуальных версий из `go.mod`.
+
+- `github.com/bogdanfinn/tls-client` v1.16.0 (BSD-4-Clause,
+  https://github.com/bogdanfinn/tls-client) — подключён в T24 как дефолтный
+  транспорт hhapi (`[api].transport = "tls-client"`): браузерный TLS-отпечаток
+  (uTLS) против JA3/JA3S-фингерпринтинга hh.ru. Код используется только через
+  публичный API библиотеки (без копирования исходников); маппинг
+  UA↔профиль — собственный код в `internal/hhapi/transport_tlsclient.go`.

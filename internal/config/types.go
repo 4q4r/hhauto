@@ -45,9 +45,20 @@ type Log struct {
 	RedactSecrets bool   `toml:"redact_secrets"` // validator forbids false
 }
 
+// Transport selection vocabulary for [api].transport. TransportTLSClient
+// routes hh traffic through bogdanfinn/tls-client with a browser-consistent
+// TLS fingerprint (hh.ru fingerprintes the JA3/JA3S of the Go crypto/tls
+// stack — live-verified 2026-09-25); TransportHTTP keeps the legacy stdlib
+// transport as a debugging fallback.
+const (
+	TransportTLSClient = "tls-client"
+	TransportHTTP      = "http"
+)
+
 // API selects the hh surface kind and its endpoint map.
 type API struct {
 	Kind      string       `toml:"kind"` // "web" | "developer"
+	Transport string       `toml:"transport"`
 	Endpoints APIEndpoints `toml:"endpoints"`
 	Developer DeveloperAPI `toml:"developer"`
 }

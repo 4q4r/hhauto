@@ -277,17 +277,12 @@ func initialState(page []byte) (map[string]json.RawMessage, bool) {
 }
 
 func extractInitialStateJSON(page string) ([]byte, bool) {
-	const tpl = `<template id="HH-Lux-InitialState"`
-	if i := strings.Index(page, tpl); i >= 0 {
-		rest := page[i+len(tpl):]
-		end := strings.Index(rest, "</template>")
-		if end >= 0 {
-			inner := rest[:end]
-			if j := strings.Index(inner, ">"); j >= 0 {
-				inner = inner[j+1:]
-			}
-			return []byte(html.UnescapeString(strings.TrimSpace(inner))), true
-		}
+	// The open tag's attribute order is not stable: live 2026-09-25 serves
+	// <template style="display:none" id="HH-Lux-InitialState"> (style
+	// BEFORE id), so anchor on the id attribute and skip to the tag's
+	// closing '>' instead of matching a literal prefix.
+	if got, ok := extractLuxTemplate(page); ok {
+		return got, true
 	}
 	const marker = "window.__INITIAL_STATE__"
 	if i := strings.Index(page, marker); i >= 0 {
@@ -298,6 +293,32 @@ func extractInitialStateJSON(page string) ([]byte, bool) {
 		}
 	}
 	return nil, false
+}
+
+// extractLuxTemplate pulls the entity-encoded JSON payload out of the
+// HH-Lux-InitialState template tag, tolerating any attribute order on the
+// open tag.
+func extractLuxTemplate(page string) ([]byte, bool) {
+	const idAttr = `id="HH-Lux-InitialState"`
+	i := strings.Index(page, idAttr)
+	if i < 0 {
+		return nil, false
+	}
+	open := strings.LastIndex(page[:i], "<template")
+	if open < 0 {
+		return nil, false
+	}
+	rest := page[i+len(idAttr):]
+	gt := strings.Index(rest, ">")
+	if gt < 0 {
+		return nil, false
+	}
+	inner := rest[gt+1:]
+	end := strings.Index(inner, "</template>")
+	if end < 0 {
+		return nil, false
+	}
+	return []byte(html.UnescapeString(strings.TrimSpace(inner[:end]))), true
 }
 
 // scanJSONObject extracts the first balanced top-level {...} block, honoring

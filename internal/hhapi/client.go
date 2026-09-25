@@ -29,8 +29,9 @@ type Client struct {
 	cfg        config.Account
 	eps        endpointSet
 	log        *slog.Logger
-	httpClient *http.Client
-	jar        *cookiejar.Jar
+	httpClient *http.Client   // legacy stdlib transport ([api].transport = "http")
+	tls        *tlsTransport  // tls-client transport (default; nil in http mode)
+	jar        *cookiejar.Jar // single cookie authority for both transports
 	lim        *limiter
 	rnd        *rand.Rand
 	rndMu      sync.Mutex
@@ -46,10 +47,13 @@ type Client struct {
 
 // NewClient builds the per-account web client. dialer comes from the proxy
 // registry; nil means explicitly-direct (the fail-closed proxy decision
-// belongs to the caller). cfg.UserAgent is mandatory and exclusive: a UA
-// override via cfg.Headers would desynchronize the derived client hints
-// (a classic bot marker), so it is rejected up front.
-func NewClient(cfg config.Account, endpoints config.APIEndpoints, dialer proxy.Dialer, log *slog.Logger) (*Client, error) {
+// belongs to the caller) and only applies to the legacy http transport —
+// the default tls-client transport takes its proxy via WithProxyURL.
+// cfg.UserAgent is mandatory and exclusive: a UA override via cfg.Headers
+// would desynchronize the derived client hints (a classic bot marker), so
+// it is rejected up front. The TLS profile is likewise derived from the
+// User-Agent (T24: hh.ru fingerprintes the JA3/JA3S of crypto/tls).
+func NewClient(cfg config.Account, endpoints config.APIEndpoints, dialer proxy.Dialer, log *slog.Logger, options ...ClientOption) (*Client, error) {
 	if strings.TrimSpace(cfg.UserAgent) == "" {
 		return nil, errors.New("hhapi: config.Account.UserAgent is required")
 	}
@@ -60,6 +64,10 @@ func NewClient(cfg config.Account, endpoints config.APIEndpoints, dialer proxy.D
 	}
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
+	}
+	var opts clientOptions
+	for _, opt := range options {
+		opt(&opts)
 	}
 	jar, err := newCookieJar()
 	if err != nil {
@@ -72,14 +80,27 @@ func NewClient(cfg config.Account, endpoints config.APIEndpoints, dialer proxy.D
 		jar: jar,
 		lim: newLimiter(cfg.RPS),
 		rnd: rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), rand.Uint64())),
-		httpClient: &http.Client{
-			Transport:     newHTTPTransport(dialer),
-			Jar:           jar,
-			CheckRedirect: nil, // set below (method value needs c)
-			Timeout:       30 * time.Second,
-		},
 	}
-	c.httpClient.CheckRedirect = c.checkRedirect
+	switch opts.transport {
+	case "", config.TransportTLSClient:
+		tp, terr := newTLSTransport(jar, cfg.UserAgent, opts.proxyURL, log)
+		if terr != nil {
+			return nil, terr
+		}
+		c.tls = tp
+	case config.TransportHTTP:
+		if opts.proxyURL != "" {
+			return nil, errors.New("hhapi: WithProxyURL needs the tls-client transport: the http transport proxies via its Dialer")
+		}
+		c.httpClient = &http.Client{
+			Transport: newHTTPTransport(dialer),
+			Jar:       jar,
+			Timeout:   30 * time.Second,
+		}
+		c.httpClient.CheckRedirect = c.checkRedirect
+	default:
+		return nil, fmt.Errorf("hhapi: unknown transport %q (want %q or %q)", opts.transport, config.TransportTLSClient, config.TransportHTTP)
+	}
 	return c, nil
 }
 
@@ -305,8 +326,15 @@ func (c *Client) retryWait(attempt int, se *StatusError) time.Duration {
 	return c.jitter(attempt)
 }
 
-// attempt performs one physical round trip with redirect recording.
+// attempt performs one physical round trip with redirect recording. The
+// transport branch lives here so retry/backoff/limiter/typed-error handling
+// stays shared: the default tls-client transport follows redirects manually
+// (attemptTLS) because tls-client offers no per-hop control hooks, while the
+// legacy http transport leans on CheckRedirect.
 func (c *Client) attempt(ctx context.Context, spec requestSpec) (*response, error) {
+	if c.tls != nil {
+		return c.attemptTLS(ctx, spec)
+	}
 	chainCtx, chain := withRedirectChain(ctx)
 	req, err := http.NewRequestWithContext(chainCtx, spec.method, spec.url, bytes.NewReader(spec.body))
 	if err != nil {
