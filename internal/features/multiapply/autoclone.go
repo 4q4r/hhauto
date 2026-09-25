@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"hhauto/internal/config"
+	"hhauto/internal/features/autoclone"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/profile"
 	"hhauto/internal/store"
@@ -273,6 +274,15 @@ func (f *Feature) spawnCloneRun(ctx context.Context, runID string, run config.Ru
 		CloneHash: newHash, ParentHash: parentHash, Depth: parentDepth + 1, AccountID: accountID,
 	}); err != nil {
 		return err
+	}
+
+	// T29: improve the fresh clone first (per-field AI values through the
+	// builder update walk; the diff artifact lands on the lineage row) and
+	// only then apply the source-resume policy — the action rides on
+	// clone+improve success.
+	improved := f.improveClone(ctx, runID, accountID, parentHash, newHash)
+	if improved {
+		f.applyOriginAction(ctx, accountID, api, parentHash)
 	}
 
 	ready, err := f.awaitCloneReady(ctx, accountID, api, newHash)
@@ -536,4 +546,43 @@ func (f *Feature) stopClones(ctx context.Context, accountID, reason string) {
 func (f *Feature) cloneStopped(ctx context.Context, accountID string) bool {
 	v, ok, err := f.opt.DB.FeatureStateGet(ctx, feature, accountID, cloneStopKey)
 	return err == nil && ok && v == "1"
+}
+
+// improveClone runs the T29 per-field improvement of the fresh clone. A
+// fatal improve error is logged and counted, never propagated: the clone
+// is a verified, usable duplicate either way (unimproved), and the origin
+// action checks the outcome.
+func (f *Feature) improveClone(ctx context.Context, runID, accountID, parentHash, cloneHash string) bool {
+	if f.opt.Improver == nil {
+		return true
+	}
+	f.incr(ctx, "autoclone.improve.attempt")
+	if _, err := f.opt.Improver.ImproveClone(ctx, accountID, parentHash, cloneHash); err != nil {
+		f.incr(ctx, "autoclone.improve.error")
+		f.log.Warn("multiapply: clone improve failed; the clone stays unimproved",
+			"account", accountID, "run", runID, "parent", parentHash, "clone", cloneHash, "err", err)
+		return false
+	}
+	f.incr(ctx, "autoclone.improve.ok")
+	f.log.Info("multiapply: clone improved", "account", accountID, "run", runID, "clone", cloneHash)
+	return true
+}
+
+// applyOriginAction executes the configured source-resume policy (T29
+// clone_original_action) after a successful clone+improve. keep/default is
+// a no-op; unknown or failed actions degrade to keep inside the helper.
+func (f *Feature) applyOriginAction(ctx context.Context, accountID string, api hhapi.HHAPI, parentHash string) {
+	action := f.opt.Config.Features.AutoClone.CloneOriginalAction
+	if action == "" || action == config.CloneActionKeep {
+		return
+	}
+	mutator, ok := api.(autoclone.OriginMutator)
+	if !ok {
+		f.log.Warn("multiapply: clone_original_action configured but the client does not support resume management; keeping the original",
+			"account", accountID, "resume", parentHash, "action", action)
+		f.incr(ctx, "autoclone.origin.unsupported")
+		return
+	}
+	f.incr(ctx, "autoclone.origin."+action)
+	autoclone.ApplyOriginAction(ctx, mutator, action, parentHash, f.log)
 }

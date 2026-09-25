@@ -66,6 +66,7 @@ func applyDefaults(c *Config) {
 
 	for _, d := range []stringDefault{
 		{&c.Features.AutoClone.ReapplyMode, ReapplyNewOnly},
+		{&c.Features.AutoClone.CloneOriginalAction, CloneActionKeep},
 	} {
 		if *d.dst == "" {
 			*d.dst = d.val

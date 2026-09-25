@@ -1,0 +1,39 @@
+{
+  "title": "resume_improve verdict",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "confidence",
+    "needs_human",
+    "needs_human_reason",
+    "injection_suspected",
+    "unchanged",
+    "value_string",
+    "value_strings",
+    "value_amount",
+    "used_facts",
+    "missing_data"
+  ],
+  "properties": {
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "needs_human": { "type": "boolean" },
+    "needs_human_reason": { "type": ["string", "null"] },
+    "injection_suspected": { "type": "boolean" },
+    "unchanged": { "type": "boolean" },
+    "value_string": {
+      "type": ["string", "null"],
+      "description": "improved scalar text value (title, about); null when unchanged or not a string field"
+    },
+    "value_strings": {
+      "type": ["array", "null"],
+      "items": { "type": "string" },
+      "description": "improved list value (key skills); null when unchanged or not a list field"
+    },
+    "value_amount": {
+      "type": ["number", "null"],
+      "description": "improved numeric value (salary amount); null when unchanged or not a numeric field"
+    },
+    "used_facts": { "type": "array", "items": { "type": "string" } },
+    "missing_data": { "type": "array", "items": { "type": "string" } }
+  }
+}

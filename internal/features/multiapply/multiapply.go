@@ -16,6 +16,7 @@ import (
 
 	"hhauto/internal/ai"
 	"hhauto/internal/config"
+	"hhauto/internal/features/autoclone"
 	"hhauto/internal/features/featurekit"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/profile"
@@ -68,6 +69,18 @@ type Options struct {
 	// finish_timeout_min-derived budget when positive.
 	ClonePollInterval  time.Duration
 	CloneFinishTimeout time.Duration
+
+	// T29: Improver runs the per-field AI improvement of a fresh clone
+	// (internal/features/autoclone). nil = improve disabled — the clone
+	// runs unimproved.
+	Improver AutoCloneImprover
+}
+
+// AutoCloneImprover is the improve seam (implemented by the autoclone
+// feature package); a fatal error keeps the original resume (the
+// clone_original_action rides on clone+improve success).
+type AutoCloneImprover interface {
+	ImproveClone(ctx context.Context, accountID, parentHash, cloneHash string) (*autoclone.DiffArtifact, error)
 }
 
 // RunPayload is the typed queue payload for KindApply run tasks.

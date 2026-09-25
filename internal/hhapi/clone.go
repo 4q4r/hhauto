@@ -78,6 +78,11 @@ const StageNative = "native"
 // pinned to a regional host; see endpointSet.resolveExternal).
 const cloneResumesURL = "https://resume-profile-front.hh.ru/profile/shards/resume/clone_resumes"
 
+// resumeUpdateURL is the builder save endpoint: the same service and
+// header discipline as clone_resumes (T28: every editor POST rides the
+// resume-profile-front BFF host; a site-host pinning earned the T27 400s).
+const resumeUpdateURL = "https://resume-profile-front.hh.ru/profile/shards/resume/update"
+
 // cloneHhtmSource is the X-hhtmSource the deployed editor sends from the
 // screen the clone modal rides on (resume_professional_role route).
 const cloneHhtmSource = "resume_professional_role"
@@ -692,7 +697,10 @@ func (c *Client) fetchBuilderState(ctx context.Context, hash string) (*builderSt
 }
 
 // resumeScreenUpdate is the resume-profile builder save envelope (decoded
-// from the deployed editor SPA; see the file doc-block).
+// from the deployed editor SPA; chunk 6069 module 11154 thunk P — every
+// key of the thunk body rides: the T27 400s were the missing
+// additionalProperties/userSkillLevels/userPrint plus the missing SPA
+// header set).
 type resumeScreenUpdate struct {
 	ResumeHash      string                     `json:"resumeHash"`
 	CurrentScreenID string                     `json:"currentScreenId"`
@@ -700,6 +708,8 @@ type resumeScreenUpdate struct {
 	Profile         map[string]json.RawMessage `json:"profile"`
 	QuestionMap     map[string]string          `json:"questionToAnswerMap"`
 	Additional      json.RawMessage            `json:"additionalProperties"`
+	UserSkillLevels json.RawMessage            `json:"userSkillLevels,omitempty"`
+	UserPrint       json.RawMessage            `json:"userPrint,omitempty"`
 }
 
 // resumeUpdateResp is the builder save response: null NextIncomplete means
@@ -734,11 +744,13 @@ func (c *Client) materializeClone(ctx context.Context, parentHash, cloneHash str
 		additional = json.RawMessage(`{}`)
 	}
 	payload := resumeScreenUpdate{
-		ResumeHash:  cloneHash,
-		Resume:      resumeSide,
-		Profile:     profileFields,
-		QuestionMap: map[string]string{},
-		Additional:  additional,
+		ResumeHash:      cloneHash,
+		Resume:          resumeSide,
+		Profile:         profileFields,
+		QuestionMap:     map[string]string{},
+		Additional:      additional,
+		UserSkillLevels: json.RawMessage(`{}`),
+		UserPrint:       json.RawMessage(`{}`),
 	}
 	// Walk the clone's screens; the SPA re-sends the accumulated form per
 	// screen, so the same split rides every call until hh reports completion.
@@ -766,53 +778,6 @@ func (c *Client) materializeClone(ctx context.Context, parentHash, cloneHash str
 		}
 	}
 	return errors.New("builder still reports incomplete screens after the screen walk")
-}
-
-// postResumeScreen issues one builder update. done reports hh's
-// nextIncompleteScreenId == null (complete). Validation/business rejections
-// surface as ErrCloneMaterialize with the field codes.
-func (c *Client) postResumeScreen(ctx context.Context, payload *resumeScreenUpdate) (done bool, err error) {
-	body, merr := json.Marshal(payload)
-	if merr != nil {
-		return false, fmt.Errorf("encode update: %w", merr)
-	}
-	resp, err := c.doMutation(ctx, func() requestSpec {
-		h := c.xhrHeaders(c.withPinnedHost(c.eps.site + "/profile/resume"))
-		h.Set("Content-Type", "application/json")
-		return requestSpec{
-			kind:      kindMutation,
-			operation: "resume_builder_update",
-			method:    http.MethodPost,
-			url:       c.endpointURL(epResumeUpdate, c.eps.siteDefault("/profile/shards/resume/update")),
-			header:    h,
-			body:      body,
-		}
-	})
-	if err != nil {
-		return false, fmt.Errorf("%w: %v", ErrCloneMaterialize, err)
-	}
-	if bodyHasAny(string(resp.body), captchaMarkers) {
-		return false, fmt.Errorf("%w: %v", ErrCloneMaterialize, &StatusError{Kind: ErrCaptcha, StatusCode: resp.status, URL: resp.finalURL, BodySnippet: snippet(resp.body), Chain: resp.chain})
-	}
-	var out resumeUpdateResp
-	if uerr := json.Unmarshal(resp.body, &out); uerr != nil {
-		return false, fmt.Errorf("%w: decode response: %v", ErrCloneMaterialize, uerr)
-	}
-	if len(out.Error) > 0 {
-		keys := make([]string, 0, len(out.Error))
-		for _, e := range out.Error {
-			keys = append(keys, e.Key)
-		}
-		return false, fmt.Errorf("%w: builder error: %s", ErrCloneMaterialize, strings.Join(keys, ","))
-	}
-	if len(out.Errors) > 0 {
-		codes := make([]string, 0, len(out.Errors))
-		for _, e := range out.Errors {
-			codes = append(codes, e.Field+":"+e.Code)
-		}
-		return false, fmt.Errorf("%w: validation: %s", ErrCloneMaterialize, strings.Join(codes, ","))
-	}
-	return out.NextIncomplete == nil, nil
 }
 
 // isResumeLimitResponse re-tags the transport's 400/422/403 classification as

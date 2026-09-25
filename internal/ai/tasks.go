@@ -3,7 +3,7 @@ package ai
 import "strings"
 
 // taskNames maps every valid TaskName to itself; taskByName validates
-// configuration strings against the eight known tasks.
+// configuration strings against the nine known tasks.
 var taskNames = map[TaskName]struct{}{
 	TaskVacancyScoring: {},
 	TaskCoverLetter:    {},
@@ -13,6 +13,7 @@ var taskNames = map[TaskName]struct{}{
 	TaskClassification: {},
 	TaskContactExtract: {},
 	TaskLinkDetection:  {},
+	TaskResumeImprove:  {},
 }
 
 func taskByName(name string) (TaskName, bool) {

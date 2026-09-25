@@ -38,6 +38,9 @@ type ResumeClone struct {
 	Depth      int
 	AccountID  string
 	CreatedAt  time.Time // filled when zero
+	// ImproveDiff is the T29 audit artifact (было/стало per field JSON),
+	// empty when the clone was never improved.
+	ImproveDiff string
 }
 
 // VacancySeen deduplicates vacancies per account+vacancy (UNIQUE).

@@ -182,3 +182,38 @@ func TestApplicationsListByAccountAndVacancies(t *testing.T) {
 		t.Fatalf("empty ids = %d rows, want 0", len(got))
 	}
 }
+
+// T29: the improve audit artifact round-trips on the lineage row; an
+// untracked clone hash is a hard error (no silent audit gaps).
+func TestResumeClonesSetImproveDiff(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+
+	if err := db.ResumeClonesRegister(ctx, &ResumeClone{CloneHash: "cl1", ParentHash: "p1", Depth: 1, AccountID: "acc1"}); err != nil {
+		t.Fatalf("ResumeClonesRegister: %v", err)
+	}
+
+	got, err := db.ResumeClonesGet(ctx, "cl1")
+	if err != nil || got == nil {
+		t.Fatalf("ResumeClonesGet: %v (%v)", got, err)
+	}
+	if got.ImproveDiff != "" {
+		t.Fatalf("fresh clone improve_diff = %q, want empty", got.ImproveDiff)
+	}
+
+	const diff = `{"fields":[{"field":"title","status":"improved"}]}`
+	if err := db.ResumeClonesSetImproveDiff(ctx, "cl1", diff); err != nil {
+		t.Fatalf("ResumeClonesSetImproveDiff: %v", err)
+	}
+	got, err = db.ResumeClonesGet(ctx, "cl1")
+	if err != nil {
+		t.Fatalf("ResumeClonesGet after set: %v", err)
+	}
+	if got.ImproveDiff != diff {
+		t.Fatalf("improve_diff = %q, want %q", got.ImproveDiff, diff)
+	}
+
+	if err := db.ResumeClonesSetImproveDiff(ctx, "unknown", diff); err == nil {
+		t.Fatal("improve_diff on an untracked clone must fail")
+	}
+}
