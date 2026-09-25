@@ -33,6 +33,10 @@ type testEnv struct {
 	bodies map[string][]string // captured request bodies per route key
 	ua     string
 	rps    float64
+
+	// cloneBuilderState backs the T27 full-clone fake: the mutable
+	// get_by_hash payload served for the clone under test.
+	cloneBuilderState string
 }
 
 func newTestEnv(t *testing.T) *testEnv {

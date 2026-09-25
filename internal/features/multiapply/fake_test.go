@@ -64,6 +64,13 @@ type applyEnv struct {
 	cloneAuto     bool                                     // auto-append created clones to resumeShard (default true)
 	cloneSawToken bool                                     // at least one clone POST carried X-XSRFToken
 	cloneFail     func(call int) (status int, body string) // scripted clone failure
+
+	// T27 full-clone surface: builder states served by
+	// GET /profile/shards/resume/get_by_hash (mutable; a successful update
+	// flips the clone state to complete) and the scriptable update endpoint.
+	builderStates map[string]string
+	updateCalls   int
+	updateFail    func(call int) (status int, body string)
 }
 
 func newApplyEnv(t *testing.T) *applyEnv {
@@ -84,6 +91,11 @@ func newApplyEnv(t *testing.T) *applyEnv {
 		popupReqs:   map[int64]int{},
 		searchFound: 1,
 		cloneAuto:   true,
+	}
+	e.builderStates = map[string]string{
+		// The parent resume: a complete published resume with a title
+		// (synthetic data, no PII).
+		"hash1": builderStateFixture("hash1", "published", "DevOps-инженер Test", true),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /applicant/settings", func(w http.ResponseWriter, _ *http.Request) {
@@ -127,12 +139,58 @@ func newApplyEnv(t *testing.T) *applyEnv {
 		if status == "" {
 			status = "published"
 		}
+		// T27: a freshly cloned shell always starts not_finished in the
+		// builder state; the materialization update (below) completes it.
+		if e.builderStates == nil {
+			e.builderStates = map[string]string{}
+		}
+		e.builderStates[hash] = builderStateFixture(hash, "not_finished", "", false)
 		if e.cloneAuto {
 			e.resumeShard = append(e.resumeShard, fmt.Sprintf(
 				`{"_attributes":{"hash":%q,"status":%q,"isSearchable":true,"updated":1758700000000}}`, hash, status))
 		}
 		e.mu.Unlock()
 		_, _ = io.WriteString(w, fmt.Sprintf(`{"url":"/profile/resume/?resume=%s"}`, hash))
+	})
+	mux.HandleFunc("GET /profile/shards/resume/get_by_hash", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: "tok_test", Path: "/"})
+		e.mu.Lock()
+		body, ok := e.builderStates[r.URL.Query().Get("resumeHash")]
+		e.mu.Unlock()
+		if !ok {
+			http.Error(w, `{"error":"no such resume"}`, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = io.WriteString(w, body)
+	})
+	mux.HandleFunc("POST /profile/shards/resume/update", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			ResumeHash string `json:"resumeHash"`
+		}
+		_ = json.Unmarshal(body, &req)
+		e.mu.Lock()
+		e.updateCalls++
+		call := e.updateCalls
+		fn := e.updateFail
+		e.mu.Unlock()
+		if fn != nil {
+			if status, b := fn(call); status != 0 {
+				http.Error(w, b, status)
+				return
+			}
+		}
+		e.mu.Lock()
+		if req.ResumeHash != "" {
+			// A successful materialization completes the clone: title set,
+			// status left not_finished (the fake shard keeps its own stamp —
+			// awaitCloneReady keeps gating on it).
+			e.builderStates[req.ResumeHash] = builderStateFixture(req.ResumeHash, "published", "DevOps-инженер Test", true)
+		}
+		e.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = io.WriteString(w, `{"nextIncompleteScreenId":null,"resume":{"_attributes":{"hash":"`+req.ResumeHash+`","status":"published"}}}`)
 	})
 	mux.HandleFunc("GET /applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
 		e.mu.Lock()
@@ -530,4 +588,52 @@ func popupWith(letterRequired bool, inconsistencies bool, chat string) string {
 	}
 	return fmt.Sprintf(`{"type":"POPUP","letterRequired":%t,"test":{"hasTests":false},"acceptAutoResponse":true,"chatWritePossibility":%q%s}`,
 		letterRequired, chat, inc)
+}
+
+// builderStateFixture renders a synthetic /profile/shards/resume/get_by_hash
+// body for the T27 full-clone fake (no PII: synthetic titles and employers).
+func builderStateFixture(hash, status, title string, complete bool) string {
+	titleField := "[]"
+	if title != "" {
+		b, _ := json.Marshal(title)
+		titleField = `[{"string":` + string(b) + `}]`
+	}
+	next := "null"
+	if !complete {
+		next = `"professional_role"`
+	}
+	searchable := "false"
+	hasErrors := "true"
+	if title != "" {
+		searchable, hasErrors = "true", "false"
+	}
+	return `{
+	  "nextIncompleteScreenId": ` + next + `,
+	  "screens": [
+	    {"screenType":"STATIC","screenId":"professional_role","title":"Роль","fieldsOptions":{},"screenContent":[],"messages":[]},
+	    {"screenType":"STATIC","screenId":"common","title":"Основное","fieldsOptions":{},"screenContent":[],"messages":[]}
+	  ],
+	  "resume": {
+	    "_attributes": {"hash":` + mustJSONFake(hash) + `,"status":` + mustJSONFake(status) + `,"isSearchable":` + searchable + `,"hasErrors":` + hasErrors + `},
+	    "title": ` + titleField + `,
+	    "professionalRole": [{"string":160}],
+	    "keySkills": [{"string":"Linux"},{"string":"Docker"}],
+	    "skills": [{"string":"Автоматизация инфраструктуры (тестовые данные)"}],
+	    "workFormats": [{"string":"REMOTE"}],
+	    "educationLevel": []
+	  },
+	  "profile": {
+	    "fields": {
+	      "area": [{"string":1550}],
+	      "citizenship": [{"string":113}],
+	      "experience": [{"id":1,"startDate":"2024-01-01","endDate":null,"companyName":"Тест-компания","position":"DevOps-инженер Test","description":"Тестовое описание"}]
+	    }
+	  },
+	  "additionalProperties": {"anyJob":false,"jobByEducation":null,"simpleExperienceInYears":false}
+	}`
+}
+
+func mustJSONFake(v string) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }

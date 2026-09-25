@@ -229,6 +229,14 @@ func (f *Feature) doClone(ctx context.Context, runID, accountID string, api hhap
 		f.stopClones(ctx, accountID, "clone_resume hit the hh resume limit: "+err.Error())
 	case errors.Is(err, hhapi.ErrLoggedOut):
 		f.stopAccount(ctx, accountID, "clone_resume: "+err.Error())
+	case errors.Is(err, hhapi.ErrCloneMaterialize), errors.Is(err, hhapi.ErrCloneIncomplete):
+		// T27: the shell was created but is not a usable duplicate (the
+		// builder update is gated for off-browser clients as of
+		// 2026-09-25). Park for manual completion; retrying would only
+		// stack more shells on the account.
+		f.stopClones(ctx, accountID, "clone materialization incomplete: "+err.Error())
+		f.incr(ctx, "autoclone.incomplete")
+		return "", nil
 	default:
 		var amb *hhapi.AmbiguousError
 		if errors.As(err, &amb) {
