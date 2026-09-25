@@ -9,12 +9,15 @@ import (
 	"testing"
 )
 
-// T26: CloneResume posts JSON {"resumeId":...} with XHR headers + X-XSRFToken
-// and parses the new resume hash from the live-verified response envelope
-// {"url":"/profile/resume/?resume=<hash>"} (live-verified 2026-09-25).
+// T26/T27: CloneResume posts JSON {"resumeId":...} with XHR headers +
+// X-XSRFToken and parses the new resume hash from the live-verified response
+// envelope {"url":"/profile/resume/?resume=<hash>"}; T27 wraps that shell
+// clone into the full materialize+verify flow (see clone_full_test.go for
+// the flow branches).
 
 func TestCloneResumeParsesNewHash(t *testing.T) {
 	env := newTestEnv(t)
+	env.cloneBuilderState = builderStateFixture("n3wh4sh", "modified", "DevOps-инженер Test", true)
 	env.serve(env.mux1, "1", "POST", "/applicant/resumes/clone", func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("X-XSRFToken"); got != "tok_test" {
 			t.Errorf("X-XSRFToken = %q, want seeded token", got)
@@ -27,6 +30,7 @@ func TestCloneResumeParsesNewHash(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(`{"url":"/profile/resume/?resume=n3wh4sh"}`))
 	})
+	env.serveBuilderSurface("h4sh1", true)
 	c := env.client()
 	c.setXSRFForTests("tok_test")
 
@@ -54,9 +58,11 @@ func TestCloneResumeParsesNewHash(t *testing.T) {
 
 func TestCloneResumeHashFromAbsoluteURLEnvelope(t *testing.T) {
 	env := newTestEnv(t)
+	env.cloneBuilderState = builderStateFixture("abs0lute", "modified", "DevOps-инженер Test", true)
 	env.serve(env.mux1, "1", "POST", "/applicant/resumes/clone", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"url":"https://hh.ru/profile/resume/?resume=abs0lute&hhtmFrom=resume_list"}`))
 	})
+	env.serveBuilderSurface("h4sh1", true)
 	c := env.client()
 	c.setXSRFForTests("tok_test")
 	hash, err := c.CloneResume(context.Background(), "h4sh1")
@@ -149,6 +155,8 @@ func TestCloneResumeEndpointOverride(t *testing.T) {
 	env.serve(env.mux1, "1", "POST", "/custom/clone", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"url":"/profile/resume/?resume=0verr1de"}`))
 	})
+	env.serveBuilderSurface("h4sh1", true)
+	env.cloneBuilderState = builderStateFixture("0verr1de", "modified", "DevOps-инженер Test", true)
 	cfg := env.endpoints()
 	cfg.Override = map[string]string{"resume_clone": env.srv1.URL + "/custom/clone"}
 	c, err := NewClient(env.account(), cfg, nil, nil)

@@ -27,6 +27,11 @@ const (
 	epChatLeave      = "chat_leave"      // POST chatik /chatik/api/participant_action
 	epCounts         = "counts"          // GET  /shards/vacancy/counts (JSON {"counts":N}) — RULING R15
 	epResumeClone    = "resume_clone"    // POST /applicant/resumes/clone (T26; live-verified 2026-09-25)
+	// T27 full-clone surface (resume-profile builder; live reads verified,
+	// update gated by hh for off-browser clients as of 2026-09-25 — see
+	// internal/hhapi/clone.go). Overridable via config like every endpoint.
+	epResumeGetByHash = "resume_get_by_hash" // GET  /profile/shards/resume/get_by_hash?resumeHash=
+	epResumeUpdate    = "resume_update"      // POST /profile/shards/resume/update
 )
 
 // endpointSet resolves endpoint URLs from config with defaults and

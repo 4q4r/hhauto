@@ -2,6 +2,7 @@ package multiapply
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -487,5 +488,50 @@ func TestDeriveCloneRun(t *testing.T) {
 	}
 	if got.MaxPerDay != 3 || got.LetterMode != config.LetterModeTemplate || got.LetterTemplate != "T2" {
 		t.Fatalf("overrides not applied: %+v", got)
+	}
+}
+
+// T27: hh rejects the builder update (the live 2026-09-25 behavior), so the
+// clone stays an empty shell. The run must park for review with the
+// incomplete-clone semantics — never spawn a clone pass on the shell.
+func TestAutoCloneMaterializeFailureParksForReview(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, func(c *config.Config) {
+		c.Features.AutoClone = config.AutoClone{
+			Enabled: true, MaxClonesPerResume: 2, MaxCloneDepth: 1,
+			Autolift: boolPtrT(true), ReapplyMode: config.ReapplyAll,
+			SkipRejectionDays: 30, FinishTimeoutMin: 10,
+		}
+	})
+	twoVacancies(h)
+	h.updateFail = func(int) (int, string) { return http.StatusBadRequest, "" }
+	f := buildCloneFeature(t, h, nil)
+
+	if err := f.RunProfile(ctx, "run1"); err != nil {
+		t.Fatalf("RunProfile: %v", err)
+	}
+	if h.cloneNext != 1 {
+		t.Fatalf("clone calls = %d, want 1", h.cloneNext)
+	}
+	// No clone pass: the parent's applies are the only ones.
+	if got := h.applyCalls; len(got) != 2 {
+		t.Fatalf("applyCalls = %v, want [101 102]", got)
+	}
+	open, err := h.db.ReviewItemsOpen(ctx, "acc1", 100)
+	if err != nil {
+		t.Fatalf("review open: %v", err)
+	}
+	found := false
+	for _, it := range open {
+		if it.Kind == "autoclone_stopped" && strings.Contains(it.Reason, "materializ") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no autoclone_stopped (materialize) review item in %+v", open)
+	}
+	m := metricsOf(t, h.db)
+	if m["autoclone.incomplete"] != 1 {
+		t.Fatalf("autoclone.incomplete = %d, want 1", m["autoclone.incomplete"])
 	}
 }
