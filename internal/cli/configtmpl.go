@@ -162,12 +162,25 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # time = ["09:00", "14:00"]
 # days = ["mon", "tue", "wed", "thu", "fri"]
 # [runs.backend-go.filters]
-# areas = ["1"]                         # Moscow
+# areas = ["1"]                         # Москва
+# professional_roles = ["160"]          # ID специализаций hh (multi)
+# metros = ["532"]                      # ID станций метро (multi)
 # experience = ["between1And3", "between3And6"]
+# schedule = ["fullDay", "remote"]
+# employment = ["full", "part"]
+# industries = ["7"]                    # ID отраслей (multi)
+# work_formats = ["REMOTE", "HYBRID"]   # REMOTE|HYBRID|ON_SITE (регистр важен)
+# salary_from = 150000
+# salary_currency = "RUR"
+# only_with_salary = true               # только вакансии с зарплатой
+# labels = ["with_salary"]              # свободные строки (multi); известные — в docs/CONFIGURATION.md
+# part = ["evening", "weekend"]         # temp|evening|weekend (эффект live не подтверждён)
+# order_by = "publication_time_desc"    # relevance|publication_time_desc|salary_desc|salary_asc
+# search_period_days = 30
 # exclude_words = ["стажер", "intern"]
 # company_blacklist = []
 # company_whitelist = []
-# exclude_agencies = true
+# exclude_agencies = true               # label=not_from_agency
 # min_employer_rating = 0.0
 # no_reviews_policy = "allow"           # allow | skip | human
 # [runs.backend-go.ai_filter_overrides]

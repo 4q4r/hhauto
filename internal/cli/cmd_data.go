@@ -314,18 +314,25 @@ func collectVacancies(ctx context.Context, api hhapi.HHAPI, run config.Run, resu
 	}
 	flt := run.Filters
 	q := hhapi.SearchQuery{
-		Text:            run.Query,
-		Areas:           flt.Areas,
-		Experience:      flt.Experience,
-		Schedule:        flt.Schedule,
-		Employment:      flt.Employment,
-		Industries:      flt.Industries,
-		SalaryFrom:      flt.SalaryFrom,
-		Currency:        flt.SalaryCurrency,
-		LabelNoAgencies: flt.ExcludeAgencies,
-		SearchMode:      run.SearchMode,
-		PeriodDays:      flt.SearchPeriodDays,
-		PerPage:         50,
+		Text:              run.Query,
+		Areas:             flt.Areas,
+		Experience:        flt.Experience,
+		Schedule:          flt.Schedule,
+		Employment:        flt.Employment,
+		Industries:        flt.Industries,
+		SalaryFrom:        flt.SalaryFrom,
+		Currency:          flt.SalaryCurrency,
+		LabelNoAgencies:   flt.ExcludeAgencies,
+		SearchMode:        run.SearchMode,
+		PeriodDays:        flt.SearchPeriodDays,
+		ProfessionalRoles: flt.ProfessionalRoles,
+		Metros:            flt.Metros,
+		WorkFormats:       flt.WorkFormats,
+		Labels:            flt.Labels,
+		Part:              flt.Part,
+		OnlyWithSalary:    flt.OnlyWithSalary,
+		OrderBy:           flt.OrderBy,
+		PerPage:           50,
 	}
 	for page := 0; page < maxPages; page++ {
 		q.Page = page

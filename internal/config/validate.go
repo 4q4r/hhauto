@@ -254,6 +254,37 @@ func validateRuns(c *Config) error {
 				return err
 			}
 		}
+		if err := validateRunFilters(fmt.Sprintf("runs[%q].filters", id), r.Filters); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateRunFilters rejects values hh would silently ignore. hh does not
+// error on unknown enum values — it drops them (and, worse, silently drops
+// the whole filter), so the config layer is the only line of defense. The
+// comparisons are exact (no case-folding, no trimming): hh matches these
+// values case-sensitively (live-verified 2026-09-25).
+func validateRunFilters(path string, f RunFilters) error {
+	for i, v := range f.WorkFormats {
+		switch v {
+		case "", "REMOTE", "HYBRID", "ON_SITE": // "" = skipped on the wire
+		default:
+			return fmt.Errorf("%s.work_formats[%d] %q: must be one of REMOTE|HYBRID|ON_SITE (case-sensitive)", path, i, v)
+		}
+	}
+	for i, v := range f.Part {
+		switch v {
+		case "", "temp", "evening", "weekend":
+		default:
+			return fmt.Errorf("%s.part[%d] %q: must be one of temp|evening|weekend", path, i, v)
+		}
+	}
+	switch f.OrderBy {
+	case "", "relevance", "publication_time_desc", "salary_desc", "salary_asc":
+	default:
+		return fmt.Errorf("%s.order_by %q: must be one of relevance|publication_time_desc|salary_desc|salary_asc", path, f.OrderBy)
 	}
 	return nil
 }
