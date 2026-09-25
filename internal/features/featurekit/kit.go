@@ -146,7 +146,7 @@ func fragment(s string, i int) string {
 // autolift and multiapply (single source of truth, Wave 3 review fix 6).
 func ResumeLiftable(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "published", "опубликовано":
+	case "published", "modified", "опубликовано", "изменено":
 		return true
 	default:
 		return false
