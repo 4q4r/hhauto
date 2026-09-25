@@ -737,6 +737,40 @@ func TestSearchModeNormalAndWide(t *testing.T) {
 	}
 }
 
+// T22: the SSR search page is a top-level navigation and hh.ru answers
+// Accept: application/json with 406 there, so the search request must carry
+// the browser text/html form while JSON shards keep their fetch() Accept.
+func TestSearchSSRRequestCarriesBrowserAccept(t *testing.T) {
+	env := newTestEnv(t)
+	var searchAccept, shardAccept string
+	env.serve(env.mux1, "1", "GET", "/search/vacancy", func(w http.ResponseWriter, r *http.Request) {
+		searchAccept = r.Header.Get("Accept")
+		_, _ = w.Write(readFixture(t, "search.html"))
+	})
+	env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, r *http.Request) {
+		shardAccept = r.Header.Get("Accept")
+		_, _ = w.Write([]byte(`{"resumes":[]}`))
+	})
+	c := env.client()
+	ctx, cancel := ctxb(t)
+	defer cancel()
+
+	if _, err := c.SearchVacancies(ctx, SearchQuery{Text: "go", PerPage: 50}); err != nil {
+		t.Fatalf("SearchVacancies: %v", err)
+	}
+	if _, err := c.ListResumes(ctx); err != nil {
+		t.Fatalf("ListResumes: %v", err)
+	}
+	const wantDocAccept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+	if searchAccept != wantDocAccept {
+		t.Fatalf("search Accept = %q, want %q", searchAccept, wantDocAccept)
+	}
+	const wantShardAccept = "application/json, text/plain, */*"
+	if shardAccept != wantShardAccept {
+		t.Fatalf("resumes shard Accept = %q, want %q", shardAccept, wantShardAccept)
+	}
+}
+
 func TestSuitableVacanciesFromSSR(t *testing.T) {
 	env := newTestEnv(t)
 	env.serve(env.mux1, "1", "GET", "/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
