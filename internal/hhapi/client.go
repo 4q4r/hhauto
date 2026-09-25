@@ -400,7 +400,9 @@ func (c *Client) addBaseHeaders(h http.Header) {
 func (c *Client) docHeaders(referer string) http.Header {
 	h := http.Header{}
 	c.addBaseHeaders(h)
-	h.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	// Browser navigation Accept, verified live (T22, 2026-09-25): hh.ru answers
+	// application/json with 406 and this exact form with the SSR page.
+	h.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	h.Set("Upgrade-Insecure-Requests", "1")
 	h.Set("Sec-Fetch-Dest", "document")
 	h.Set("Sec-Fetch-Mode", "navigate")
