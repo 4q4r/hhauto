@@ -36,6 +36,7 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # search_page = "https://hh.ru/search/vacancy"
 # [api.endpoints.override]              # pin ANY endpoint by name (anti-drift)
 # settings = "https://hh.ru/applicant/settings"
+# bootstrap = "https://hh.ru/shards/applicant/resumes"
 # resumes = "https://hh.ru/shards/applicant/resumes"
 # touch = "https://hh.ru/applicant/resumes/touch"
 # resume_pdf = "https://hh.ru/resume/{resume_id}?pdf=1"
@@ -153,7 +154,7 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # account = "main"
 # resume_id = ""                        # "" = first published resume
 # query = "golang OR backend"
-# search_mode = "normal"                # exact | normal | wide
+# search_fields = ["name"]              # name | company_name | description; empty = all fields (для "python backend", remote+RU, 2026-09-25: name=28, description=319, все поля=375)
 # max_per_day = 30
 # min_match_percent = 60
 # letter_template = ""                  # static fallback when the AI is off

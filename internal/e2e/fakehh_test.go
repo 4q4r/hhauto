@@ -208,6 +208,7 @@ func (f *fakeHH) resumeItem(hash, title string, age time.Duration) map[string]an
 
 func (f *fakeHH) serveResumes(w http.ResponseWriter, r *http.Request) {
 	f.track(w, r, false)
+	http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: xsrfToken, Path: "/"})
 	f.serveJSON(w, map[string]any{
 		"resumes": []any{
 			f.resumeItem(resumeID, "Go-разработчик", time.Hour),

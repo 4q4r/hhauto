@@ -115,6 +115,18 @@ func (env *testEnv) serveSettings() {
 	})
 }
 
+// serveBootstrap registers the light bootstrap endpoint (the resumes JSON
+// shard) with session cookies (xsrf + DDoS-Guard sentinel), as hh.ru sets
+// them on shard responses.
+func (env *testEnv) serveBootstrap() {
+	env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: "tok_abc123", Path: "/"})
+		http.SetCookie(w, &http.Cookie{Name: "__ddg8", Value: "geo-sentinel", Path: "/"})
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write(readLive(env.t, "resumes.json"))
+	})
+}
+
 func (env *testEnv) endpoints() config.APIEndpoints {
 	return config.APIEndpoints{
 		Site:       env.srv1.URL,
@@ -165,6 +177,7 @@ func readFixture(t *testing.T, name string) []byte {
 
 func TestBootstrapSessionExtractsXSRFAndMe(t *testing.T) {
 	env := newTestEnv(t)
+	env.serveBootstrap()
 	env.serveSettings()
 	c := env.client()
 
@@ -188,8 +201,8 @@ func TestBootstrapSessionExtractsXSRFAndMe(t *testing.T) {
 
 func TestBootstrapDetectsLoggedOut(t *testing.T) {
 	env := newTestEnv(t)
-	env.serve(env.mux1, "1", "GET", "/applicant/settings", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/account/login?backurl=%2Fapplicant%2Fsettings", http.StatusFound)
+	env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/account/login?backurl=%2Fshards%2Fapplicant%2Fresumes", http.StatusFound)
 	})
 	c := env.client()
 	ctx, cancel := ctxb(t)
@@ -197,6 +210,79 @@ func TestBootstrapDetectsLoggedOut(t *testing.T) {
 	err := c.BootstrapSession(ctx)
 	if !errors.Is(err, ErrLoggedOut) {
 		t.Fatalf("BootstrapSession err = %v, want ErrLoggedOut", err)
+	}
+}
+
+func TestBootstrapForbiddenCaptcha(t *testing.T) {
+	env := newTestEnv(t)
+	env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write(readFixture(env.t, "captcha_page.html"))
+	})
+	c := env.client()
+	ctx, cancel := ctxb(t)
+	defer cancel()
+	err := c.BootstrapSession(ctx)
+	if !errors.Is(err, ErrCaptcha) {
+		t.Fatalf("BootstrapSession err = %v, want ErrCaptcha", err)
+	}
+}
+
+// The _xsrf cookie is the primary mutation token (live-verified: cookie value
+// equals the X-XSRFToken hh accepts); a cached SSR-derived token must not
+// shadow it.
+func TestXSRFCookieBeatsCachedSSRToken(t *testing.T) {
+	env := newTestEnv(t)
+	c := env.client()
+	c.setXSRFForTests("stale_ssr_token")
+	c.book.absorb(&http.Cookie{Name: "_xsrf", Value: "tok_cookie", Domain: "hh.ru", Path: "/"})
+	if got := c.xsrfToken(); got != "tok_cookie" {
+		t.Fatalf("xsrfToken = %q, want cookie value tok_cookie", got)
+	}
+}
+
+// Without an _xsrf cookie in the jar, bootstrap falls back to the SSR
+// settings-page xsrfToken.
+func TestBootstrapXSRFSSRFallback(t *testing.T) {
+	env := newTestEnv(t)
+	env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"resumes":[]}`))
+	})
+	env.serveSettings()
+	c := env.client()
+	ctx, cancel := ctxb(t)
+	defer cancel()
+	if err := c.BootstrapSession(ctx); err != nil {
+		t.Fatalf("BootstrapSession: %v", err)
+	}
+	if got := c.xsrfToken(); got != "tok_abc123" {
+		t.Fatalf("xsrfToken = %q, want SSR fallback tok_abc123", got)
+	}
+}
+
+// The bootstrap path is overridable via [api.endpoints.override] bootstrap.
+func TestBootstrapEndpointOverride(t *testing.T) {
+	env := newTestEnv(t)
+	eps := env.endpoints()
+	eps.Override = map[string]string{epBootstrap: env.srv1.URL + "/mirror/shards/applicant/resumes"}
+	env.serve(env.mux1, "1", "GET", "/mirror/shards/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: "tok_override", Path: "/"})
+		_, _ = w.Write([]byte(`{"resumes":[]}`))
+	})
+	c, err := NewClient(env.account(), eps, nil, nil)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	ctx, cancel := ctxb(t)
+	defer cancel()
+	if err := c.BootstrapSession(ctx); err != nil {
+		t.Fatalf("BootstrapSession: %v", err)
+	}
+	if got := c.xsrfToken(); got != "tok_override" {
+		t.Fatalf("xsrfToken = %q, want tok_override (override URL must serve bootstrap)", got)
+	}
+	if got := env.hits("1:GET /shards/applicant/resumes"); got != 0 {
+		t.Fatalf("default bootstrap URL hits = %d, want 0", got)
 	}
 }
 
@@ -238,7 +324,7 @@ func TestRequestCarriesUAClientHintsAndLanguage(t *testing.T) {
 
 func TestMutationCarriesXSRFToken(t *testing.T) {
 	env := newTestEnv(t)
-	env.serveSettings()
+	env.serveBootstrap()
 	var xsrf string
 	env.serve(env.mux1, "1", "POST", "/applicant/vacancy_response/popup", func(w http.ResponseWriter, r *http.Request) {
 		xsrf = r.Header.Get("X-XSRFToken")
@@ -493,7 +579,7 @@ func TestLoggedOutViaLoginRedirect(t *testing.T) {
 
 func TestXSRFRefreshRetriesMutationOnce(t *testing.T) {
 	env := newTestEnv(t)
-	env.serveSettings()
+	env.serveBootstrap()
 	calls := 0
 	env.serve(env.mux1, "1", "POST", "/applicant/vacancy_response/popup", func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -513,8 +599,8 @@ func TestXSRFRefreshRetriesMutationOnce(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("apply calls = %d, want 2 (403 then success after xsrf refresh)", calls)
 	}
-	if got := env.hits("1:GET /applicant/settings"); got != 1 {
-		t.Fatalf("settings refreshes = %d, want 1", got)
+	if got := env.hits("1:GET /shards/applicant/resumes"); got != 1 {
+		t.Fatalf("xsrf refreshes = %d, want 1", got)
 	}
 }
 
@@ -574,7 +660,7 @@ func TestSearchVacanciesParamsAndParsing(t *testing.T) {
 	ctx, cancel := ctxb(t)
 	defer cancel()
 	page, err := c.SearchVacancies(ctx, SearchQuery{
-		Text:            "go backend",
+		Text:            `"go backend"`,
 		Areas:           []string{"113", "1"},
 		Experience:      []string{"between1And3"},
 		Schedule:        []string{"fullDay"},
@@ -582,7 +668,7 @@ func TestSearchVacanciesParamsAndParsing(t *testing.T) {
 		SalaryFrom:      150000,
 		Currency:        "RUR",
 		LabelNoAgencies: true,
-		SearchMode:      "exact",
+		SearchFields:    []string{"name"},
 		PeriodDays:      7,
 		Page:            2,
 		PerPage:         50,
@@ -591,7 +677,7 @@ func TestSearchVacanciesParamsAndParsing(t *testing.T) {
 		t.Fatalf("SearchVacancies: %v", err)
 	}
 	for _, want := range []string{
-		"text=%22go+backend%22", // exact mode quotes the phrase
+		"text=%22go+backend%22", // quoting flows through from the query text
 		"area=113", "area=1",
 		"experience=between1And3", "schedule=fullDay", "employment=full",
 		"salary=150000", "currency=RUR", "label=not_from_agency", "search_period=7",
@@ -622,7 +708,7 @@ func TestSearchVacanciesParamsAndParsing(t *testing.T) {
 	}
 }
 
-func TestSearchModeNormalAndWide(t *testing.T) {
+func TestSearchFields(t *testing.T) {
 	env := newTestEnv(t)
 	var queries []string
 	env.serve(env.mux1, "1", "GET", "/search/vacancy", func(w http.ResponseWriter, r *http.Request) {
@@ -633,21 +719,52 @@ func TestSearchModeNormalAndWide(t *testing.T) {
 	ctx, cancel := ctxb(t)
 	defer cancel()
 
-	if _, err := c.SearchVacancies(ctx, SearchQuery{Text: "go", SearchMode: "normal", PerPage: 50}); err != nil {
-		t.Fatalf("normal: %v", err)
+	if _, err := c.SearchVacancies(ctx, SearchQuery{Text: "go", PerPage: 50}); err != nil {
+		t.Fatalf("all fields: %v", err)
 	}
-	if _, err := c.SearchVacancies(ctx, SearchQuery{Text: "go", SearchMode: "wide", PerPage: 50}); err != nil {
-		t.Fatalf("wide: %v", err)
+	if _, err := c.SearchVacancies(ctx, SearchQuery{Text: "go", SearchFields: []string{"name", "description", "company_name"}, PerPage: 50}); err != nil {
+		t.Fatalf("named fields: %v", err)
 	}
-	normal, wide := queries[0], queries[1]
-	if strings.Contains(normal, "%22go%22") || strings.Contains(normal, "search_field") {
-		t.Fatalf("normal query must be unquoted without search_field: %q", normal)
+	all, named := queries[0], queries[1]
+	if strings.Contains(all, "search_field") {
+		t.Fatalf("empty search_fields must not send the param: %q", all)
 	}
-	if !strings.Contains(wide, "search_field=name") || !strings.Contains(wide, "search_field=description") {
-		t.Fatalf("wide query must widen the search fields: %q", wide)
+	if !strings.Contains(named, "search_field=name&search_field=description&search_field=company_name") {
+		t.Fatalf("search_fields must repeat the param in order: %q", named)
 	}
-	if strings.Contains(wide, "%22go%22") {
-		t.Fatalf("wide query must not quote: %q", wide)
+}
+
+// T22: the SSR search page is a top-level navigation and hh.ru answers
+// Accept: application/json with 406 there, so the search request must carry
+// the browser text/html form while JSON shards keep their fetch() Accept.
+func TestSearchSSRRequestCarriesBrowserAccept(t *testing.T) {
+	env := newTestEnv(t)
+	var searchAccept, shardAccept string
+	env.serve(env.mux1, "1", "GET", "/search/vacancy", func(w http.ResponseWriter, r *http.Request) {
+		searchAccept = r.Header.Get("Accept")
+		_, _ = w.Write(readFixture(t, "search.html"))
+	})
+	env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, r *http.Request) {
+		shardAccept = r.Header.Get("Accept")
+		_, _ = w.Write([]byte(`{"resumes":[]}`))
+	})
+	c := env.client()
+	ctx, cancel := ctxb(t)
+	defer cancel()
+
+	if _, err := c.SearchVacancies(ctx, SearchQuery{Text: "go", PerPage: 50}); err != nil {
+		t.Fatalf("SearchVacancies: %v", err)
+	}
+	if _, err := c.ListResumes(ctx); err != nil {
+		t.Fatalf("ListResumes: %v", err)
+	}
+	const wantDocAccept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+	if searchAccept != wantDocAccept {
+		t.Fatalf("search Accept = %q, want %q", searchAccept, wantDocAccept)
+	}
+	const wantShardAccept = "application/json, text/plain, */*"
+	if shardAccept != wantShardAccept {
+		t.Fatalf("resumes shard Accept = %q, want %q", shardAccept, wantShardAccept)
 	}
 }
 
@@ -926,7 +1043,16 @@ func (p *recordingPersister) Save(_ context.Context, accountID string, cookies [
 
 func TestCookiePersistenceRoundTrip(t *testing.T) {
 	env := newTestEnv(t)
-	env.serveSettings()
+	var gotXSRF string
+	env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: "tok_abc123", Path: "/"})
+		http.SetCookie(w, &http.Cookie{Name: "__ddg8", Value: "geo-sentinel", Path: "/"})
+		ck, err := r.Cookie("_xsrf")
+		if err == nil {
+			gotXSRF = ck.Value
+		}
+		_, _ = w.Write([]byte(`{"resumes":[]}`))
+	})
 	c := env.client()
 	p := &recordingPersister{}
 	c.SetPersister(p, "acc1")
@@ -966,14 +1092,6 @@ func TestCookiePersistenceRoundTrip(t *testing.T) {
 	if err := c2.LoadCookies(ctx, last); err != nil {
 		t.Fatalf("LoadCookies: %v", err)
 	}
-	var gotXSRF string
-	env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, r *http.Request) {
-		ck, err := r.Cookie("_xsrf")
-		if err == nil {
-			gotXSRF = ck.Value
-		}
-		_, _ = w.Write([]byte(`{"resumes":[]}`))
-	})
 	if _, err := c2.ListResumes(ctx); err != nil {
 		t.Fatalf("ListResumes: %v", err)
 	}
@@ -1022,7 +1140,7 @@ func TestNewClientRequiresUserAgent(t *testing.T) {
 
 func TestCookiesSnapshot(t *testing.T) {
 	env := newTestEnv(t)
-	env.serveSettings()
+	env.serveBootstrap()
 	c := env.client()
 	if len(c.Cookies()) != 0 {
 		t.Fatal("fresh client has cookies")

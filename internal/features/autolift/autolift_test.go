@@ -34,9 +34,9 @@ type fakeResume struct {
 }
 
 // hhFake is a stateful hh.ru fake wired through a real hhapi client (the
-// internal/hhapi httptest pattern): ListResumes serves /shards/applicant/
-// resumes, TouchResume posts /applicant/resumes/touch, and the XSRF
-// bootstrap reads /applicant/settings.
+// internal/hhapi httptest pattern): ListResumes and the XSRF bootstrap read
+// /shards/applicant/resumes, TouchResume posts /applicant/resumes/touch, and
+// the settings SSR page stays as the XSRF fallback source.
 type hhFake struct {
 	t   *testing.T
 	srv *httptest.Server

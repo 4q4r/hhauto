@@ -17,36 +17,52 @@ import (
 
 // --- Session bootstrap and XSRF ---
 
-// BootstrapSession performs the light authenticated GET (/applicant/settings):
-// it proves the session is alive and seeds the XSRF token cache. Login
-// redirects surface as ErrLoggedOut, challenges as ErrCaptcha.
+// BootstrapSession performs the light authenticated GET (override key
+// "bootstrap", default /shards/applicant/resumes — the resumes JSON shard,
+// live-verified 200 where /applicant/settings serves the anti-bot challenge).
+// Success = 200 + a body the ListResumes parser accepts; the parsed resumes
+// are intentionally discarded. Login redirects surface as ErrLoggedOut,
+// 403 challenge bodies as ErrCaptcha.
+//
+// XSRF source order: the _xsrf cookie from the jar is primary (live-verified:
+// its value equals the X-XSRFToken header hh accepts on mutations); the SSR
+// settings-page xsrfToken is the fallback for jars without the cookie.
 func (c *Client) BootstrapSession(ctx context.Context) error {
 	if err := c.refreshXSRF(ctx); err != nil {
 		return err
 	}
 	if c.xsrfToken() == "" {
-		return fmt.Errorf("hhapi: bootstrap: %w (xsrf token not found in page or cookies)", ErrForbidden)
+		return fmt.Errorf("hhapi: bootstrap: %w (xsrf token not found in cookies or page)", ErrForbidden)
 	}
 	return nil
 }
 
-// refreshXSRF re-reads the settings page and updates the token from the SSR
-// state, falling back to the _xsrf cookie the page set.
+// refreshXSRF re-reads the light bootstrap endpoint (JSON shard) and updates
+// the token: the _xsrf cookie the response refreshed in the jar wins; when
+// the jar holds no _xsrf cookie, the SSR settings page remains the fallback
+// token source (the pre-T21 bootstrap request).
 func (c *Client) refreshXSRF(ctx context.Context) error {
-	page, err := c.getDoc(ctx, "bootstrap", c.endpointURL(epSettings, c.eps.siteDefault("/applicant/settings")), "")
+	resp, err := c.getXHR(ctx, "bootstrap", c.endpointURL(epBootstrap, c.eps.siteDefault("/shards/applicant/resumes")), c.withPinnedHost(c.eps.site+"/applicant/resumes"))
+	if err != nil {
+		return err
+	}
+	// Prove the response is a live shard payload, not an interstitial.
+	if _, perr := parseResumes(resp.body); perr != nil {
+		return perr
+	}
+	if tok := c.book.cookie("_xsrf", c.eps.siteHost()); tok != "" {
+		c.setXSRF(tok)
+		return nil
+	}
+	page, err := c.getDoc(ctx, "bootstrap_ssr", c.endpointURL(epSettings, c.eps.siteDefault("/applicant/settings")), "")
 	if err != nil {
 		return err
 	}
 	state, _ := initialState(page.body)
 	if tok := str(state, "xsrfToken"); tok != "" {
 		c.setXSRF(tok)
-		return nil
 	}
-	if tok := c.book.cookie("_xsrf"); tok != "" {
-		c.setXSRF(tok)
-		return nil
-	}
-	return nil // no token found: caller decides whether that is fatal
+	return nil
 }
 
 func (c *Client) setXSRF(token string) {
@@ -55,21 +71,16 @@ func (c *Client) setXSRF(token string) {
 	c.xsrf = token
 }
 
-// xsrfToken returns the cached token, falling back to the _xsrf cookie with
-// deterministic host priority (site scope first, chatik last).
+// xsrfToken returns the cached token, preferring the _xsrf cookie with
+// deterministic host priority (site scope first, chatik last) over the
+// SSR-derived cache: the cookie is the primary mutation token.
 func (c *Client) xsrfToken() string {
-	c.mu.Lock()
-	if c.xsrf != "" {
-		tok := c.xsrf
-		c.mu.Unlock()
-		return tok
-	}
-	c.mu.Unlock()
 	if tok := c.book.cookie("_xsrf", c.eps.siteHost()); tok != "" {
-		c.setXSRF(tok)
 		return tok
 	}
-	return ""
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.xsrf
 }
 
 // Me parses the session block of the settings SSR page.
@@ -266,17 +277,12 @@ func initialState(page []byte) (map[string]json.RawMessage, bool) {
 }
 
 func extractInitialStateJSON(page string) ([]byte, bool) {
-	const tpl = `<template id="HH-Lux-InitialState"`
-	if i := strings.Index(page, tpl); i >= 0 {
-		rest := page[i+len(tpl):]
-		end := strings.Index(rest, "</template>")
-		if end >= 0 {
-			inner := rest[:end]
-			if j := strings.Index(inner, ">"); j >= 0 {
-				inner = inner[j+1:]
-			}
-			return []byte(html.UnescapeString(strings.TrimSpace(inner))), true
-		}
+	// The open tag's attribute order is not stable: live 2026-09-25 serves
+	// <template style="display:none" id="HH-Lux-InitialState"> (style
+	// BEFORE id), so anchor on the id attribute and skip to the tag's
+	// closing '>' instead of matching a literal prefix.
+	if got, ok := extractLuxTemplate(page); ok {
+		return got, true
 	}
 	const marker = "window.__INITIAL_STATE__"
 	if i := strings.Index(page, marker); i >= 0 {
@@ -287,6 +293,32 @@ func extractInitialStateJSON(page string) ([]byte, bool) {
 		}
 	}
 	return nil, false
+}
+
+// extractLuxTemplate pulls the entity-encoded JSON payload out of the
+// HH-Lux-InitialState template tag, tolerating any attribute order on the
+// open tag.
+func extractLuxTemplate(page string) ([]byte, bool) {
+	const idAttr = `id="HH-Lux-InitialState"`
+	i := strings.Index(page, idAttr)
+	if i < 0 {
+		return nil, false
+	}
+	open := strings.LastIndex(page[:i], "<template")
+	if open < 0 {
+		return nil, false
+	}
+	rest := page[i+len(idAttr):]
+	gt := strings.Index(rest, ">")
+	if gt < 0 {
+		return nil, false
+	}
+	inner := rest[gt+1:]
+	end := strings.Index(inner, "</template>")
+	if end < 0 {
+		return nil, false
+	}
+	return []byte(html.UnescapeString(strings.TrimSpace(inner[:end]))), true
 }
 
 // scanJSONObject extracts the first balanced top-level {...} block, honoring

@@ -32,6 +32,7 @@ func applyDefaults(c *Config) {
 		{&c.Log.Level, "info"},
 		{&c.Log.Format, "text"},
 		{&c.API.Kind, "web"},
+		{&c.API.Transport, TransportTLSClient},
 		{&c.API.Endpoints.Site, "https://hh.ru"},
 		{&c.API.Endpoints.Chatik, "https://chatik.hh.ru"},
 		{&c.API.Endpoints.SearchPage, "https://hh.ru/search/vacancy"},

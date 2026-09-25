@@ -323,7 +323,7 @@ func collectVacancies(ctx context.Context, api hhapi.HHAPI, run config.Run, resu
 		SalaryFrom:        flt.SalaryFrom,
 		Currency:          flt.SalaryCurrency,
 		LabelNoAgencies:   flt.ExcludeAgencies,
-		SearchMode:        run.SearchMode,
+		SearchFields:      run.SearchFields,
 		PeriodDays:        flt.SearchPeriodDays,
 		ProfessionalRoles: flt.ProfessionalRoles,
 		Metros:            flt.Metros,

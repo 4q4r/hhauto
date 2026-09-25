@@ -11,6 +11,9 @@ func validConfig() *Config {
 	return &Config{
 		General: General{Timezone: "Local"},
 		Log:     Log{Level: "info", Format: "text", RedactSecrets: true},
+		// Transport is normally filled by applyDefaults; Validate is also
+		// exercised on raw literals, so spell it out (T24).
+		API: API{Kind: "web", Transport: TransportTLSClient},
 		Captcha: map[string]CaptchaProvider{
 			"cap1": {Protocol: "2captcha"},
 		},
@@ -79,6 +82,14 @@ func TestValidateAcceptsDisabledRunWithNoFields(t *testing.T) {
 	c.Runs["off"] = Run{Enabled: false, Account: "ghost", MaxPerDay: -5, MinMatchPct: -1}
 	if err := Validate(c); err != nil {
 		t.Fatalf("Validate(disabled empty run) = %v, want nil", err)
+	}
+}
+
+func TestValidateAcceptsValidSearchFields(t *testing.T) {
+	c := validConfig()
+	mutateRun(c, "daily", func(r *Run) { r.SearchFields = []string{"name", "company_name", "description"} })
+	if err := Validate(c); err != nil {
+		t.Fatalf("Validate(valid search_fields) = %v, want nil", err)
 	}
 }
 
@@ -181,6 +192,13 @@ func TestValidateErrors(t *testing.T) {
 				mutateRun(c, "daily", func(r *Run) { r.MaxPerDay = 0 })
 			},
 			wantErr: "enabled=false",
+		},
+		{
+			name: "run search_fields invalid",
+			mutate: func(c *Config) {
+				mutateRun(c, "daily", func(r *Run) { r.SearchFields = []string{"name", "body"} })
+			},
+			wantErr: `search_fields "body"`,
 		},
 		{
 			name: "negative daily_apply_cap",

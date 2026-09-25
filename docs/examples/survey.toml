@@ -1,0 +1,96 @@
+# hhauto — survey (dry-run обзор) через источник «N вакансий» резюме.
+# Запуск на машине с ОБЫЧНЫМ для твоего аккаунта IP (SSR-страницы hh
+# привязаны к сессии: с чужого IP /applicant/* уводит на force-login).
+#
+#   hhauto config validate --config docs/examples/survey.toml
+#   hhauto run --once --dry-run --config docs/examples/survey.toml
+#   hhauto funnel --config docs/examples/survey.toml
+#
+# Все мутирующие фичи выключены; dry-run флагом — двойная страховка:
+# ни одного отклика/сообщения/письма не уйдёт, только подсчёт воронки.
+
+[general]
+data_dir = "~/.local/share/hhauto-survey"
+timezone = "Atlantic/Reykjavik"
+dry_run = false
+
+[storage]
+path = "{data_dir}/hhauto.db"
+
+[log]
+level = "info"
+format = "text"
+
+[api]
+kind = "web"
+
+[pacing]
+mode = "burst"            # survey: без пауз, читаем всё
+active_window = "00:00-23:59"
+night_pause = false
+
+[accounts.main]
+display_name = "survey"
+# куки импортируются при onboarding/account add (vault или keyring)
+cookie_file = "{data_dir}/sessions/main.cookies.bin"
+user_agent = "Mozilla/5.0 (X11; Linux x86_64; rv:155.0) Gecko/20100101 Firefox/155.0"
+concurrency = 1
+rps = 0.5
+daily_apply_cap = 200
+
+# --- Источник «N вакансий»: пустой query = suitable-вакансии под резюме ---
+# Один ран = одно резюме. resume_id бери из `hhauto resume list`.
+
+[runs.survey-fullstack]
+enabled = true
+account = "main"
+resume_id = "ПОДСТАВЬ_ХЭШ_ИЗ_resume_list"
+title = "Fullstack (AI-assisted)"
+query = ""                # пусто = рекомендуемые под резюме
+max_per_day = 9999        # survey: не режем воронку
+windows = [{ tz = "Atlantic/Reykjavik", time = ["00:01"], days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] }]
+[runs.survey-fullstack.filters]
+exclude_words = ["junior", "джуниор", "стажировка", "intern", "1с", "1c", "аналитик", "analyst", "продакт", "product", "менеджер", "manager", "маркетинг", "marketing", "sales", "дилер", "сетевой маркетинг"]
+exclude_in_description = true
+exclude_agencies = true
+no_reviews_policy = "allow"
+
+[runs.survey-python]
+enabled = true
+account = "main"
+resume_id = "ПОДСТАВЬ_ХЭШ"
+title = "Python Backend Developer"
+query = ""
+max_per_day = 9999
+windows = [{ tz = "Atlantic/Reykjavik", time = ["00:06"], days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] }]
+[runs.survey-python.filters]
+exclude_words = ["junior", "джуниор", "стажировка", "intern", "1с", "1c", "аналитик", "analyst", "продакт", "product", "менеджер", "manager", "маркетинг", "marketing", "sales"]
+exclude_in_description = true
+exclude_agencies = true
+no_reviews_policy = "allow"
+
+[runs.survey-devops]
+enabled = true
+account = "main"
+resume_id = "ПОДСТАВЬ_ХЭШ"
+title = "Middle DevOps (Python/Linux/Docker)"
+query = ""
+max_per_day = 9999
+windows = [{ tz = "Atlantic/Reykjavik", time = ["00:11"], days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] }]
+[runs.survey-devops.filters]
+exclude_words = ["junior", "джуниор", "стажировка", "intern", "1с", "1c", "аналитик", "analyst", "продакт", "product", "менеджер", "manager", "маркетинг", "marketing", "sales"]
+exclude_in_description = true
+exclude_agencies = true
+no_reviews_policy = "allow"
+
+[features.multiapply]
+enabled = true
+ai_filter = false         # для survey без ИИ-ключей; включишь — добавится скоринг
+[features.autolift]
+enabled = false
+[features.chatops]
+enabled = false
+[features.emaildup]
+enabled = false
+[warmup]
+enabled = false

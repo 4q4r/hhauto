@@ -26,6 +26,9 @@ func TestResolveOverride(t *testing.T) {
 	if got := eps.resolve(epTouch, eps.site+"/applicant/resumes/touch"); got != eps.site+"/applicant/resumes/touch" {
 		t.Fatalf("resolve(touch) = %q, want default (no override)", got)
 	}
+	if got := eps.resolve(epBootstrap, eps.site+"/shards/applicant/resumes"); got != eps.site+"/shards/applicant/resumes" {
+		t.Fatalf("resolve(bootstrap) = %q, want default (no override)", got)
+	}
 }
 
 func TestSameSite(t *testing.T) {

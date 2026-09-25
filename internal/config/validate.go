@@ -46,6 +46,11 @@ func validateGlobals(c *Config) error {
 	default:
 		return fmt.Errorf("log.format %q: must be \"text\" or \"json\"", c.Log.Format)
 	}
+	switch c.API.Transport {
+	case TransportTLSClient, TransportHTTP:
+	default:
+		return fmt.Errorf("api.transport %q: must be %q or %q", c.API.Transport, TransportTLSClient, TransportHTTP)
+	}
 	if _, err := time.LoadLocation(c.General.Timezone); err != nil {
 		return fmt.Errorf("general.timezone %q: %w", c.General.Timezone, err)
 	}
@@ -248,6 +253,13 @@ func validateRuns(c *Config) error {
 			fmt.Sprintf("runs[%q].min_match_percent", id): float64(r.MinMatchPct),
 		}); err != nil {
 			return err
+		}
+		for _, f := range r.SearchFields {
+			switch f {
+			case "name", "company_name", "description":
+			default:
+				return fmt.Errorf("runs[%q].search_fields %q: must be one of name | company_name | description (empty = all fields)", id, f)
+			}
 		}
 		for i, w := range r.Windows {
 			if err := validateWindow(fmt.Sprintf("runs[%q].windows[%d]", id, i), w); err != nil {

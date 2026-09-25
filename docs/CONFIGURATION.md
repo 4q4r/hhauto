@@ -48,6 +48,7 @@
 
 [api]
 # kind = "web"                          # "web" (cookie surface) is the only v1 mode
+# transport = "tls-client"              # "tls-client" (default) | "http" (stdlib, debugging)
 [api.endpoints]
 # site = "https://hh.ru"
 # chatik = "https://chatik.hh.ru"
@@ -171,7 +172,7 @@
 # account = "main"
 # resume_id = ""                        # "" = first published resume
 # query = "golang OR backend"
-# search_mode = "normal"                # exact | normal | wide
+# search_fields = ["name"]              # name | company_name | description; empty = all fields (для "python backend", remote+RU, 2026-09-25: name=28, description=319, все поля=375)
 # max_per_day = 30
 # min_match_percent = 60
 # letter_template = ""                  # static fallback when the AI is off
@@ -263,6 +264,21 @@
 с 15.12.2025). `[api.endpoints]` задаёт базовые URL; `[api.endpoints.override]`
 пинирует **любой** эндпоинт по имени — страховка от дрейфа неофициального API.
 
+`transport = "tls-client" | "http"` (дефолт `tls-client`, T24). hh.ru
+фингерпринтит TLS-хендшейк (JA3/JA3S): стек Go `crypto/tls` получает
+документные поверхности без SSR-узла состояния, поэтому дефолтный транспорт —
+`bogdanfinn/tls-client` (pure-Go uTLS) с браузерным профилем, подобранным под
+`user_agent` аккаунта: то же семейство (Chrome/Edge → `chrome_*`, Firefox →
+`firefox_*`), старший профиль с версией ≤ версии UA (Chrome/138 → `chrome_133`,
+Firefox/155 → `firefox_148`). Точного совпадения мажора в библиотеке нет —
+WARN в лог при старте; неизвестное семейство UA → дефолтный профиль
+библиотеки + WARN. Поведение (куки/персистентность, retry/backoff,
+rate-лимит, редиректы с региональным пиннингом и хоп-куками, прокси из
+`[proxy.*]` через `SetProxy` — socks5/http/https с кредами в userinfo,
+таймаут 30 с на хоп) сохранено; редиректы водятся вручную — у tls-client нет
+хуков на хоп. `transport = "http"` — прежний stdlib-транспорт, оставлен как
+fallback для отладки (диагностики транспортных различий).
+
 ### `[captcha.<id>]`
 Только платные API-сервисы: `protocol = "2captcha" | "anticaptcha"`
 (Anti-Captcha-совместимый покрывает CapMonster Cloud). У каждого провайдера
@@ -318,8 +334,8 @@ UA и заголовки, `rps` и `concurrency` — локальные лими
 = все события. Доставка через outbox — переживает рестарт.
 
 ### `[runs.<id>]`
-Профили мультиотклика: поисковый запрос, `search_mode = exact | normal | wide`,
-дневные лимиты и пороги, окна (`tz`, `time[]`, `days[]`), фильтры (см. ниже)
+Профили мультиотклика: поисковый запрос, `search_fields = ["name" |
+"company_name" | "description"]` (пусто = все поля hh), дневные лимиты и пороги, окна (`tz`, `time[]`, `days[]`), фильтры (см. ниже)
 и шаблон письма. `resume_id = ""` — первое опубликованное резюме.
 
 #### Язык поисковых запросов hh
@@ -344,9 +360,10 @@ UA и заголовки, `rps` и `concurrency` — локальные лими
 | `!ID:` | `!ID:123456789` | ID вакансии (восклицательный знак обязателен) |
 | `!COMPANY_ID:` | `!COMPANY_ID:816144` | ID компании (восклицательный знак обязателен) |
 
-Регистр имён полей (`NAME:`/`name:`) не важен. `search_mode = exact`
-дополнительно оборачивает запрос в кавычки; `wide` расширяет поиск на
-name + company_name + description (`search_field`).
+Регистр имён полей (`NAME:`/`name:`) не важен. Пресетов «Точный/Обычный/
+Широкий» нет: гибкость задаётся самим запросом + списком `search_fields`
+(живые счётчики «python backend», remote+RU: name=28, description=319,
+все поля=375).
 
 #### `[runs.<id>.filters]` — нативные фильтры hh (полное покрытие)
 
@@ -379,6 +396,15 @@ hh молча игнорирует неизвестные значения (пр
 `not_from_agency`), как и `accredited_it_employer` (живое — `accredited_it`);
 `accept_temporary` эффекта не даёт. Всё, что не покрыто нативными фильтрами,
 выражается текстом `query` (язык запросов выше).
+
+Профили мультиотклика — всё из настроек автоотклика hh: поисковый запрос
+(OR/AND/NOT/кавычки/скобки), `search_fields = ["name" | "company_name" |
+"description"]` (пусто = все поля; живые счётчики для "python backend",
+remote+RU, 2026-09-25: name=28, description=319, все поля=375),
+дневные лимиты и пороги, окна (`tz`, `time[]`, `days[]`), фильтры (зарплата,
+опыт, график, занятость, отрасли, регионы, exclude-слова, ЧС/БС компаний,
+рейтинг работодателя с политикой «без отзывов»). `resume_id = ""` — первое
+опубликованное резюме.
 
 ### `[review]`, `[forms]`, `[email]`, `[warmup]`, `[schedule]`
 - `review`: SLA очереди ручного разбора.
