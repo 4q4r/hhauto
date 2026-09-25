@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -82,6 +83,42 @@ func (db *DB) ApplicationsGetByDedupKey(ctx context.Context, dedupKey string) (*
 		return nil, fmt.Errorf("store: ApplicationsGetByDedupKey: %w", err)
 	}
 	return a, nil
+}
+
+// ApplicationsListByAccountAndVacancies returns the account's application
+// rows for the given vacancy ids (any status). An empty id list returns an
+// empty slice without touching the table. The T26 lineage/exhaustion and
+// reapply-policy source.
+func (db *DB) ApplicationsListByAccountAndVacancies(ctx context.Context, accountID string, vacancyIDs []int64) ([]Application, error) {
+	if len(vacancyIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat("?,", len(vacancyIDs))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, 0, len(vacancyIDs)+1)
+	args = append(args, accountID)
+	for _, id := range vacancyIDs {
+		args = append(args, id)
+	}
+	rows, err := db.conn.QueryContext(ctx, `
+		SELECT id, account_id, run_id, hh_resume_id, vacancy_id, employer_id,
+		       dedup_key, status, letter, fail_reason, correlation_id, created_at, applied_at
+		FROM applications
+		WHERE account_id = ? AND vacancy_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: ApplicationsListByAccountAndVacancies: %w", err)
+	}
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
+
+	var out []Application
+	for rows.Next() {
+		a, err := scanApplication(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: ApplicationsListByAccountAndVacancies scan: %w", err)
+		}
+		out = append(out, *a)
+	}
+	return out, rows.Err()
 }
 
 func scanApplication(rs rowScanner) (*Application, error) {
