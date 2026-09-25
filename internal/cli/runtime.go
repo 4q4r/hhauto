@@ -295,6 +295,21 @@ func webhookEndpointConfigs(cfg *config.Config) []config.Webhook {
 	return out
 }
 
+// contentEditorFor resolves the per-account resume content surface for
+// the improve pipeline and the browser editor runner (type-asserted off
+// the full client; an account whose client lacks the surface fails here).
+func (rt *Runtime) contentEditorFor(accountID string) (contentEditorAPI, error) {
+	api, err := rt.APIFor(accountID)
+	if err != nil {
+		return nil, err
+	}
+	ed, ok := api.(contentEditorAPI)
+	if !ok {
+		return nil, fmt.Errorf("cli: api client for account %q does not implement the resume content editor", accountID)
+	}
+	return ed, nil
+}
+
 // buildFeatures constructs every feature module with its dependencies and
 // fills the registry. Disabled features are constructed too (they are
 // inert; the engine drives Enabled() only) so the registry stays complete.
@@ -312,7 +327,7 @@ func (rt *Runtime) buildFeatures() error {
 		Pacer: rt.Pacer, Log: rt.Log,
 	})
 	feats.Add(lift)
-	improver, err := buildImprove(cfg, rt.AI, rt.DB, rt.Log)
+	improver, err := buildImprove(cfg, rt.AI, rt.DB, rt.contentEditorFor, rt.Cookies, rt.Log)
 	if err != nil {
 		return err
 	}

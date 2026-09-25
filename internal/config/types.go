@@ -264,6 +264,36 @@ type AutoCloneImprove struct {
 	// inline | file, never both; version optional). Only the prompt fields
 	// are read here — the model profile always comes from ModelProfile.
 	Prompts map[string]AITask `toml:"prompts"`
+	// Editor configures the browser (chromedp) apply of the planned values
+	// (T30). When enabled and Chrome is available, the plan is applied
+	// through the real resume editor pages (browser TLS passes the edge
+	// that gates off-browser POSTs); without it the pipeline keeps the
+	// T29 builder-update path and its degradation semantics.
+	Editor AutoCloneImproveEditor `toml:"editor"`
+}
+
+// AutoCloneImproveEditor configures the T30 browser editor runner.
+type AutoCloneImproveEditor struct {
+	// Enabled gates the browser apply (default false — the builder-update
+	// path stays the apply surface).
+	Enabled bool `toml:"enabled"`
+	// BaseURL is the hh.ru origin the wizard pages are opened on.
+	BaseURL string `toml:"base_url"` // default https://hh.ru
+	// ScreenURLs maps a wizard screen id to a URL template overriding the
+	// default {base}/applicant/resume/{resume}/{screen}. Placeholders:
+	// {resume} and {screen} are required everywhere; {item} is required on
+	// screens hosting per-item fields (experience).
+	ScreenURLs map[string]string `toml:"screen_urls"`
+	// CookieDomain is the domain the account session cookies are injected
+	// under (hh.ru and its subdomains; nothing outside it ever receives
+	// them — the isolation invariant of the browser runner).
+	CookieDomain string `toml:"cookie_domain"` // default .hh.ru
+	// PageTimeoutSec bounds one whole browser run (all screens of a plan).
+	PageTimeoutSec int `toml:"page_timeout_sec"` // default 120
+	// SaveTimeoutSec bounds the post-save wait for the wizard to leave the
+	// screen; the authoritative gate is the get_by_hash read-back either
+	// way.
+	SaveTimeoutSec int `toml:"save_timeout_sec"` // default 20
 }
 
 // RunOverride replaces inherited parent-run values for the clone run; zero

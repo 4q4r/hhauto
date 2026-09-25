@@ -127,6 +127,38 @@ func validateAutoCloneImprove(im *AutoCloneImprove) error {
 			return fmt.Errorf("features.autoclone.improve.prompts[%q]: inline and file are mutually exclusive", field)
 		}
 	}
+	return validateAutoCloneImproveEditor(&im.Editor)
+}
+
+// itemScreens are wizard screens hosting per-item fields (experience
+// components expand to one target per item), so their URL overrides must
+// carry the {item} placeholder to address the edited item.
+var itemScreens = map[string]bool{"experience": true, "about_me_and_experience": true}
+
+// validateAutoCloneImproveEditor checks the [features.autoclone.improve.editor]
+// section (T30). Only an enabled section is validated. URL overrides must
+// stay addressable: {resume} and {screen} everywhere, {item} on the
+// per-item screens; timeouts ride defaults when unset and must stay above
+// the sanity floor when set.
+func validateAutoCloneImproveEditor(ed *AutoCloneImproveEditor) error {
+	if !ed.Enabled {
+		return nil
+	}
+	const timeoutFloor = 5
+	if ed.PageTimeoutSec != 0 && ed.PageTimeoutSec < timeoutFloor {
+		return fmt.Errorf("features.autoclone.improve.editor.page_timeout_sec=%d: must be at least %d when set", ed.PageTimeoutSec, timeoutFloor)
+	}
+	if ed.SaveTimeoutSec != 0 && ed.SaveTimeoutSec < timeoutFloor {
+		return fmt.Errorf("features.autoclone.improve.editor.save_timeout_sec=%d: must be at least %d when set", ed.SaveTimeoutSec, timeoutFloor)
+	}
+	for screen, tmpl := range ed.ScreenURLs {
+		if !strings.Contains(tmpl, "{resume}") {
+			return fmt.Errorf("features.autoclone.improve.editor.screen_urls[%q]: template must carry the {resume} placeholder", screen)
+		}
+		if itemScreens[screen] && !strings.Contains(tmpl, "{item}") {
+			return fmt.Errorf("features.autoclone.improve.editor.screen_urls[%q]: this screen hosts per-item fields, the template must carry the {item} placeholder", screen)
+		}
+	}
 	return nil
 }
 
