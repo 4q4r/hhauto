@@ -181,12 +181,25 @@
 # time = ["09:00", "14:00"]
 # days = ["mon", "tue", "wed", "thu", "fri"]
 # [runs.backend-go.filters]
-# areas = ["1"]                         # Moscow
+# areas = ["1"]                         # Москва
+# professional_roles = ["160"]          # ID специализаций hh (multi)
+# metros = ["532"]                      # ID станций метро (multi)
 # experience = ["between1And3", "between3And6"]
+# schedule = ["fullDay", "remote"]
+# employment = ["full", "part"]
+# industries = ["7"]                    # ID отраслей (multi)
+# work_formats = ["REMOTE", "HYBRID"]   # REMOTE|HYBRID|ON_SITE (регистр важен)
+# salary_from = 150000
+# salary_currency = "RUR"
+# only_with_salary = true               # только вакансии с зарплатой
+# labels = ["with_salary"]              # свободные строки (multi); известные — ниже
+# part = ["evening", "weekend"]         # temp|evening|weekend (эффект live не подтверждён)
+# order_by = "publication_time_desc"    # relevance|publication_time_desc|salary_desc|salary_asc
+# search_period_days = 30
 # exclude_words = ["стажер", "intern"]
 # company_blacklist = []
 # company_whitelist = []
-# exclude_agencies = true
+# exclude_agencies = true               # label=not_from_agency
 # min_employer_rating = 0.0
 # no_reviews_policy = "allow"           # allow | skip | human
 # [runs.backend-go.ai_filter_overrides]
@@ -321,6 +334,69 @@ UA и заголовки, `rps` и `concurrency` — локальные лими
 = все события. Доставка через outbox — переживает рестарт.
 
 ### `[runs.<id>]`
+Профили мультиотклика: поисковый запрос, `search_fields = ["name" |
+"company_name" | "description"]` (пусто = все поля hh), дневные лимиты и пороги, окна (`tz`, `time[]`, `days[]`), фильтры (см. ниже)
+и шаблон письма. `resume_id = ""` — первое опубликованное резюме.
+
+#### Язык поисковых запросов hh
+
+Текст `query` передаётся на hh verbatim — доступна вся гибкость официального
+языка поисковых запросов (перечень — база знаний hh, статья «Как использовать
+язык поисковых запросов»):
+
+| Оператор | Пример | Смысл |
+| --- | --- | --- |
+| `AND` | `golang AND kubernetes` | оба слова |
+| `OR` | `дизайнер OR иллюстратор` | любое из слов |
+| `NOT` | `NOT стажёр` | исключить слово/фразу |
+| `"фраза"` | `"главный бухгалтер"` | точная фраза |
+| `!слово` | `!менеджер` | точная словоформа |
+| `"фраза"~N` | `"школа танцев"~5` | до N слов между частями фразы |
+| `*` | `менедж*` | все слова с корнем |
+| `( )` | `(дизайнер OR иллюстратор) AND ДМС` | группировка условий |
+| `NAME:` | `NAME:инженер` | искать только в названии вакансии |
+| `COMPANY_NAME:` | `COMPANY_NAME:Сбер` | только в названии компании |
+| `DESCRIPTION:` | `DESCRIPTION:"коммерческая недвижимость"` | только в описании |
+| `!ID:` | `!ID:123456789` | ID вакансии (восклицательный знак обязателен) |
+| `!COMPANY_ID:` | `!COMPANY_ID:816144` | ID компании (восклицательный знак обязателен) |
+
+Регистр имён полей (`NAME:`/`name:`) не важен. Пресетов «Точный/Обычный/
+Широкий» нет: гибкость задаётся самим запросом + списком `search_fields`
+(живые счётчики «python backend», remote+RU: name=28, description=319,
+все поля=375).
+
+#### `[runs.<id>.filters]` — нативные фильтры hh (полное покрытие)
+
+| Ключ | Param hh | Значения |
+| --- | --- | --- |
+| `areas` | `area` (multi) | ID регионов hh |
+| `professional_roles` | `professional_role` (multi) | ID специализаций (например `160` = DevOps) |
+| `metros` | `metro` (multi) | ID станций метро |
+| `experience` | `experience` (multi) | `noExperience`, `between1And3`, `between3And6`, `moreThan6` |
+| `schedule` | `schedule` (multi) | `fullDay`, `shift`, `flexible`, `remote`, `flyInFlyOut` |
+| `employment` | `employment` (multi) | `full`, `part`, `project`, `volunteer`, `probation` |
+| `industries` | `industry` (multi) | ID отраслей |
+| `work_formats` | `work_format` (multi) | `REMOTE`, `HYBRID`, `ON_SITE` — регистр важен |
+| `salary_from`, `salary_currency` | `salary`, `currency` | порог дохода + валюта |
+| `only_with_salary` | `only_with_salary` | `true` — только вакансии с зарплатой |
+| `labels` | `label` (multi, OR) | свободные строки; известные живые: `with_salary`, `with_address`, `not_from_agency`, `accept_handicapped`, `accept_kids`, `accredited_it`, `accept_labor_contract`, `night_shifts`, `low_performance`, `internship` |
+| `part` | `part` (multi) | `temp`, `evening`, `weekend` — hh принимает, фильтрующего эффекта live (2026-09-25) не подтверждено |
+| `order_by` | `order_by` | `relevance`, `publication_time_desc`, `salary_desc`, `salary_asc` |
+| `search_period_days` | `search_period` | 1 / 3 / 7 / 30 дней |
+| `exclude_words`, `exclude_in_description` | — (локальный каскад F2) | слова-исключения, название (+описание) |
+| `company_blacklist`, `company_whitelist`, `whitelist_bypass` | — (локальный каскад) | ЧС/БС компаний |
+| `exclude_agencies` | `label=not_from_agency` | без вакансий от кадровых агентств |
+| `min_employer_rating`, `rating_period`, `no_reviews_policy`, `rating_cache_hours` | — (локальный каскад WF2-F4) | рейтинг работодателя |
+
+Enum-значения `work_formats`, `part` и `order_by` валидируются на старте:
+hh молча игнорирует неизвестные значения (проверено live 2026-09-25), поэтому
+опечатка — это ошибка запуска, а не молча неполная выдача. `labels` —
+свободные строки: hh добавляет новые метки без предупреждения. Имена из
+прежних лет не работают: `no_agencies` hh игнорирует (живое имя —
+`not_from_agency`), как и `accredited_it_employer` (живое — `accredited_it`);
+`accept_temporary` эффекта не даёт. Всё, что не покрыто нативными фильтрами,
+выражается текстом `query` (язык запросов выше).
+
 Профили мультиотклика — всё из настроек автоотклика hh: поисковый запрос
 (OR/AND/NOT/кавычки/скобки), `search_fields = ["name" | "company_name" |
 "description"]` (пусто = все поля; живые счётчики для "python backend",

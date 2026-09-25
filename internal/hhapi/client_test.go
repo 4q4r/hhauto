@@ -680,7 +680,7 @@ func TestSearchVacanciesParamsAndParsing(t *testing.T) {
 		"text=%22go+backend%22", // quoting flows through from the query text
 		"area=113", "area=1",
 		"experience=between1And3", "schedule=fullDay", "employment=full",
-		"salary=150000", "currency=RUR", "label=no_agencies", "search_period=7",
+		"salary=150000", "currency=RUR", "label=not_from_agency", "search_period=7",
 		"page=2", "items_on_page=50",
 	} {
 		if !strings.Contains(gotQuery, want) {

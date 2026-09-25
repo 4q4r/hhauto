@@ -39,19 +39,22 @@ type applyEnv struct {
 	searchItems []string // vacancy item JSON blocks per page (same on every page)
 	searchFound int      // searchCounts.value (drives Pages)
 	searchReqs  int
-	popupByVac  map[int64]string
-	popupErr    map[int64]int // vacancy → HTTP status
-	applyErr    func(call int, vacancy int64, letter string) error
-	applyCalls  []int64 // order of applied vacancy ids
-	applyBodies []string
-	negPages    [][]hhapi.Negotiation
-	negFail     bool
-	negScript   []negAct // per-read script (1st read → negScript[0], …); empty → legacy fields
-	negReads    int
-	ratings     map[int64]*hhapi.EmployerRating
-	ratingErr   map[int64]error
-	ratingReqs  map[int64]int
-	popupReqs   map[int64]int
+	// searchQueryLog records the raw query of every search-page request
+	// (T25: pins the extended-filter wiring end-to-end).
+	searchQueryLog []string
+	popupByVac     map[int64]string
+	popupErr       map[int64]int // vacancy → HTTP status
+	applyErr       func(call int, vacancy int64, letter string) error
+	applyCalls     []int64 // order of applied vacancy ids
+	applyBodies    []string
+	negPages       [][]hhapi.Negotiation
+	negFail        bool
+	negScript      []negAct // per-read script (1st read → negScript[0], …); empty → legacy fields
+	negReads       int
+	ratings        map[int64]*hhapi.EmployerRating
+	ratingErr      map[int64]error
+	ratingReqs     map[int64]int
+	popupReqs      map[int64]int
 }
 
 func newApplyEnv(t *testing.T) *applyEnv {
@@ -89,9 +92,10 @@ func newApplyEnv(t *testing.T) *applyEnv {
 			`{"applicantSuitableVacancyByResume":{"hash1":{"vacancies":[%s],"searchCounts":{"value":%d}}}}`,
 			strings.Join(items, ","), len(items))))
 	})
-	mux.HandleFunc("GET /search/vacancy", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /search/vacancy", func(w http.ResponseWriter, r *http.Request) {
 		e.mu.Lock()
 		e.searchReqs++
+		e.searchQueryLog = append(e.searchQueryLog, r.URL.RawQuery)
 		items := append([]string(nil), e.searchItems...)
 		found := e.searchFound
 		e.mu.Unlock()

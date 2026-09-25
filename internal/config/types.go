@@ -307,6 +307,27 @@ type RunFilters struct {
 	RatingPeriod      string   `toml:"rating_period"` // "all" | "N" (days)
 	RatingCacheHours  int      `toml:"rating_cache_hours"`
 	NoReviewsPolicy   string   `toml:"no_reviews_policy"` // allow | skip | human
+
+	// --- T25: full hh filter coverage (values live-verified 2026-09-25) ---
+	// ProfessionalRoles: hh professional-role IDs, param professional_role
+	// (multi).
+	ProfessionalRoles []string `toml:"professional_roles"`
+	// Metros: hh metro-station IDs, param metro (multi).
+	Metros []string `toml:"metros"`
+	// WorkFormats: param work_format (multi); enum REMOTE|HYBRID|ON_SITE,
+	// case-sensitive ("ONSITE" is silently ignored by hh — rejected here).
+	WorkFormats []string `toml:"work_formats"`
+	// Labels: param label (multi; merged with exclude_agencies). Free-form:
+	// known live values are documented in docs/CONFIGURATION.md; hh ships new
+	// labels without notice, so unknown strings pass validation.
+	Labels []string `toml:"labels"`
+	// Part: param part (multi); enum temp|evening|weekend. hh accepts the
+	// values but no filtering effect could be verified live (2026-09-25) —
+	// sent per the full-coverage decision.
+	Part []string `toml:"part"`
+	// OrderBy: param order_by; enum relevance|publication_time_desc|
+	// salary_desc|salary_asc; "" = hh default.
+	OrderBy string `toml:"order_by"`
 }
 
 // AIFilterOverride tweaks the AI relevance filter for one run.
