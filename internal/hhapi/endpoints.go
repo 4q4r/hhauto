@@ -12,6 +12,7 @@ import (
 // here; overrides replace the full URL of a named endpoint.
 const (
 	epSettings       = "settings"        // GET  /applicant/settings (SSR: xsrfToken, session)
+	epBootstrap      = "bootstrap"       // GET  /shards/applicant/resumes (JSON: light authed bootstrap)
 	epResumes        = "resumes"         // GET  /shards/applicant/resumes (JSON)
 	epTouch          = "touch"           // POST /applicant/resumes/touch
 	epApplyPopup     = "apply_popup"     // GET  /applicant/vacancy_response/popup?vacancyId=N
