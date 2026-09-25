@@ -660,7 +660,7 @@ func TestSearchVacanciesParamsAndParsing(t *testing.T) {
 	ctx, cancel := ctxb(t)
 	defer cancel()
 	page, err := c.SearchVacancies(ctx, SearchQuery{
-		Text:            "go backend",
+		Text:            `"go backend"`,
 		Areas:           []string{"113", "1"},
 		Experience:      []string{"between1And3"},
 		Schedule:        []string{"fullDay"},
@@ -668,7 +668,7 @@ func TestSearchVacanciesParamsAndParsing(t *testing.T) {
 		SalaryFrom:      150000,
 		Currency:        "RUR",
 		LabelNoAgencies: true,
-		SearchMode:      "exact",
+		SearchFields:    []string{"name"},
 		PeriodDays:      7,
 		Page:            2,
 		PerPage:         50,
@@ -677,7 +677,7 @@ func TestSearchVacanciesParamsAndParsing(t *testing.T) {
 		t.Fatalf("SearchVacancies: %v", err)
 	}
 	for _, want := range []string{
-		"text=%22go+backend%22", // exact mode quotes the phrase
+		"text=%22go+backend%22", // quoting flows through from the query text
 		"area=113", "area=1",
 		"experience=between1And3", "schedule=fullDay", "employment=full",
 		"salary=150000", "currency=RUR", "label=no_agencies", "search_period=7",
@@ -708,7 +708,7 @@ func TestSearchVacanciesParamsAndParsing(t *testing.T) {
 	}
 }
 
-func TestSearchModeNormalAndWide(t *testing.T) {
+func TestSearchFields(t *testing.T) {
 	env := newTestEnv(t)
 	var queries []string
 	env.serve(env.mux1, "1", "GET", "/search/vacancy", func(w http.ResponseWriter, r *http.Request) {
@@ -719,21 +719,18 @@ func TestSearchModeNormalAndWide(t *testing.T) {
 	ctx, cancel := ctxb(t)
 	defer cancel()
 
-	if _, err := c.SearchVacancies(ctx, SearchQuery{Text: "go", SearchMode: "normal", PerPage: 50}); err != nil {
-		t.Fatalf("normal: %v", err)
+	if _, err := c.SearchVacancies(ctx, SearchQuery{Text: "go", PerPage: 50}); err != nil {
+		t.Fatalf("all fields: %v", err)
 	}
-	if _, err := c.SearchVacancies(ctx, SearchQuery{Text: "go", SearchMode: "wide", PerPage: 50}); err != nil {
-		t.Fatalf("wide: %v", err)
+	if _, err := c.SearchVacancies(ctx, SearchQuery{Text: "go", SearchFields: []string{"name", "description", "company_name"}, PerPage: 50}); err != nil {
+		t.Fatalf("named fields: %v", err)
 	}
-	normal, wide := queries[0], queries[1]
-	if strings.Contains(normal, "%22go%22") || strings.Contains(normal, "search_field") {
-		t.Fatalf("normal query must be unquoted without search_field: %q", normal)
+	all, named := queries[0], queries[1]
+	if strings.Contains(all, "search_field") {
+		t.Fatalf("empty search_fields must not send the param: %q", all)
 	}
-	if !strings.Contains(wide, "search_field=name") || !strings.Contains(wide, "search_field=description") {
-		t.Fatalf("wide query must widen the search fields: %q", wide)
-	}
-	if strings.Contains(wide, "%22go%22") {
-		t.Fatalf("wide query must not quote: %q", wide)
+	if !strings.Contains(named, "search_field=name&search_field=description&search_field=company_name") {
+		t.Fatalf("search_fields must repeat the param in order: %q", named)
 	}
 }
 

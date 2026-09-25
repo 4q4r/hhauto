@@ -330,7 +330,7 @@ func (f *Feature) searchQuery(run config.Run) hhapi.SearchQuery {
 		SalaryFrom:      flt.SalaryFrom,
 		Currency:        flt.SalaryCurrency,
 		LabelNoAgencies: flt.ExcludeAgencies || f.opt.Config.Features.MultiApply.ExcludeAgenciesDef,
-		SearchMode:      run.SearchMode,
+		SearchFields:    run.SearchFields,
 		PeriodDays:      flt.SearchPeriodDays,
 		PerPage:         50,
 	}
