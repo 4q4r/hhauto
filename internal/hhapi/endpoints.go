@@ -37,6 +37,12 @@ const (
 	// resume-profile-front service host and is used verbatim (never
 	// regional-host pinned); overridable via config like every endpoint.
 	epResumeCloneResumes = "resume_clone_resumes" // POST /profile/shards/resume/clone_resumes
+	// T29 resume management surface (visibility + delete; bundle-reversed
+	// from the applicant_profile SPA module 91062). Defaults live on the
+	// hh.ru site host; overridable via config like every endpoint.
+	epResumeVisibilityHide = "resume_visibility_hide" // POST /profile/shards/resume/visibility/hide
+	epResumeVisibilityShow = "resume_visibility_show" // POST /profile/shards/resume/visibility/show
+	epResumeDelete         = "resume_delete"          // POST /profile/shards/resume/delete
 )
 
 // endpointSet resolves endpoint URLs from config with defaults and

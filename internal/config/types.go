@@ -216,10 +216,54 @@ type AutoClone struct {
 	// before the autoclone is parked for review (hh clones start as
 	// status="not_finished"; a stuck clone needs a human).
 	FinishTimeoutMin int `toml:"finish_timeout_min"` // default 10
+	// CloneOriginalAction is the source-resume policy after a successful
+	// full clone (+ improve): "keep" (default) leaves the original as-is,
+	// "hide" flips its visibility to no_one (reversible), "delete" removes
+	// it permanently. An unknown or failed action degrades to keep with a
+	// WARN (fail-safe: the original is never lost to an automation bug).
+	CloneOriginalAction string `toml:"clone_original_action"` // keep | hide | delete
+	// Improve configures the per-field AI improvement of the clone (T29).
+	Improve AutoCloneImprove `toml:"improve"`
 	// RunOverride carries point overrides for the implicit clone run; the
 	// clone run otherwise inherits the parent run wholesale (filters, limits,
 	// letter_mode — T26 owner decision #6).
 	RunOverride RunOverride `toml:"run_override"`
+}
+
+// Clone-original-action vocabulary for [features.autoclone].clone_original_action.
+const (
+	// CloneActionKeep leaves the source resume untouched (default).
+	CloneActionKeep = "keep"
+	// CloneActionHide hides the source resume from everyone (visibility
+	// no_one) — reversible through show.
+	CloneActionHide = "hide"
+	// CloneActionDelete permanently deletes the source resume.
+	CloneActionDelete = "delete"
+)
+
+// AutoCloneImprove configures the per-field AI improvement of a fresh clone
+// (T29): every field in Fields gets its own system prompt (builtin default,
+// overridable per field through Prompts), the AI proposes a new value from
+// the resume facts only, the dry-run diff shows было/стало per field and
+// the apply walks the editor update endpoint per screen.
+type AutoCloneImprove struct {
+	// Enabled gates the whole section (default false — nothing improves
+	// until the owner asks for it).
+	Enabled bool `toml:"enabled"`
+	// Fields lists the field ids to improve ("title", "about",
+	// "key_skills", "experience_description", ...). Date fields
+	// ("experience_dates") are NOT AI fields by default: improving one
+	// requires an explicit owner prompt override for that field.
+	Fields []string `toml:"fields"`
+	// ModelProfile is the [ai.models] profile the improve task runs on.
+	ModelProfile string `toml:"model_profile"`
+	// AlwaysAsk lists field ids whose improved values never auto-apply:
+	// they park for review with the proposed diff instead.
+	AlwaysAsk []string `toml:"always_ask"`
+	// Prompts maps a field id to its prompt override ([ai.tasks]-shaped:
+	// inline | file, never both; version optional). Only the prompt fields
+	// are read here — the model profile always comes from ModelProfile.
+	Prompts map[string]AITask `toml:"prompts"`
 }
 
 // RunOverride replaces inherited parent-run values for the clone run; zero

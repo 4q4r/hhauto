@@ -312,10 +312,15 @@ func (rt *Runtime) buildFeatures() error {
 		Pacer: rt.Pacer, Log: rt.Log,
 	})
 	feats.Add(lift)
+	improver, err := buildImprove(cfg, rt.AI, rt.DB, rt.Log)
+	if err != nil {
+		return err
+	}
 	apply := multiapply.New(multiapply.Options{
 		Config: *cfg, DB: rt.DB, APIFor: apiFor, ChainFor: chainFor,
 		Runner: rt.AI, ProfileFor: rt.profileFor, Pacer: rt.Pacer,
 		Notifier: rt.Webhooks, Review: reviewer, Stopped: stopped, Log: rt.Log,
+		Improver: improver,
 	})
 	feats.Add(apply)
 	chat := chatops.New(*cfg, rt.DB, rt.AI, rt.Webhooks, kit11.APIResolver(rt.APIFor), rt.Log)

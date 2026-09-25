@@ -135,6 +135,22 @@
 # reapply_mode = "new_only"             # all | new_only | skip_recent_rejections
 # skip_rejection_days = 30              # окно свежести отказов для skip_recent_rejections
 # finish_timeout_min = 10               # клон висит в not_finished дольше → review + стоп клонов аккаунта
+# clone_original_action = "keep"        # T29: keep | hide | delete — судьба ИСХОДНОГО резюме после успешного клона+improve (неудача/неизвестное значение → keep + WARN)
+# [features.autoclone.improve]          # T29: ИИ-улучшение полей клона (per-field промпты)
+# enabled = false
+# fields = ["title", "about", "key_skills", "salary", "experience_description"]
+                                        # словарь полей: title, about (О себе), key_skills, salary, professional_roles,
+                                        # work_schedule, employment, work_formats, experience_company, experience_position,
+                                        # experience_description (по каждому месту работы), experience_dates, education_primary/
+                                        # elementary/additional/attestation, citizenship, gender, birthday, relocation,
+                                        # work_ticket, driver_license, area, metro, language.
+                                        # ИИ-улучшаемые (builtin-промпты): title, about, key_skills, salary, experience_description.
+                                        # Даты (experience_dates) — НЕ ИИ-поле: улучшаются только с явным промптом владельца.
+# model_profile = ""                    # профиль [ai.models] для задачи resume_improve
+# always_ask = []                       # поля, улучшения которых НЕ применяются автоматически: дифф уходит в review
+# [features.autoclone.improve.prompts.title]
+# inline = "..."                        # свой промпт поля (inline | file — взаимоисключимо); без override — builtin
+# file = "prompts/title.md"
 # [features.autoclone.run_override]     # точечные override неявного клона-рана (остальное наследует родительский ран)
 # max_per_day = 5
 # letter_mode = "template_ai"
@@ -343,6 +359,21 @@ UA и заголовки, `rps` и `concurrency` — локальные лими
   В `runs.*` — `letter_mode`: `template` (только шаблон), `template_ai`
   (шаблон как база + ИИ-полировка, фолбэк — сырой шаблон), `ai_company`
   (ИИ под компанию, по умолчанию);
+- `autoclone.improve` (T29): после успешного клона ИИ улучшает выбранные
+  поля клона — `title`, `about` (О себе), `key_skills`, `salary`,
+  `experience_description` (builtin-промпты на каждое поле, override через
+  `[features.autoclone.improve.prompts.<field>]`); значения grounded на
+  фактах резюме/профиля/правил — числа и даты только из источника
+  (детерминированные пост-чеки дают `needs_human` → review). Поле из
+  `always_ask` не применяется автоматически: proposed-дифф паркуется в
+  review. Применение идёт через редакторский update-эндпоинт по экранам с
+  verify-перечитыванием; ошибка валидации hh на поле → один ретрай с
+  исправлением формата → skip поля. Каждое применение пишет артефакт
+  диффа (было/стало per field) в `resume_clones.improve_diff`. Клоны
+  голые не остаются: инвариант — обновляется ТОЛЬКО hash из lineage.
+  `clone_original_action` = `keep` (дефолт) | `hide` ( visibility no_one,
+  обратимо) | `delete` — судьба ИСХОДНОГО резюме; неудавшийся/неизвестный
+  экшен → WARN + keep (fail-safe);
 - `testsolve`: `mode = "draft_only"` (headless требует Chrome в PATH),
   `submit_policy = "human"`;
 - `chatops`: `auto_reply_enabled`, порог уверенности отказа,

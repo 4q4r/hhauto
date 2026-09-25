@@ -51,7 +51,7 @@ func (db *DB) resumeCloneCreatedAt(ctx context.Context, hash string) (time.Time,
 // ResumeClonesGet returns nil (no error) when the hash is not a tracked clone.
 func (db *DB) ResumeClonesGet(ctx context.Context, cloneHash string) (*ResumeClone, error) {
 	rs := db.conn.QueryRowContext(ctx, `
-		SELECT clone_hash, parent_hash, depth, account_id, created_at
+		SELECT clone_hash, parent_hash, depth, account_id, created_at, improve_diff
 		FROM resume_clones WHERE clone_hash = ?`, cloneHash)
 	c, err := scanResumeClone(rs)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -63,10 +63,26 @@ func (db *DB) ResumeClonesGet(ctx context.Context, cloneHash string) (*ResumeClo
 	return c, nil
 }
 
+// ResumeClonesSetImproveDiff records the improve audit artifact for one
+// clone (T29). The lineage row must exist.
+func (db *DB) ResumeClonesSetImproveDiff(ctx context.Context, cloneHash, diffJSON string) error {
+	db.writeMu.Lock()
+	defer db.writeMu.Unlock()
+	res, err := db.conn.ExecContext(ctx, `
+		UPDATE resume_clones SET improve_diff = ? WHERE clone_hash = ?`, diffJSON, cloneHash)
+	if err != nil {
+		return fmt.Errorf("store: ResumeClonesSetImproveDiff: %w", err)
+	}
+	if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
+		return fmt.Errorf("store: ResumeClonesSetImproveDiff: clone %q is not tracked", cloneHash)
+	}
+	return nil
+}
+
 // ResumeClonesListByAccount returns the account's tracked clones (insert order).
 func (db *DB) ResumeClonesListByAccount(ctx context.Context, accountID string) ([]ResumeClone, error) {
 	rows, err := db.conn.QueryContext(ctx, `
-		SELECT clone_hash, parent_hash, depth, account_id, created_at
+		SELECT clone_hash, parent_hash, depth, account_id, created_at, improve_diff
 		FROM resume_clones WHERE account_id = ? ORDER BY rowid`, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("store: ResumeClonesListByAccount: %w", err)
@@ -99,13 +115,14 @@ func (db *DB) ResumeClonesCountChildren(ctx context.Context, accountID, parentHa
 
 func scanResumeClone(rs rowScanner) (*ResumeClone, error) {
 	var c ResumeClone
-	var created sql.NullString
-	if err := rs.Scan(&c.CloneHash, &c.ParentHash, &c.Depth, &c.AccountID, &created); err != nil {
+	var created, diff sql.NullString
+	if err := rs.Scan(&c.CloneHash, &c.ParentHash, &c.Depth, &c.AccountID, &created, &diff); err != nil {
 		return nil, err
 	}
 	var err error
 	if c.CreatedAt, err = timeFromNull(created); err != nil {
 		return nil, err
 	}
+	c.ImproveDiff = diff.String
 	return &c, nil
 }

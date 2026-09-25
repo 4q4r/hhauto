@@ -158,7 +158,14 @@ func TestCloneResumeEndpointOverride(t *testing.T) {
 	env.serveBuilderSurface("h4sh1", true)
 	env.cloneBuilderState = builderStateFixture("0verr1de", "modified", "DevOps-инженер Test", true)
 	cfg := env.endpoints()
-	cfg.Override = map[string]string{"resume_clone": env.srv1.URL + "/custom/clone"}
+	// T29: resume_update joins clone_resumes on the external BFF host, so
+	// the override map keeps the harness pin while adding the custom clone
+	// endpoint.
+	cfg.Override = map[string]string{
+		"resume_clone_resumes": env.endpoints().Override["resume_clone_resumes"],
+		"resume_update":        env.endpoints().Override["resume_update"],
+		"resume_clone":         env.srv1.URL + "/custom/clone",
+	}
 	c, err := NewClient(env.account(), cfg, nil, nil)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

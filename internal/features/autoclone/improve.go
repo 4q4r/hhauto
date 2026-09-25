@@ -1,0 +1,432 @@
+package autoclone
+
+// The T29 improve pipeline: plan (per-field AI proposals on the clone's
+// facts) → apply (one builder update POST with the whole mutated split,
+// per-field retry ≤1) → artifact (было/стало per field, stored on the
+// lineage row). The invariants live here: only tracked clones are ever
+// mutated (ErrNotClone otherwise), needs_human/always_ask verdicts park
+// for review instead of applying, dry-run plans without posting.
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	"hhauto/internal/ai"
+	"hhauto/internal/config"
+	"hhauto/internal/hhapi"
+	"hhauto/internal/review"
+	"hhauto/internal/store"
+)
+
+// ErrNotClone guards the base-resume invariant: the hash is not a tracked
+// clone of the given parent, so it is never mutated.
+var ErrNotClone = errors.New("autoclone: target is not a tracked clone (base resumes are never mutated)")
+
+// Field diff statuses (DiffArtifact.Fields[].Status).
+const (
+	StatusImproved         = "improved"
+	StatusUnchanged        = "unchanged"
+	StatusNeedsHuman       = "needs_human"
+	StatusAlwaysAsk        = "always_ask"
+	StatusValidationFailed = "validation_failed"
+	StatusError            = "error"
+	StatusSkipped          = "skipped"
+)
+
+// Review kinds the improver parks for human attention.
+const (
+	ReviewKindImproveNeedsHuman = "autoclone_improve_needs_human"
+	ReviewKindImproveAlwaysAsk  = "autoclone_improve_always_ask"
+)
+
+// FieldDiff is the было/стало audit record of one field target.
+type FieldDiff struct {
+	Field    string          `json:"field"`               // spec id ("title", "experience_description", ...)
+	Locator  string          `json:"locator"`             // concrete payload path ("resume.title", "profile.experience.0.description")
+	Status   string          `json:"status"`              // improved | unchanged | needs_human | always_ask | validation_failed | error | skipped
+	Before   json.RawMessage `json:"before,omitempty"`    // current value (unwrapped scalar)
+	After    json.RawMessage `json:"after,omitempty"`     // proposed value (applied or review-pending)
+	Reason   string          `json:"reason,omitempty"`    // skip/failure reason
+	ReviewID int64           `json:"review_id,omitempty"` // parked review item
+}
+
+// DiffArtifact is the whole-improvement audit artifact (schema-versioned;
+// stored on the clone's lineage row and returned to the caller for logs).
+type DiffArtifact struct {
+	Schema     string      `json:"schema"`
+	CloneHash  string      `json:"clone_hash"`
+	ParentHash string      `json:"parent_hash"`
+	CreatedAt  time.Time   `json:"created_at"`
+	DryRun     bool        `json:"dry_run"`
+	Applied    bool        `json:"applied"`
+	Fields     []FieldDiff `json:"fields"`
+}
+
+// artifactSchemaV1 pins the diff artifact shape consumers parse.
+const artifactSchemaV1 = "hhauto.improve-diff/v1"
+
+// Options wires the improver.
+type Options struct {
+	API      hhapi.ResumeContentEditor // content read/update surface
+	Runner   ai.FieldPromptRunner      // AI gateway (required when enabled)
+	DB       *store.DB                 // lineage invariant + diff persistence
+	Review   review.Reviewer           // review parking (optional in tests)
+	Registry *PromptRegistry           // per-field prompts
+	Cfg      config.AutoCloneImprove
+	DryRun   bool
+	Now      func() time.Time
+	Log      *slog.Logger
+}
+
+// pending is one planned mutation awaiting the apply step.
+type pending struct {
+	spec    FieldSpec
+	item    int
+	locator string
+	value   json.RawMessage
+}
+
+// Improver improves one fresh clone per call.
+type Improver struct {
+	opt Options
+}
+
+// New validates the wiring (fail fast — a broken improve section must stop
+// the process, not degrade into skipped fields at clone time).
+func New(o Options) (*Improver, error) {
+	if !o.Cfg.Enabled {
+		return nil, errors.New("autoclone: improve is disabled")
+	}
+	if o.API == nil {
+		return nil, errors.New("autoclone: improve requires the resume content editor")
+	}
+	if o.Runner == nil {
+		return nil, errors.New("autoclone: improve requires the AI runner")
+	}
+	if o.DB == nil {
+		return nil, errors.New("autoclone: improve requires the store (lineage invariant)")
+	}
+	if o.Registry == nil {
+		return nil, errors.New("autoclone: improve requires the prompt registry")
+	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
+	if o.Log == nil {
+		o.Log = slog.Default()
+	}
+	return &Improver{opt: o}, nil
+}
+
+// ImproveClone runs the improve flow for one verified clone. Per-field
+// failures (AI error, needs_human, validation) degrade to skipped fields
+// recorded in the artifact; only invariant/read failures return an error.
+func (im *Improver) ImproveClone(ctx context.Context, accountID, parentHash, cloneHash string) (*DiffArtifact, error) {
+	if err := im.requireCloneLineage(ctx, accountID, parentHash, cloneHash); err != nil {
+		return nil, err
+	}
+	live, err := im.opt.API.ResumeContent(ctx, cloneHash)
+	if err != nil {
+		return nil, fmt.Errorf("autoclone: live content: %w", err)
+	}
+
+	artifact := &DiffArtifact{
+		Schema:     artifactSchemaV1,
+		CloneHash:  cloneHash,
+		ParentHash: parentHash,
+		CreatedAt:  im.opt.Now().UTC(),
+		DryRun:     im.opt.DryRun,
+	}
+	mutated := live.Clone()
+	pendings := im.planFields(ctx, accountID, cloneHash, live, mutated, artifact)
+	if im.opt.DryRun || len(pendings) == 0 {
+		im.persist(ctx, cloneHash, artifact)
+		return artifact, nil
+	}
+
+	im.applyPending(ctx, cloneHash, live, mutated, pendings, artifact)
+	artifact.Applied = artifactHasStatus(artifact, StatusImproved)
+	im.persist(ctx, cloneHash, artifact)
+	return artifact, nil
+}
+
+// requireCloneLineage enforces the base-resume invariant: only a tracked
+// clone of THIS parent for THIS account is ever mutated.
+func (im *Improver) requireCloneLineage(ctx context.Context, accountID, parentHash, cloneHash string) error {
+	row, err := im.opt.DB.ResumeClonesGet(ctx, cloneHash)
+	if err != nil {
+		return fmt.Errorf("autoclone: lineage lookup: %w", err)
+	}
+	if row == nil || row.ParentHash != parentHash || row.AccountID != accountID {
+		return fmt.Errorf("%w: hash %q (parent %q, account %q)", ErrNotClone, cloneHash, parentHash, accountID)
+	}
+	return nil
+}
+
+// planFields runs one AI call per field target (experience fields expand
+// per item) and writes accepted values into mutated. It returns the
+// mutations awaiting the apply step.
+func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
+	live, mutated *hhapi.ResumeContent, artifact *DiffArtifact) []pending {
+	var pendings []pending
+	for _, id := range im.opt.Cfg.Fields {
+		spec, ok := Spec(id)
+		if !ok || im.opt.Registry.Prompt(id) == "" {
+			continue // not promptable — nothing to plan
+		}
+		for _, tg := range expandTargets(spec, live) {
+			diff := FieldDiff{Field: id, Locator: tg.locator, Before: tg.current}
+			if isEmptyValue(tg.current) {
+				diff.Status = StatusSkipped
+				diff.Reason = "empty current value: nothing to ground the improvement on"
+				artifact.Fields = append(artifact.Fields, diff)
+				continue
+			}
+			proposed, status, reason, reviewID := im.propose(ctx, accountID, cloneHash, spec, tg, live)
+			diff.Status, diff.Reason, diff.ReviewID = status, reason, reviewID
+			if proposed != nil {
+				diff.After = displayValue(spec, proposed)
+			}
+			if status == StatusImproved {
+				if werr := writeValue(spec, mutated, tg.item, proposed); werr != nil {
+					diff.Status, diff.Reason = StatusError, werr.Error()
+				} else {
+					pendings = append(pendings, pending{spec: spec, item: tg.item, locator: tg.locator, value: proposed})
+				}
+			}
+			// always_ask proposals park for review; nothing applies.
+			artifact.Fields = append(artifact.Fields, diff)
+		}
+	}
+	return pendings
+}
+
+// applyPending posts the mutated split and runs the per-field retry: hh
+// validates field by field, so the non-named fields land on a rejected
+// POST; each named field gets exactly one retry with a deterministic fix,
+// then it is skipped (and rolled back in the payload).
+func (im *Improver) applyPending(ctx context.Context, cloneHash string,
+	live, payload *hhapi.ResumeContent, pendings []pending, artifact *DiffArtifact) {
+	err := im.opt.API.UpdateResumeContent(ctx, cloneHash, payload, affectedScreens(im.opt.Cfg.Fields, payload))
+	if err == nil {
+		return
+	}
+	var ve *hhapi.ResumeUpdateValidationError
+	if !errors.As(err, &ve) {
+		// Transport-level failure: nothing is verified; park everything.
+		for i := range artifact.Fields {
+			if artifact.Fields[i].Status == StatusImproved {
+				artifact.Fields[i].Status = StatusError
+				artifact.Fields[i].Reason = err.Error()
+			}
+		}
+		return
+	}
+	retry := im.retryRejectedFields(ctx, cloneHash, live, payload, pendings, ve.Codes, artifact)
+	if len(retry) == 0 {
+		return
+	}
+	if rerr := im.opt.API.UpdateResumeContent(ctx, cloneHash, payload, affectedScreens(im.opt.Cfg.Fields, payload)); rerr != nil {
+		im.settleRetryOutcome(artifact, retry, rerr)
+	}
+}
+
+// retryRejectedFields handles the first validation verdict: fixes the
+// named fields once (rollback otherwise) and returns the retry set.
+func (im *Improver) retryRejectedFields(ctx context.Context, cloneHash string,
+	live, payload *hhapi.ResumeContent, pendings []pending, codes []string, artifact *DiffArtifact) []pending {
+	retriable := map[string]bool{}
+	for _, code := range codes {
+		key := code
+		if i := strings.IndexByte(code, ':'); i >= 0 {
+			key = code[:i]
+		}
+		for _, p := range pendings {
+			if p.spec.Key == key {
+				retriable[p.locator] = true
+			}
+		}
+	}
+	var retry []pending
+	for _, p := range pendings {
+		i := locateField(artifact, p.locator)
+		if !retriable[p.locator] {
+			continue // landed fine (hh rejected other fields)
+		}
+		fixed, ok := fixValidationValue(&p.spec, live, p.value, codes)
+		if ok {
+			if werr := writeValue(p.spec, payload, p.item, fixed); werr == nil {
+				p.value = fixed
+				retry = append(retry, p)
+				artifact.Fields[i].After = displayValue(p.spec, fixed)
+				continue
+			}
+		}
+		artifact.Fields[i].Status = StatusValidationFailed
+		artifact.Fields[i].Reason = strings.Join(codes, ",")
+		// The rejected value never landed: roll the payload back to the
+		// live value for this field so the retry POST is exact.
+		if orig := restoreRaw(live, p); orig != nil {
+			if werr := writeValue(p.spec, payload, p.item, orig); werr != nil {
+				im.opt.Log.Warn("autoclone: rollback write failed", "locator", p.locator, "err", werr)
+			}
+		}
+	}
+	_ = ctx
+	_ = cloneHash
+	return retry
+}
+
+// settleRetryOutcome marks the retried fields by the outcome of the
+// second POST.
+func (im *Improver) settleRetryOutcome(artifact *DiffArtifact, retry []pending, err error) {
+	var rve *hhapi.ResumeUpdateValidationError
+	if errors.As(err, &rve) {
+		for _, p := range retry {
+			i := locateField(artifact, p.locator)
+			artifact.Fields[i].Status = StatusValidationFailed
+			artifact.Fields[i].Reason = strings.Join(rve.Codes, ",")
+		}
+		return
+	}
+	for _, p := range retry {
+		i := locateField(artifact, p.locator)
+		artifact.Fields[i].Status = StatusError
+		artifact.Fields[i].Reason = err.Error()
+	}
+}
+
+// propose asks the AI for one field target's new value and returns the
+// validated payload value (nil when nothing may apply).
+func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, spec FieldSpec, tg target, live *hhapi.ResumeContent) (value json.RawMessage, status, reason string, reviewID int64) {
+	verdict, _, err := im.opt.Runner.RunWithSystem(ctx, accountID, "resume", cloneHash, "",
+		ai.TaskResumeImprove, im.opt.Registry.Prompt(spec.ID), ai.ImproveInput{
+			Field:        spec.ID,
+			FieldLabel:   spec.Label,
+			CurrentValue: tg.current,
+			TrustedFacts: factsFor(spec, live, tg.item),
+		})
+	if err != nil {
+		return nil, StatusError, err.Error(), 0
+	}
+	out, ok := decodeImproveVerdict(verdict)
+	if !ok {
+		return nil, StatusError, "decode verdict failed", 0
+	}
+	if out.NeedsHuman {
+		id := im.parkReview(ctx, accountID, ReviewKindImproveNeedsHuman,
+			"improve verdict needs human: "+out.Reason, cloneHash, spec.ID, tg.current)
+		return nil, StatusNeedsHuman, out.Reason, id
+	}
+	if out.Unchanged {
+		return nil, StatusUnchanged, "", 0
+	}
+	proposed, err := slotValue(spec, verdict)
+	if err != nil {
+		return nil, StatusError, err.Error(), 0
+	}
+	validated, verr := ValidateValueAt(spec, live, tg.item, proposed)
+	if verr != nil {
+		return nil, StatusValidationFailed, verr.Error(), 0
+	}
+	if rawEqualT(validated, tg.raw) {
+		return nil, StatusUnchanged, "", 0
+	}
+	// always_ask: the value is good but a human approves it first.
+	for _, f := range im.opt.Cfg.AlwaysAsk {
+		if f == spec.ID {
+			id := im.parkReview(ctx, accountID, ReviewKindImproveAlwaysAsk,
+				"improved "+spec.Label+" waits for owner approval", cloneHash, spec.ID, validated)
+			return validated, StatusAlwaysAsk, "", id
+		}
+	}
+	return validated, StatusImproved, "", 0
+}
+
+// parkReview records one review item (best effort: a broken reviewer must
+// not flip the field's status — the artifact already says needs_human /
+// always_ask).
+func (im *Improver) parkReview(ctx context.Context, accountID, kind, reason, cloneHash, field string, value json.RawMessage) int64 {
+	if im.opt.Review == nil {
+		return 0
+	}
+	id, err := im.opt.Review.Add(ctx, accountID, kind, reason, reviewPayload(cloneHash, field, value))
+	if err != nil {
+		im.opt.Log.Warn("autoclone: review parking failed", "field", field, "err", err)
+		return 0
+	}
+	return id
+}
+
+// persist stores the artifact on the lineage row (best effort — an audit
+// write failure is logged loudly but does not fail an applied improvement).
+func (im *Improver) persist(ctx context.Context, cloneHash string, artifact *DiffArtifact) {
+	b, err := json.Marshal(artifact)
+	if err != nil {
+		im.opt.Log.Error("autoclone: encode improve diff", "clone", cloneHash, "err", err)
+		return
+	}
+	if err := im.opt.DB.ResumeClonesSetImproveDiff(ctx, cloneHash, string(b)); err != nil {
+		im.opt.Log.Error("autoclone: persist improve diff", "clone", cloneHash, "err", err)
+	}
+}
+
+// improveVerdictShape is the verdict projection the planner consumes.
+type improveVerdictShape struct {
+	NeedsHuman bool   `json:"needs_human"`
+	Reason     string `json:"needs_human_reason"`
+	Unchanged  bool   `json:"unchanged"`
+}
+
+func decodeImproveVerdict(verdict json.RawMessage) (improveVerdictShape, bool) {
+	var out improveVerdictShape
+	if err := json.Unmarshal(verdict, &out); err != nil {
+		return out, false
+	}
+	return out, true
+}
+
+func reviewPayload(cloneHash, field string, value json.RawMessage) string {
+	b, _ := json.Marshal(map[string]any{"clone": cloneHash, "field": field, "proposed": value})
+	return string(b)
+}
+
+func locateField(a *DiffArtifact, locator string) int {
+	for i := range a.Fields {
+		if a.Fields[i].Locator == locator {
+			return i
+		}
+	}
+	return -1
+}
+
+func artifactHasStatus(a *DiffArtifact, status string) bool {
+	for i := range a.Fields {
+		if a.Fields[i].Status == status {
+			return true
+		}
+	}
+	return false
+}
+
+func isEmptyValue(raw json.RawMessage) bool {
+	return len(raw) == 0 || string(raw) == "null" || string(raw) == `""` || string(raw) == `[]`
+}
+
+func rawEqualT(a, b json.RawMessage) bool {
+	var av, bv any
+	if err := json.Unmarshal(a, &av); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &bv); err != nil {
+		return false
+	}
+	ab, _ := json.Marshal(av)
+	bb, _ := json.Marshal(bv)
+	return string(ab) == string(bb)
+}

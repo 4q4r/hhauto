@@ -65,6 +65,12 @@ type applyEnv struct {
 	cloneSawToken bool                                     // at least one clone POST carried X-XSRFToken
 	cloneFail     func(call int) (status int, body string) // scripted clone failure
 
+	// T29 resume-management counters (clone_original_action probes).
+	hidePosts    int
+	deletePosts  int
+	hideBodies   []string // hashes passed to visibility/hide
+	deleteBodies []string // hashes passed to delete
+
 	// T27 full-clone surface: builder states served by
 	// GET /profile/shards/resume/get_by_hash (mutable; a successful update
 	// flips the clone state to complete) and the scriptable update endpoint.
@@ -163,6 +169,32 @@ func newApplyEnv(t *testing.T) *applyEnv {
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = io.WriteString(w, body)
+	})
+	mux.HandleFunc("POST /profile/shards/resume/visibility/hide", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Hash string `json:"hash"`
+		}
+		_ = json.Unmarshal(body, &req)
+		e.mu.Lock()
+		e.hidePosts++
+		e.hideBodies = append(e.hideBodies, req.Hash)
+		e.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = io.WriteString(w, `null`)
+	})
+	mux.HandleFunc("POST /profile/shards/resume/delete", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Hash string `json:"hash"`
+		}
+		_ = json.Unmarshal(body, &req)
+		e.mu.Lock()
+		e.deletePosts++
+		e.deleteBodies = append(e.deleteBodies, req.Hash)
+		e.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = io.WriteString(w, `{"url":"/applicant/resumes"}`)
 	})
 	mux.HandleFunc("POST /profile/shards/resume/update", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -314,7 +346,15 @@ func newApplyEnv(t *testing.T) *applyEnv {
 
 	c, err := hhapi.NewClient(
 		config.Account{DisplayName: "acc1", UserAgent: "test-ua/1.0", RPS: 50},
-		config.APIEndpoints{Site: e.srv.URL, Chatik: e.srv.URL, SearchPage: e.srv.URL + "/search/vacancy"},
+		config.APIEndpoints{
+			Site: e.srv.URL, Chatik: e.srv.URL, SearchPage: e.srv.URL + "/search/vacancy",
+			Override: map[string]string{
+				// T29: the editor POST endpoints default to the external
+				// resume-profile-front host — pin them to the fake.
+				"resume_clone_resumes": e.srv.URL + "/profile/shards/resume/clone_resumes",
+				"resume_update":        e.srv.URL + "/profile/shards/resume/update",
+			},
+		},
 		nil, nil,
 	)
 	if err != nil {

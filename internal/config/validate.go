@@ -40,11 +40,20 @@ func Validate(c *Config) error {
 	return validateRuns(c)
 }
 
-// validateAutoClone checks the [features.autoclone] section (T26).
+// validateAutoClone checks the [features.autoclone] section (T26) plus the
+// clone_original_action and improve sub-sections (T29).
 func validateAutoClone(c *Config) error {
 	ac := c.Features.AutoClone
 	if !ac.Enabled {
 		return nil
+	}
+	switch ac.CloneOriginalAction {
+	case "", CloneActionKeep, CloneActionHide, CloneActionDelete:
+	default:
+		return fmt.Errorf("features.autoclone.clone_original_action %q: must be one of keep | hide | delete", ac.CloneOriginalAction)
+	}
+	if err := validateAutoCloneImprove(&ac.Improve); err != nil {
+		return err
 	}
 	switch ac.ReapplyMode {
 	case ReapplyAll, ReapplyNewOnly, ReapplySkipRecentRejections:
@@ -76,6 +85,47 @@ func validateAutoClone(c *Config) error {
 	}
 	if ov.MaxPerDay < 0 {
 		return fmt.Errorf("features.autoclone.run_override.max_per_day: negative values are not allowed (got %d)", ov.MaxPerDay)
+	}
+	return nil
+}
+
+// validateAutoCloneImprove checks the [features.autoclone.improve] section
+// (T29). Only an enabled section is validated — a disabled one may stay
+// half-filled. The field vocabulary itself (known ids, date fields needing
+// an explicit prompt) is enforced by the autoclone feature at wiring time:
+// config stays free of feature imports.
+func validateAutoCloneImprove(im *AutoCloneImprove) error {
+	if !im.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(im.ModelProfile) == "" {
+		return fmt.Errorf("features.autoclone.improve.model_profile: required when improve.enabled=true")
+	}
+	if len(im.Fields) == 0 {
+		return fmt.Errorf("features.autoclone.improve.fields: required when improve.enabled=true (which fields to improve)")
+	}
+	seen := map[string]bool{}
+	for _, f := range im.Fields {
+		if strings.TrimSpace(f) == "" {
+			return fmt.Errorf("features.autoclone.improve.fields: empty field id")
+		}
+		if seen[f] {
+			return fmt.Errorf("features.autoclone.improve.fields: duplicate field %q", f)
+		}
+		seen[f] = true
+	}
+	for _, f := range im.AlwaysAsk {
+		if !seen[f] {
+			return fmt.Errorf("features.autoclone.improve.always_ask %q: must be listed in improve.fields", f)
+		}
+	}
+	for field, p := range im.Prompts {
+		if !seen[field] {
+			return fmt.Errorf("features.autoclone.improve.prompts[%q]: field is not in improve.fields", field)
+		}
+		if p.PromptInline != "" && p.PromptFile != "" {
+			return fmt.Errorf("features.autoclone.improve.prompts[%q]: inline and file are mutually exclusive", field)
+		}
 	}
 	return nil
 }
