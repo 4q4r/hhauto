@@ -61,6 +61,13 @@ type Options struct {
 	Stopped func(ctx context.Context) bool
 	Now     func() time.Time
 	Log     *slog.Logger
+
+	// T26 autoclone test/ops knobs (production values derive from config):
+	// ClonePollInterval is the not_finished poll step (default 20s,
+	// GET-only); CloneFinishTimeout overrides the config
+	// finish_timeout_min-derived budget when positive.
+	ClonePollInterval  time.Duration
+	CloneFinishTimeout time.Duration
 }
 
 // RunPayload is the typed queue payload for KindApply run tasks.
@@ -209,39 +216,7 @@ func (f *Feature) RunProfile(ctx context.Context, runID string) error {
 	if err != nil {
 		return fmt.Errorf("multiapply: profile for %s: %w", accountID, err)
 	}
-
-	vacancies, err := f.collect(ctx, run, api, resumeHash)
-	if err != nil {
-		f.incr(ctx, "apply.error")
-		return fmt.Errorf("multiapply: collect for %s: %w", runID, err)
-	}
-	if cfg.Features.MultiApply.PrioritizeOnlineHR {
-		vacancies = prioritizeOnline(vacancies)
-	}
-
-	batch := map[int64]bool{}
-	for _, v := range vacancies {
-		if f.opt.Stopped != nil && f.opt.Stopped(ctx) {
-			// Kill switch: the vacancy processed last has fully settled
-			// (its intents are closed); the rest of the batch is not
-			// started. The engine shuts down gracefully around this.
-			f.log.Info("multiapply: kill switch tripped — stopping the vacancy batch",
-				"run", runID, "account", accountID)
-			return nil
-		}
-		stop, skip := f.processVacancy(ctx, runID, run, accountID, api, prof, resumeHash, v, batch)
-		switch {
-		case stop != "":
-			f.incr(ctx, "apply.stop."+stop)
-			if stop != stopLoggedOut { // a logged-out account needs a human, not a tomorrow retry
-				f.queueTomorrow(ctx, accountID, runID)
-			}
-			return nil
-		case skip != "":
-			f.incr(ctx, "apply.skip."+skip)
-		}
-	}
-	return nil
+	return f.executeRun(ctx, runID, run, accountID, api, prof, resumeHash, nil, 0)
 }
 
 // stopLoggedOut marks a profile stop that must not be rescheduled.

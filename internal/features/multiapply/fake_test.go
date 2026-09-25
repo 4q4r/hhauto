@@ -52,6 +52,15 @@ type applyEnv struct {
 	ratingErr   map[int64]error
 	ratingReqs  map[int64]int
 	popupReqs   map[int64]int
+
+	// T26 autoclone surface: mutable mine shard + scripted clone endpoint.
+	resumeShard   []string                                 // resume JSON blocks served by GET /shards/applicant/resumes
+	cloneNext     int                                      // issued clone serial (clone1, clone2, …)
+	clonePosts    int                                      // total clone POST attempts (success or not)
+	cloneStatus   string                                   // status stamped on auto-sharded clones (default published)
+	cloneAuto     bool                                     // auto-append created clones to resumeShard (default true)
+	cloneSawToken bool                                     // at least one clone POST carried X-XSRFToken
+	cloneFail     func(call int) (status int, body string) // scripted clone failure
 }
 
 func newApplyEnv(t *testing.T) *applyEnv {
@@ -71,6 +80,7 @@ func newApplyEnv(t *testing.T) *applyEnv {
 		ratingReqs:  map[int64]int{},
 		popupReqs:   map[int64]int{},
 		searchFound: 1,
+		cloneAuto:   true,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /applicant/settings", func(w http.ResponseWriter, _ *http.Request) {
@@ -79,7 +89,47 @@ func newApplyEnv(t *testing.T) *applyEnv {
 	})
 	mux.HandleFunc("GET /shards/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: "tok_test", Path: "/"})
-		_, _ = io.WriteString(w, `{"resumes":[]}`)
+		e.mu.Lock()
+		items := append([]string(nil), e.resumeShard...)
+		e.mu.Unlock()
+		_, _ = io.WriteString(w, `{"resumes":[`+strings.Join(items, ",")+`]}`)
+	})
+	mux.HandleFunc("POST /applicant/resumes/clone", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(body), `"resumeId"`) {
+			t.Errorf("clone request body %q carries no resumeId", body)
+		}
+		// hh rejects a tokenless mutation with a 403 xsrf signature; the
+		// client must refresh once and retry with X-XSRFToken.
+		if r.Header.Get("X-XSRFToken") == "" {
+			http.Error(w, `{"error":"xsrf token required"}`, http.StatusForbidden)
+			return
+		}
+		e.mu.Lock()
+		e.cloneSawToken = true
+		e.clonePosts++
+		call := e.cloneNext + 1
+		fn := e.cloneFail
+		e.mu.Unlock()
+		if fn != nil {
+			if status, b := fn(call); status != 0 {
+				http.Error(w, b, status)
+				return
+			}
+		}
+		e.mu.Lock()
+		e.cloneNext = call
+		hash := fmt.Sprintf("clone%d", call)
+		status := e.cloneStatus
+		if status == "" {
+			status = "published"
+		}
+		if e.cloneAuto {
+			e.resumeShard = append(e.resumeShard, fmt.Sprintf(
+				`{"_attributes":{"hash":%q,"status":%q,"isSearchable":true,"updated":1758700000000}}`, hash, status))
+		}
+		e.mu.Unlock()
+		_, _ = io.WriteString(w, fmt.Sprintf(`{"url":"/profile/resume/?resume=%s"}`, hash))
 	})
 	mux.HandleFunc("GET /applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
 		e.mu.Lock()

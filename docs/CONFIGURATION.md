@@ -127,6 +127,18 @@
 # exclude_agencies_default = true
 # prioritize_online_hr = true
 # dedup_native_autoresponse = true
+[features.autoclone]                    # T26: автоклонирование резюме (hh не отдаёт parentResumeId — lineage хранится локально)
+# enabled = false
+# max_clones_per_resume = 2             # прямых клонов на одно резюме
+# max_clone_depth = 1                   # глубина цепочек клон-от-клона (1 = без цепочек)
+# autolift = true                       # поднимать клоны вместе с базовыми резюме (auto_lift)
+# reapply_mode = "new_only"             # all | new_only | skip_recent_rejections
+# skip_rejection_days = 30              # окно свежести отказов для skip_recent_rejections
+# finish_timeout_min = 10               # клон висит в not_finished дольше → review + стоп клонов аккаунта
+# [features.autoclone.run_override]     # точечные override неявного клона-рана (остальное наследует родительский ран)
+# max_per_day = 5
+# letter_mode = "template_ai"
+# letter_template = ""
 [features.testsolve]
 # enabled = false                       # WF5: external forms, draft_only
 # mode = "draft_only"                   # headless requires Chrome in PATH
@@ -176,6 +188,7 @@
 # max_per_day = 30
 # min_match_percent = 60
 # letter_template = ""                  # static fallback when the AI is off
+# letter_mode = "ai_company"            # template | template_ai | ai_company (T26; template* требуют letter_template)
 # [[runs.backend-go.windows]]
 # tz = "Europe/Moscow"
 # time = ["09:00", "14:00"]
@@ -305,6 +318,18 @@ UA и заголовки, `rps` и `concurrency` — локальные лими
 - `auto_lift`: `per_day = 6`, `jitter = "20-40m"`, уважение серверного 4ч-таймера;
 - `multiapply`: `ai_filter`, порог `min_match_percent`, исключение агентств,
   приоритизация онлайн-HR, дедуп с нативным автоответчиком hh;
+- `autoclone` (T26): когда пул вакансий рана исчерпан (всё подходящее уже
+  в откликах lineage), создаётся клон резюме (`CloneResume`, живой контракт
+  2026-09-25) и запускается неявный ран с унаследованным конфигом. Гейты:
+  `max_clones_per_resume` (прямые потомки), `max_clone_depth`,
+  `reapply_mode` (`all` — всё заново; `new_only` — только нетронутые
+  lineage; `skip_recent_rejections` — кроме отклонённых за
+  `skip_rejection_days` по chats.state+last_message_at). Упор в лимит hh
+  или клон, застрявший в `not_finished` дольше `finish_timeout_min` →
+  review + стоп клонов аккаунта; `dry_run` проходит весь тракт без мутаций.
+  В `runs.*` — `letter_mode`: `template` (только шаблон), `template_ai`
+  (шаблон как база + ИИ-полировка, фолбэк — сырой шаблон), `ai_company`
+  (ИИ под компанию, по умолчанию);
 - `testsolve`: `mode = "draft_only"` (headless требует Chrome в PATH),
   `submit_policy = "human"`;
 - `chatops`: `auto_reply_enabled`, порог уверенности отказа,

@@ -160,6 +160,7 @@ type AIPricing struct {
 type Features struct {
 	AutoLift         AutoLift        `toml:"auto_lift"`
 	MultiApply       MultiApply      `toml:"multiapply"`
+	AutoClone        AutoClone       `toml:"autoclone"`
 	TestSolve        TestSolve       `toml:"testsolve"`
 	ChatOps          ChatOps         `toml:"chatops"`
 	Interview        InterviewDetect `toml:"interview"`
@@ -168,6 +169,65 @@ type Features struct {
 	Relevance        Relevance       `toml:"relevance"`
 	ResumeVisibility bool            `toml:"resume_visibility"`
 	WebsocketPush    bool            `toml:"websocket_push"`
+}
+
+// Cover-letter mode vocabulary for runs[].letter_mode (T26 owner decision #6).
+const (
+	// LetterModeTemplate sends the run's static template verbatim (no AI).
+	LetterModeTemplate = "template"
+	// LetterModeTemplateAI polishes the template with the AI (template as the
+	// mandatory base); falls back to the raw template when the AI is down.
+	LetterModeTemplateAI = "template_ai"
+	// LetterModeAICompany is the pre-T26 behavior: the AI composes the letter
+	// for the company/vacancy; the template (if set) is context + fallback.
+	LetterModeAICompany = "ai_company"
+)
+
+// Reapply-mode vocabulary for [features.autoclone].reapply_mode (T26 owner
+// decision #1): which vacancies a clone run may (re)apply to.
+const (
+	// ReapplyAll: everything the source returns (static filters still gate).
+	ReapplyAll = "all"
+	// ReapplyNewOnly: only vacancies no lineage resume has applied to.
+	ReapplyNewOnly = "new_only"
+	// ReapplySkipRecentRejections: everything except vacancies a lineage
+	// resume was rejected from within skip_rejection_days.
+	ReapplySkipRecentRejections = "skip_recent_rejections"
+)
+
+// AutoClone configures the resume autoclone loop (T26): when a run's vacancy
+// pool is exhausted (everything suitable is already applied by the resume
+// lineage), a bounded number of clones is created and used for the next
+// passes. Lineage is tracked locally (hh exposes no parentResumeId).
+type AutoClone struct {
+	Enabled bool `toml:"enabled"`
+	// MaxClonesPerResume bounds the direct children per lineage resume.
+	MaxClonesPerResume int `toml:"max_clones_per_resume"` // default 2
+	// MaxCloneDepth bounds clone-of-clone chains (1 = no chained clones).
+	MaxCloneDepth int `toml:"max_clone_depth"` // default 1
+	// Autolift includes clones in the autolift resume pool (default true).
+	Autolift *bool `toml:"autolift"`
+	// ReapplyMode gates which vacancies a clone run applies to.
+	ReapplyMode string `toml:"reapply_mode"` // all | new_only | skip_recent_rejections
+	// SkipRejectionDays is the rejection-recency window for
+	// skip_recent_rejections.
+	SkipRejectionDays int `toml:"skip_rejection_days"` // default 30
+	// FinishTimeoutMin bounds how long a not_finished clone may be polled
+	// before the autoclone is parked for review (hh clones start as
+	// status="not_finished"; a stuck clone needs a human).
+	FinishTimeoutMin int `toml:"finish_timeout_min"` // default 10
+	// RunOverride carries point overrides for the implicit clone run; the
+	// clone run otherwise inherits the parent run wholesale (filters, limits,
+	// letter_mode — T26 owner decision #6).
+	RunOverride RunOverride `toml:"run_override"`
+}
+
+// RunOverride replaces inherited parent-run values for the clone run; zero
+// fields inherit.
+type RunOverride struct {
+	MaxPerDay      int    `toml:"max_per_day"`
+	LetterMode     string `toml:"letter_mode"`
+	LetterTemplate string `toml:"letter_template"`
 }
 
 // AutoLift configures resume auto-raising.
@@ -274,6 +334,7 @@ type Run struct {
 	Windows           []Window         `toml:"windows"`
 	Filters           RunFilters       `toml:"filters"`
 	LetterTemplate    string           `toml:"letter_template"`
+	LetterMode        string           `toml:"letter_mode"` // template | template_ai | ai_company (default ai_company, T26)
 	AIFilterOverrides AIFilterOverride `toml:"ai_filter_overrides"`
 }
 
