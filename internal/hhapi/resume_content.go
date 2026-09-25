@@ -16,14 +16,20 @@ package hhapi
 //
 // with the header set T28 proved mandatory (Accept/Content-Type JSON,
 // X-Requested-With, X-Xsrftoken, X-hhtm* — see cloneResumesHeaders).
-// T27's bare 400s were the missing header set plus the missing
-// additionalProperties/userSkillLevels/userPrint keys, not a payload-shape
-// wall: the SPA sends the whole accumulated form on every screen save and
-// hh diffs it server-side.
-//
 // The split follows hM (module 64673): the personal fields plus experience
 // ride the profile side, the content fields stay on resume; identity
 // metadata (_attributes/_conditions) never travels.
+//
+// LIVE STATUS (2026-09-25 probe, -tags live29): hh still rejects the
+// update POST off-browser with a bare pre-app 400 for every body variant
+// (exact SPA reconstruction, wizard-correct screen ids from the live
+// state, live additionalProperties shape, minimal diffs, primed ddg
+// cookies, Chrome UA) — and the site-host route answers the 405 edge fake.
+// The same wall covers /profile/shards/** POSTs on hh.ru (delete probe:
+// 405 Allow:GET). Only the BFF clone_resumes POST passes (T28). The
+// contract here stays the decoded truth: when the route opens (or a
+// real-browser runner executes it), the code works unchanged; until then
+// callers see the typed errors and the feature degrades per field.
 
 import (
 	"context"

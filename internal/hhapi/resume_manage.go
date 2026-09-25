@@ -13,6 +13,15 @@ package hhapi
 // host (the applicant_profile SPA has no BFF baseURL override) with the
 // ordinary XHR + xsrf discipline. hhtmSource is the analytics context of
 // the calling page; hh's own modal uses the resume-list context.
+//
+// LIVE STATUS (2026-09-25 probe, -tags live29): the same edge gate as the
+// builder update covers these routes — hide/show answered 2xx (a real
+// accept or a DDoS-Guard silent drop; the visibility flip is not
+// observable on a not_finished shell), delete answered 405 Allow:GET
+// (edge fake) or a 2xx-empty body with the shell still present. Because a
+// 2xx-empty delete is indistinguishable from a drop, DeleteResume REFUSES
+// to claim success without the {url} envelope — the caller sees an error
+// and the origin action degrades to keep (fail-safe).
 
 import (
 	"context"
