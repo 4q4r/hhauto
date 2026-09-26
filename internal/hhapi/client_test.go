@@ -33,6 +33,10 @@ type testEnv struct {
 	bodies map[string][]string // captured request bodies per route key
 	ua     string
 	rps    float64
+
+	// cloneBuilderState backs the T27 full-clone fake: the mutable
+	// get_by_hash payload served for the clone under test.
+	cloneBuilderState string
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -132,6 +136,15 @@ func (env *testEnv) endpoints() config.APIEndpoints {
 		Site:       env.srv1.URL,
 		Chatik:     env.srv1.URL,
 		SearchPage: env.srv1.URL + "/search/vacancy",
+		Override: map[string]string{
+			// T28/T29: the editor POSTs (clone_resumes, update) default to
+			// the external resume-profile-front host — tests must never
+			// reach it. Every env pins them to the test server;
+			// unregistered patterns 404, which drives the native path into
+			// its fallback branch.
+			"resume_clone_resumes": env.srv1.URL + "/profile/shards/resume/clone_resumes",
+			"resume_update":        env.srv1.URL + "/profile/shards/resume/update",
+		},
 	}
 }
 
@@ -680,7 +693,7 @@ func TestSearchVacanciesParamsAndParsing(t *testing.T) {
 		"text=%22go+backend%22", // quoting flows through from the query text
 		"area=113", "area=1",
 		"experience=between1And3", "schedule=fullDay", "employment=full",
-		"salary=150000", "currency=RUR", "label=no_agencies", "search_period=7",
+		"salary=150000", "currency=RUR", "label=not_from_agency", "search_period=7",
 		"page=2", "items_on_page=50",
 	} {
 		if !strings.Contains(gotQuery, want) {

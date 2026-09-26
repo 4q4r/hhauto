@@ -127,6 +127,34 @@
 # exclude_agencies_default = true
 # prioritize_online_hr = true
 # dedup_native_autoresponse = true
+[features.autoclone]                    # T26/T28: автоклонирование резюме (нативный hh-клон clone_resumes: hh сам копирует контент и ставит parentResumeId; lineage дублируется локально)
+# enabled = false
+# max_clones_per_resume = 2             # прямых клонов на одно резюме
+# max_clone_depth = 1                   # глубина цепочек клон-от-клона (1 = без цепочек)
+# autolift = true                       # поднимать клоны вместе с базовыми резюме (auto_lift)
+# reapply_mode = "new_only"             # all | new_only | skip_recent_rejections
+# skip_rejection_days = 30              # окно свежести отказов для skip_recent_rejections
+# finish_timeout_min = 10               # клон висит в not_finished дольше → review + стоп клонов аккаунта
+# clone_original_action = "keep"        # T29: keep | hide | delete — судьба ИСХОДНОГО резюме после успешного клона+improve (неудача/неизвестное значение → keep + WARN)
+# [features.autoclone.improve]          # T29: ИИ-улучшение полей клона (per-field промпты)
+# enabled = false
+# fields = ["title", "about", "key_skills", "salary", "experience_description"]
+                                        # словарь полей: title, about (О себе), key_skills, salary, professional_roles,
+                                        # work_schedule, employment, work_formats, experience_company, experience_position,
+                                        # experience_description (по каждому месту работы), experience_dates, education_primary/
+                                        # elementary/additional/attestation, citizenship, gender, birthday, relocation,
+                                        # work_ticket, driver_license, area, metro, language.
+                                        # ИИ-улучшаемые (builtin-промпты): title, about, key_skills, salary, experience_description.
+                                        # Даты (experience_dates) — НЕ ИИ-поле: улучшаются только с явным промптом владельца.
+# model_profile = ""                    # профиль [ai.models] для задачи resume_improve
+# always_ask = []                       # поля, улучшения которых НЕ применяются автоматически: дифф уходит в review
+# [features.autoclone.improve.prompts.title]
+# inline = "..."                        # свой промпт поля (inline | file — взаимоисключимо); без override — builtin
+# file = "prompts/title.md"
+# [features.autoclone.run_override]     # точечные override неявного клона-рана (остальное наследует родительский ран)
+# max_per_day = 5
+# letter_mode = "template_ai"
+# letter_template = ""
 [features.testsolve]
 # enabled = false                       # WF5: external forms, draft_only
 # mode = "draft_only"                   # headless requires Chrome in PATH
@@ -176,17 +204,31 @@
 # max_per_day = 30
 # min_match_percent = 60
 # letter_template = ""                  # static fallback when the AI is off
+# letter_mode = "ai_company"            # template | template_ai | ai_company (T26; template* требуют letter_template)
 # [[runs.backend-go.windows]]
 # tz = "Europe/Moscow"
 # time = ["09:00", "14:00"]
 # days = ["mon", "tue", "wed", "thu", "fri"]
 # [runs.backend-go.filters]
-# areas = ["1"]                         # Moscow
+# areas = ["1"]                         # Москва
+# professional_roles = ["160"]          # ID специализаций hh (multi)
+# metros = ["532"]                      # ID станций метро (multi)
 # experience = ["between1And3", "between3And6"]
+# schedule = ["fullDay", "remote"]
+# employment = ["full", "part"]
+# industries = ["7"]                    # ID отраслей (multi)
+# work_formats = ["REMOTE", "HYBRID"]   # REMOTE|HYBRID|ON_SITE (регистр важен)
+# salary_from = 150000
+# salary_currency = "RUR"
+# only_with_salary = true               # только вакансии с зарплатой
+# labels = ["with_salary"]              # свободные строки (multi); известные — ниже
+# part = ["evening", "weekend"]         # temp|evening|weekend (эффект live не подтверждён)
+# order_by = "publication_time_desc"    # relevance|publication_time_desc|salary_desc|salary_asc
+# search_period_days = 30
 # exclude_words = ["стажер", "intern"]
 # company_blacklist = []
 # company_whitelist = []
-# exclude_agencies = true
+# exclude_agencies = true               # label=not_from_agency
 # min_employer_rating = 0.0
 # no_reviews_policy = "allow"           # allow | skip | human
 # [runs.backend-go.ai_filter_overrides]
@@ -305,6 +347,33 @@ UA и заголовки, `rps` и `concurrency` — локальные лими
 - `auto_lift`: `per_day = 6`, `jitter = "20-40m"`, уважение серверного 4ч-таймера;
 - `multiapply`: `ai_filter`, порог `min_match_percent`, исключение агентств,
   приоритизация онлайн-HR, дедуп с нативным автоответчиком hh;
+- `autoclone` (T26): когда пул вакансий рана исчерпан (всё подходящее уже
+  в откликах lineage), создаётся клон резюме (`CloneResume`, живой контракт
+  2026-09-25) и запускается неявный ран с унаследованным конфигом. Гейты:
+  `max_clones_per_resume` (прямые потомки), `max_clone_depth`,
+  `reapply_mode` (`all` — всё заново; `new_only` — только нетронутые
+  lineage; `skip_recent_rejections` — кроме отклонённых за
+  `skip_rejection_days` по chats.state+last_message_at). Упор в лимит hh
+  или клон, застрявший в `not_finished` дольше `finish_timeout_min` →
+  review + стоп клонов аккаунта; `dry_run` проходит весь тракт без мутаций.
+  В `runs.*` — `letter_mode`: `template` (только шаблон), `template_ai`
+  (шаблон как база + ИИ-полировка, фолбэк — сырой шаблон), `ai_company`
+  (ИИ под компанию, по умолчанию);
+- `autoclone.improve` (T29): после успешного клона ИИ улучшает выбранные
+  поля клона — `title`, `about` (О себе), `key_skills`, `salary`,
+  `experience_description` (builtin-промпты на каждое поле, override через
+  `[features.autoclone.improve.prompts.<field>]`); значения grounded на
+  фактах резюме/профиля/правил — числа и даты только из источника
+  (детерминированные пост-чеки дают `needs_human` → review). Поле из
+  `always_ask` не применяется автоматически: proposed-дифф паркуется в
+  review. Применение идёт через редакторский update-эндпоинт по экранам с
+  verify-перечитыванием; ошибка валидации hh на поле → один ретрай с
+  исправлением формата → skip поля. Каждое применение пишет артефакт
+  диффа (было/стало per field) в `resume_clones.improve_diff`. Клоны
+  голые не остаются: инвариант — обновляется ТОЛЬКО hash из lineage.
+  `clone_original_action` = `keep` (дефолт) | `hide` ( visibility no_one,
+  обратимо) | `delete` — судьба ИСХОДНОГО резюме; неудавшийся/неизвестный
+  экшен → WARN + keep (fail-safe);
 - `testsolve`: `mode = "draft_only"` (headless требует Chrome в PATH),
   `submit_policy = "human"`;
 - `chatops`: `auto_reply_enabled`, порог уверенности отказа,
@@ -321,6 +390,69 @@ UA и заголовки, `rps` и `concurrency` — локальные лими
 = все события. Доставка через outbox — переживает рестарт.
 
 ### `[runs.<id>]`
+Профили мультиотклика: поисковый запрос, `search_fields = ["name" |
+"company_name" | "description"]` (пусто = все поля hh), дневные лимиты и пороги, окна (`tz`, `time[]`, `days[]`), фильтры (см. ниже)
+и шаблон письма. `resume_id = ""` — первое опубликованное резюме.
+
+#### Язык поисковых запросов hh
+
+Текст `query` передаётся на hh verbatim — доступна вся гибкость официального
+языка поисковых запросов (перечень — база знаний hh, статья «Как использовать
+язык поисковых запросов»):
+
+| Оператор | Пример | Смысл |
+| --- | --- | --- |
+| `AND` | `golang AND kubernetes` | оба слова |
+| `OR` | `дизайнер OR иллюстратор` | любое из слов |
+| `NOT` | `NOT стажёр` | исключить слово/фразу |
+| `"фраза"` | `"главный бухгалтер"` | точная фраза |
+| `!слово` | `!менеджер` | точная словоформа |
+| `"фраза"~N` | `"школа танцев"~5` | до N слов между частями фразы |
+| `*` | `менедж*` | все слова с корнем |
+| `( )` | `(дизайнер OR иллюстратор) AND ДМС` | группировка условий |
+| `NAME:` | `NAME:инженер` | искать только в названии вакансии |
+| `COMPANY_NAME:` | `COMPANY_NAME:Сбер` | только в названии компании |
+| `DESCRIPTION:` | `DESCRIPTION:"коммерческая недвижимость"` | только в описании |
+| `!ID:` | `!ID:123456789` | ID вакансии (восклицательный знак обязателен) |
+| `!COMPANY_ID:` | `!COMPANY_ID:816144` | ID компании (восклицательный знак обязателен) |
+
+Регистр имён полей (`NAME:`/`name:`) не важен. Пресетов «Точный/Обычный/
+Широкий» нет: гибкость задаётся самим запросом + списком `search_fields`
+(живые счётчики «python backend», remote+RU: name=28, description=319,
+все поля=375).
+
+#### `[runs.<id>.filters]` — нативные фильтры hh (полное покрытие)
+
+| Ключ | Param hh | Значения |
+| --- | --- | --- |
+| `areas` | `area` (multi) | ID регионов hh |
+| `professional_roles` | `professional_role` (multi) | ID специализаций (например `160` = DevOps) |
+| `metros` | `metro` (multi) | ID станций метро |
+| `experience` | `experience` (multi) | `noExperience`, `between1And3`, `between3And6`, `moreThan6` |
+| `schedule` | `schedule` (multi) | `fullDay`, `shift`, `flexible`, `remote`, `flyInFlyOut` |
+| `employment` | `employment` (multi) | `full`, `part`, `project`, `volunteer`, `probation` |
+| `industries` | `industry` (multi) | ID отраслей |
+| `work_formats` | `work_format` (multi) | `REMOTE`, `HYBRID`, `ON_SITE` — регистр важен |
+| `salary_from`, `salary_currency` | `salary`, `currency` | порог дохода + валюта |
+| `only_with_salary` | `only_with_salary` | `true` — только вакансии с зарплатой |
+| `labels` | `label` (multi, OR) | свободные строки; известные живые: `with_salary`, `with_address`, `not_from_agency`, `accept_handicapped`, `accept_kids`, `accredited_it`, `accept_labor_contract`, `night_shifts`, `low_performance`, `internship` |
+| `part` | `part` (multi) | `temp`, `evening`, `weekend` — hh принимает, фильтрующего эффекта live (2026-09-25) не подтверждено |
+| `order_by` | `order_by` | `relevance`, `publication_time_desc`, `salary_desc`, `salary_asc` |
+| `search_period_days` | `search_period` | 1 / 3 / 7 / 30 дней |
+| `exclude_words`, `exclude_in_description` | — (локальный каскад F2) | слова-исключения, название (+описание) |
+| `company_blacklist`, `company_whitelist`, `whitelist_bypass` | — (локальный каскад) | ЧС/БС компаний |
+| `exclude_agencies` | `label=not_from_agency` | без вакансий от кадровых агентств |
+| `min_employer_rating`, `rating_period`, `no_reviews_policy`, `rating_cache_hours` | — (локальный каскад WF2-F4) | рейтинг работодателя |
+
+Enum-значения `work_formats`, `part` и `order_by` валидируются на старте:
+hh молча игнорирует неизвестные значения (проверено live 2026-09-25), поэтому
+опечатка — это ошибка запуска, а не молча неполная выдача. `labels` —
+свободные строки: hh добавляет новые метки без предупреждения. Имена из
+прежних лет не работают: `no_agencies` hh игнорирует (живое имя —
+`not_from_agency`), как и `accredited_it_employer` (живое — `accredited_it`);
+`accept_temporary` эффекта не даёт. Всё, что не покрыто нативными фильтрами,
+выражается текстом `query` (язык запросов выше).
+
 Профили мультиотклика — всё из настроек автоотклика hh: поисковый запрос
 (OR/AND/NOT/кавычки/скобки), `search_fields = ["name" | "company_name" |
 "description"]` (пусто = все поля; живые счётчики для "python backend",

@@ -50,6 +50,10 @@ func applyDefaults(c *Config) {
 	for _, d := range []intDefault{
 		{&c.Storage.BusyTimeoutMS, 5000},
 		{&c.Features.AutoLift.PerDay, 6},
+		{&c.Features.AutoClone.MaxClonesPerResume, 2},
+		{&c.Features.AutoClone.MaxCloneDepth, 1},
+		{&c.Features.AutoClone.SkipRejectionDays, 30},
+		{&c.Features.AutoClone.FinishTimeoutMin, 10},
 		{&c.Review.SLADefaultHours, 24},
 		{&c.Warmup.SilenceHours, 24},
 		{&c.Warmup.MaxPings, 3},
@@ -60,8 +64,29 @@ func applyDefaults(c *Config) {
 		}
 	}
 
+	for _, d := range []stringDefault{
+		{&c.Features.AutoClone.ReapplyMode, ReapplyNewOnly},
+		{&c.Features.AutoClone.CloneOriginalAction, CloneActionKeep},
+		{&c.Features.AutoClone.Improve.Editor.BaseURL, "https://hh.ru"},
+		{&c.Features.AutoClone.Improve.Editor.CookieDomain, ".hh.ru"},
+	} {
+		if *d.dst == "" {
+			*d.dst = d.val
+		}
+	}
+
+	for _, d := range []intDefault{
+		{&c.Features.AutoClone.Improve.Editor.PageTimeoutSec, 120},
+		{&c.Features.AutoClone.Improve.Editor.SaveTimeoutSec, 20},
+	} {
+		if *d.dst == 0 {
+			*d.dst = d.val
+		}
+	}
+
 	for _, d := range []boolPtrDefault{
 		{&c.Features.AutoLift.Respect4hTimer, true},
+		{&c.Features.AutoClone.Autolift, true},
 		{&c.Pacing.NightPause, true},
 		{&c.Features.ChatOps.AutoReply, true}, // owner decision #6: auto-reply is ON by default
 		{&c.Email.PerEmployerOnce, true},
@@ -72,6 +97,13 @@ func applyDefaults(c *Config) {
 			v := d.val
 			*d.dst = &v
 		}
+	}
+
+	for id, r := range c.Runs {
+		if r.LetterMode == "" {
+			r.LetterMode = LetterModeAICompany
+		}
+		c.Runs[id] = r
 	}
 
 	for id, a := range c.Accounts {

@@ -1,0 +1,12 @@
+{
+  "confidence": 0.9,
+  "needs_human": false,
+  "needs_human_reason": null,
+  "injection_suspected": false,
+  "unchanged": false,
+  "value_string": "Автоматизация найма: 5 лет опыта, Python и Go",
+  "value_strings": null,
+  "value_amount": null,
+  "used_facts": ["Автоматизация найма, 3 года"],
+  "missing_data": []
+}

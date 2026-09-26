@@ -109,6 +109,18 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # exclude_agencies_default = true
 # prioritize_online_hr = true
 # dedup_native_autoresponse = true
+[features.autoclone]                    # T26: автоклонирование резюме (hh не отдаёт parentResumeId — lineage хранится локально)
+# enabled = false
+# max_clones_per_resume = 2             # прямые клоны на одно резюме
+# max_clone_depth = 1                   # глубина цепочек клон-от-клона (1 = без цепочек)
+# autolift = true                       # поднимать клоны вместе с базовыми резюме (auto_lift)
+# reapply_mode = "new_only"             # all | new_only | skip_recent_rejections
+# skip_rejection_days = 30              # окно отказов для skip_recent_rejections
+# finish_timeout_min = 10               # клон-«not_finished» дольше этого → review + стоп клонов аккаунта
+# [features.autoclone.run_override]     # точечные override неявного клона-рана (остальное наследует родительский ран)
+# max_per_day = 5
+# letter_mode = "template_ai"
+# letter_template = ""
 [features.testsolve]
 # enabled = false                       # WF5: external forms, draft_only
 # mode = "draft_only"                   # headless requires Chrome in PATH
@@ -158,17 +170,34 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # max_per_day = 30
 # min_match_percent = 60
 # letter_template = ""                  # static fallback when the AI is off
+# letter_mode = "ai_company"            # template | template_ai | ai_company (T26; default ai_company)
+                                        # template = отправлять шаблон как есть (требует letter_template)
+                                        # template_ai = ИИ полирует шаблон (требует letter_template; фолбэк — сырой шаблон)
+                                        # ai_company = текущее поведение: ИИ пишет письмо под компанию
 # [[runs.backend-go.windows]]
 # tz = "Europe/Moscow"
 # time = ["09:00", "14:00"]
 # days = ["mon", "tue", "wed", "thu", "fri"]
 # [runs.backend-go.filters]
-# areas = ["1"]                         # Moscow
+# areas = ["1"]                         # Москва
+# professional_roles = ["160"]          # ID специализаций hh (multi)
+# metros = ["532"]                      # ID станций метро (multi)
 # experience = ["between1And3", "between3And6"]
+# schedule = ["fullDay", "remote"]
+# employment = ["full", "part"]
+# industries = ["7"]                    # ID отраслей (multi)
+# work_formats = ["REMOTE", "HYBRID"]   # REMOTE|HYBRID|ON_SITE (регистр важен)
+# salary_from = 150000
+# salary_currency = "RUR"
+# only_with_salary = true               # только вакансии с зарплатой
+# labels = ["with_salary"]              # свободные строки (multi); известные — в docs/CONFIGURATION.md
+# part = ["evening", "weekend"]         # temp|evening|weekend (эффект live не подтверждён)
+# order_by = "publication_time_desc"    # relevance|publication_time_desc|salary_desc|salary_asc
+# search_period_days = 30
 # exclude_words = ["стажер", "intern"]
 # company_blacklist = []
 # company_whitelist = []
-# exclude_agencies = true
+# exclude_agencies = true               # label=not_from_agency
 # min_employer_rating = 0.0
 # no_reviews_policy = "allow"           # allow | skip | human
 # [runs.backend-go.ai_filter_overrides]

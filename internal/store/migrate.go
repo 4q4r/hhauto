@@ -41,6 +41,8 @@ type migration struct {
 var migrations = []migration{
 	{version: 1, name: "init", script: readMigration("migrations/0001_init.sql")},
 	{version: 2, name: "ai_decisions_cost", script: readMigration("migrations/0002_ai_decisions_cost.sql")},
+	{version: 3, name: "resume_clones", script: readMigration("migrations/0003_resume_clones.sql")},
+	{version: 4, name: "resume_improve_diff", script: readMigration("migrations/0004_resume_improve_diff.sql")},
 }
 
 func readMigration(name string) string {

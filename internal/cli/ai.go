@@ -23,6 +23,7 @@ import (
 )
 
 func buildAI(cfg *config.Config, db *store.DB, log *slog.Logger) (ai.Runner, error) {
+	injectImproveTask(cfg)
 	if len(cfg.AI.Tasks) == 0 {
 		return nil, nil
 	}

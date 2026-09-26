@@ -34,7 +34,132 @@ func Validate(c *Config) error {
 	if err := validateAI(c); err != nil {
 		return err
 	}
+	if err := validateAutoClone(c); err != nil {
+		return err
+	}
 	return validateRuns(c)
+}
+
+// validateAutoClone checks the [features.autoclone] section (T26) plus the
+// clone_original_action and improve sub-sections (T29).
+func validateAutoClone(c *Config) error {
+	ac := c.Features.AutoClone
+	if !ac.Enabled {
+		return nil
+	}
+	switch ac.CloneOriginalAction {
+	case "", CloneActionKeep, CloneActionHide, CloneActionDelete:
+	default:
+		return fmt.Errorf("features.autoclone.clone_original_action %q: must be one of keep | hide | delete", ac.CloneOriginalAction)
+	}
+	if err := validateAutoCloneImprove(&ac.Improve); err != nil {
+		return err
+	}
+	switch ac.ReapplyMode {
+	case ReapplyAll, ReapplyNewOnly, ReapplySkipRecentRejections:
+	default:
+		return fmt.Errorf("features.autoclone.reapply_mode %q: must be one of all | new_only | skip_recent_rejections", ac.ReapplyMode)
+	}
+	if err := checkNegatives(map[string]float64{
+		"features.autoclone.max_clones_per_resume": float64(ac.MaxClonesPerResume),
+		"features.autoclone.max_clone_depth":       float64(ac.MaxCloneDepth),
+		"features.autoclone.skip_rejection_days":   float64(ac.SkipRejectionDays),
+		"features.autoclone.finish_timeout_min":    float64(ac.FinishTimeoutMin),
+	}); err != nil {
+		return err
+	}
+	if ac.MaxClonesPerResume == 0 {
+		return fmt.Errorf("features.autoclone.max_clones_per_resume=0: autoclone could never create a clone; disable features.autoclone.enabled instead")
+	}
+	if ac.MaxCloneDepth == 0 {
+		return fmt.Errorf("features.autoclone.max_clone_depth=0: depth is counted from the root resume; use 1 (no chains) or higher")
+	}
+	if ac.ReapplyMode == ReapplySkipRecentRejections && ac.SkipRejectionDays <= 0 {
+		return fmt.Errorf("features.autoclone.skip_rejection_days=%d: must be positive for skip_recent_rejections", ac.SkipRejectionDays)
+	}
+	ov := ac.RunOverride
+	switch ov.LetterMode {
+	case "", LetterModeTemplate, LetterModeTemplateAI, LetterModeAICompany:
+	default:
+		return fmt.Errorf("features.autoclone.run_override.letter_mode %q: must be one of template | template_ai | ai_company", ov.LetterMode)
+	}
+	if ov.MaxPerDay < 0 {
+		return fmt.Errorf("features.autoclone.run_override.max_per_day: negative values are not allowed (got %d)", ov.MaxPerDay)
+	}
+	return nil
+}
+
+// validateAutoCloneImprove checks the [features.autoclone.improve] section
+// (T29). Only an enabled section is validated — a disabled one may stay
+// half-filled. The field vocabulary itself (known ids, date fields needing
+// an explicit prompt) is enforced by the autoclone feature at wiring time:
+// config stays free of feature imports.
+func validateAutoCloneImprove(im *AutoCloneImprove) error {
+	if !im.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(im.ModelProfile) == "" {
+		return fmt.Errorf("features.autoclone.improve.model_profile: required when improve.enabled=true")
+	}
+	if len(im.Fields) == 0 {
+		return fmt.Errorf("features.autoclone.improve.fields: required when improve.enabled=true (which fields to improve)")
+	}
+	seen := map[string]bool{}
+	for _, f := range im.Fields {
+		if strings.TrimSpace(f) == "" {
+			return fmt.Errorf("features.autoclone.improve.fields: empty field id")
+		}
+		if seen[f] {
+			return fmt.Errorf("features.autoclone.improve.fields: duplicate field %q", f)
+		}
+		seen[f] = true
+	}
+	for _, f := range im.AlwaysAsk {
+		if !seen[f] {
+			return fmt.Errorf("features.autoclone.improve.always_ask %q: must be listed in improve.fields", f)
+		}
+	}
+	for field, p := range im.Prompts {
+		if !seen[field] {
+			return fmt.Errorf("features.autoclone.improve.prompts[%q]: field is not in improve.fields", field)
+		}
+		if p.PromptInline != "" && p.PromptFile != "" {
+			return fmt.Errorf("features.autoclone.improve.prompts[%q]: inline and file are mutually exclusive", field)
+		}
+	}
+	return validateAutoCloneImproveEditor(&im.Editor)
+}
+
+// itemScreens are wizard screens hosting per-item fields (experience
+// components expand to one target per item), so their URL overrides must
+// carry the {item} placeholder to address the edited item.
+var itemScreens = map[string]bool{"experience": true, "about_me_and_experience": true}
+
+// validateAutoCloneImproveEditor checks the [features.autoclone.improve.editor]
+// section (T30). Only an enabled section is validated. URL overrides must
+// stay addressable: {resume} and {screen} everywhere, {item} on the
+// per-item screens; timeouts ride defaults when unset and must stay above
+// the sanity floor when set.
+func validateAutoCloneImproveEditor(ed *AutoCloneImproveEditor) error {
+	if !ed.Enabled {
+		return nil
+	}
+	const timeoutFloor = 5
+	if ed.PageTimeoutSec != 0 && ed.PageTimeoutSec < timeoutFloor {
+		return fmt.Errorf("features.autoclone.improve.editor.page_timeout_sec=%d: must be at least %d when set", ed.PageTimeoutSec, timeoutFloor)
+	}
+	if ed.SaveTimeoutSec != 0 && ed.SaveTimeoutSec < timeoutFloor {
+		return fmt.Errorf("features.autoclone.improve.editor.save_timeout_sec=%d: must be at least %d when set", ed.SaveTimeoutSec, timeoutFloor)
+	}
+	for screen, tmpl := range ed.ScreenURLs {
+		if !strings.Contains(tmpl, "{resume}") {
+			return fmt.Errorf("features.autoclone.improve.editor.screen_urls[%q]: template must carry the {resume} placeholder", screen)
+		}
+		if itemScreens[screen] && !strings.Contains(tmpl, "{item}") {
+			return fmt.Errorf("features.autoclone.improve.editor.screen_urls[%q]: this screen hosts per-item fields, the template must carry the {item} placeholder", screen)
+		}
+	}
+	return nil
 }
 
 func validateGlobals(c *Config) error {
@@ -236,36 +361,81 @@ func validateRuns(c *Config) error {
 		if !r.Enabled {
 			continue
 		}
-		if r.Account == "" {
-			return fmt.Errorf("runs[%q].account: required when enabled", id)
-		}
-		if r.ResumeID == "" {
-			return fmt.Errorf("runs[%q].resume_id: required when enabled", id)
-		}
-		if r.MaxPerDay == 0 {
-			return fmt.Errorf("runs[%q].max_per_day=0: use enabled=false to disable the run", id)
-		}
-		if _, ok := c.Accounts[r.Account]; !ok {
-			return fmt.Errorf("runs[%q].account %q: unknown account", id, r.Account)
-		}
-		if err := checkNegatives(map[string]float64{
-			fmt.Sprintf("runs[%q].max_per_day", id):       float64(r.MaxPerDay),
-			fmt.Sprintf("runs[%q].min_match_percent", id): float64(r.MinMatchPct),
-		}); err != nil {
+		if err := validateRun(id, r, c); err != nil {
 			return err
 		}
-		for _, f := range r.SearchFields {
-			switch f {
-			case "name", "company_name", "description":
-			default:
-				return fmt.Errorf("runs[%q].search_fields %q: must be one of name | company_name | description (empty = all fields)", id, f)
-			}
+	}
+	return nil
+}
+
+// validateRun checks a single enabled run profile.
+func validateRun(id string, r Run, c *Config) error {
+	if r.Account == "" {
+		return fmt.Errorf("runs[%q].account: required when enabled", id)
+	}
+	if r.ResumeID == "" {
+		return fmt.Errorf("runs[%q].resume_id: required when enabled", id)
+	}
+	if r.MaxPerDay == 0 {
+		return fmt.Errorf("runs[%q].max_per_day=0: use enabled=false to disable the run", id)
+	}
+	if _, ok := c.Accounts[r.Account]; !ok {
+		return fmt.Errorf("runs[%q].account %q: unknown account", id, r.Account)
+	}
+	switch r.LetterMode {
+	case "", LetterModeTemplate, LetterModeTemplateAI, LetterModeAICompany: // "" = unset, defaults fill ai_company
+	default:
+		return fmt.Errorf("runs[%q].letter_mode %q: must be one of template | template_ai | ai_company", id, r.LetterMode)
+	}
+	if (r.LetterMode == LetterModeTemplate || r.LetterMode == LetterModeTemplateAI) &&
+		strings.TrimSpace(r.LetterTemplate) == "" {
+		return fmt.Errorf("runs[%q].letter_mode=%q requires letter_template", id, r.LetterMode)
+	}
+	if err := checkNegatives(map[string]float64{
+		fmt.Sprintf("runs[%q].max_per_day", id):       float64(r.MaxPerDay),
+		fmt.Sprintf("runs[%q].min_match_percent", id): float64(r.MinMatchPct),
+	}); err != nil {
+		return err
+	}
+	for _, f := range r.SearchFields {
+		switch f {
+		case "name", "company_name", "description":
+		default:
+			return fmt.Errorf("runs[%q].search_fields %q: must be one of name | company_name | description (empty = all fields)", id, f)
 		}
-		for i, w := range r.Windows {
-			if err := validateWindow(fmt.Sprintf("runs[%q].windows[%d]", id, i), w); err != nil {
-				return err
-			}
+	}
+	for i, w := range r.Windows {
+		if err := validateWindow(fmt.Sprintf("runs[%q].windows[%d]", id, i), w); err != nil {
+			return err
 		}
+	}
+	return validateRunFilters(fmt.Sprintf("runs[%q].filters", id), r.Filters)
+}
+
+// validateRunFilters rejects values hh would silently ignore. hh does not
+// error on unknown enum values — it drops them (and, worse, silently drops
+// the whole filter), so the config layer is the only line of defense. The
+// comparisons are exact (no case-folding, no trimming): hh matches these
+// values case-sensitively (live-verified 2026-09-25).
+func validateRunFilters(path string, f RunFilters) error {
+	for i, v := range f.WorkFormats {
+		switch v {
+		case "", "REMOTE", "HYBRID", "ON_SITE": // "" = skipped on the wire
+		default:
+			return fmt.Errorf("%s.work_formats[%d] %q: must be one of REMOTE|HYBRID|ON_SITE (case-sensitive)", path, i, v)
+		}
+	}
+	for i, v := range f.Part {
+		switch v {
+		case "", "temp", "evening", "weekend":
+		default:
+			return fmt.Errorf("%s.part[%d] %q: must be one of temp|evening|weekend", path, i, v)
+		}
+	}
+	switch f.OrderBy {
+	case "", "relevance", "publication_time_desc", "salary_desc", "salary_asc":
+	default:
+		return fmt.Errorf("%s.order_by %q: must be one of relevance|publication_time_desc|salary_desc|salary_asc", path, f.OrderBy)
 	}
 	return nil
 }

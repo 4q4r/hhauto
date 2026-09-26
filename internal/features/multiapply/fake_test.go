@@ -39,19 +39,44 @@ type applyEnv struct {
 	searchItems []string // vacancy item JSON blocks per page (same on every page)
 	searchFound int      // searchCounts.value (drives Pages)
 	searchReqs  int
-	popupByVac  map[int64]string
-	popupErr    map[int64]int // vacancy → HTTP status
-	applyErr    func(call int, vacancy int64, letter string) error
-	applyCalls  []int64 // order of applied vacancy ids
-	applyBodies []string
-	negPages    [][]hhapi.Negotiation
-	negFail     bool
-	negScript   []negAct // per-read script (1st read → negScript[0], …); empty → legacy fields
-	negReads    int
-	ratings     map[int64]*hhapi.EmployerRating
-	ratingErr   map[int64]error
-	ratingReqs  map[int64]int
-	popupReqs   map[int64]int
+	// searchQueryLog records the raw query of every search-page request
+	// (T25: pins the extended-filter wiring end-to-end).
+	searchQueryLog []string
+	popupByVac     map[int64]string
+	popupErr       map[int64]int // vacancy → HTTP status
+	applyErr       func(call int, vacancy int64, letter string) error
+	applyCalls     []int64 // order of applied vacancy ids
+	applyBodies    []string
+	negPages       [][]hhapi.Negotiation
+	negFail        bool
+	negScript      []negAct // per-read script (1st read → negScript[0], …); empty → legacy fields
+	negReads       int
+	ratings        map[int64]*hhapi.EmployerRating
+	ratingErr      map[int64]error
+	ratingReqs     map[int64]int
+	popupReqs      map[int64]int
+
+	// T26 autoclone surface: mutable mine shard + scripted clone endpoint.
+	resumeShard   []string                                 // resume JSON blocks served by GET /shards/applicant/resumes
+	cloneNext     int                                      // issued clone serial (clone1, clone2, …)
+	clonePosts    int                                      // total clone POST attempts (success or not)
+	cloneStatus   string                                   // status stamped on auto-sharded clones (default published)
+	cloneAuto     bool                                     // auto-append created clones to resumeShard (default true)
+	cloneSawToken bool                                     // at least one clone POST carried X-XSRFToken
+	cloneFail     func(call int) (status int, body string) // scripted clone failure
+
+	// T29 resume-management counters (clone_original_action probes).
+	hidePosts    int
+	deletePosts  int
+	hideBodies   []string // hashes passed to visibility/hide
+	deleteBodies []string // hashes passed to delete
+
+	// T27 full-clone surface: builder states served by
+	// GET /profile/shards/resume/get_by_hash (mutable; a successful update
+	// flips the clone state to complete) and the scriptable update endpoint.
+	builderStates map[string]string
+	updateCalls   int
+	updateFail    func(call int) (status int, body string)
 }
 
 func newApplyEnv(t *testing.T) *applyEnv {
@@ -71,6 +96,12 @@ func newApplyEnv(t *testing.T) *applyEnv {
 		ratingReqs:  map[int64]int{},
 		popupReqs:   map[int64]int{},
 		searchFound: 1,
+		cloneAuto:   true,
+	}
+	e.builderStates = map[string]string{
+		// The parent resume: a complete published resume with a title
+		// (synthetic data, no PII).
+		"hash1": builderStateFixture("hash1", "published", "DevOps-инженер Test", true),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /applicant/settings", func(w http.ResponseWriter, _ *http.Request) {
@@ -79,7 +110,119 @@ func newApplyEnv(t *testing.T) *applyEnv {
 	})
 	mux.HandleFunc("GET /shards/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: "tok_test", Path: "/"})
-		_, _ = io.WriteString(w, `{"resumes":[]}`)
+		e.mu.Lock()
+		items := append([]string(nil), e.resumeShard...)
+		e.mu.Unlock()
+		_, _ = io.WriteString(w, `{"resumes":[`+strings.Join(items, ",")+`]}`)
+	})
+	mux.HandleFunc("POST /applicant/resumes/clone", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(body), `"resumeId"`) {
+			t.Errorf("clone request body %q carries no resumeId", body)
+		}
+		// hh rejects a tokenless mutation with a 403 xsrf signature; the
+		// client must refresh once and retry with X-XSRFToken.
+		if r.Header.Get("X-XSRFToken") == "" {
+			http.Error(w, `{"error":"xsrf token required"}`, http.StatusForbidden)
+			return
+		}
+		e.mu.Lock()
+		e.cloneSawToken = true
+		e.clonePosts++
+		call := e.cloneNext + 1
+		fn := e.cloneFail
+		e.mu.Unlock()
+		if fn != nil {
+			if status, b := fn(call); status != 0 {
+				http.Error(w, b, status)
+				return
+			}
+		}
+		e.mu.Lock()
+		e.cloneNext = call
+		hash := fmt.Sprintf("clone%d", call)
+		status := e.cloneStatus
+		if status == "" {
+			status = "published"
+		}
+		// T27: a freshly cloned shell always starts not_finished in the
+		// builder state; the materialization update (below) completes it.
+		if e.builderStates == nil {
+			e.builderStates = map[string]string{}
+		}
+		e.builderStates[hash] = builderStateFixture(hash, "not_finished", "", false)
+		if e.cloneAuto {
+			e.resumeShard = append(e.resumeShard, fmt.Sprintf(
+				`{"_attributes":{"hash":%q,"status":%q,"isSearchable":true,"updated":1758700000000}}`, hash, status))
+		}
+		e.mu.Unlock()
+		_, _ = io.WriteString(w, fmt.Sprintf(`{"url":"/profile/resume/?resume=%s"}`, hash))
+	})
+	mux.HandleFunc("GET /profile/shards/resume/get_by_hash", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: "tok_test", Path: "/"})
+		e.mu.Lock()
+		body, ok := e.builderStates[r.URL.Query().Get("resumeHash")]
+		e.mu.Unlock()
+		if !ok {
+			http.Error(w, `{"error":"no such resume"}`, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = io.WriteString(w, body)
+	})
+	mux.HandleFunc("POST /profile/shards/resume/visibility/hide", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Hash string `json:"hash"`
+		}
+		_ = json.Unmarshal(body, &req)
+		e.mu.Lock()
+		e.hidePosts++
+		e.hideBodies = append(e.hideBodies, req.Hash)
+		e.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = io.WriteString(w, `null`)
+	})
+	mux.HandleFunc("POST /profile/shards/resume/delete", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Hash string `json:"hash"`
+		}
+		_ = json.Unmarshal(body, &req)
+		e.mu.Lock()
+		e.deletePosts++
+		e.deleteBodies = append(e.deleteBodies, req.Hash)
+		e.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = io.WriteString(w, `{"url":"/applicant/resumes"}`)
+	})
+	mux.HandleFunc("POST /profile/shards/resume/update", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			ResumeHash string `json:"resumeHash"`
+		}
+		_ = json.Unmarshal(body, &req)
+		e.mu.Lock()
+		e.updateCalls++
+		call := e.updateCalls
+		fn := e.updateFail
+		e.mu.Unlock()
+		if fn != nil {
+			if status, b := fn(call); status != 0 {
+				http.Error(w, b, status)
+				return
+			}
+		}
+		e.mu.Lock()
+		if req.ResumeHash != "" {
+			// A successful materialization completes the clone: title set,
+			// status left not_finished (the fake shard keeps its own stamp —
+			// awaitCloneReady keeps gating on it).
+			e.builderStates[req.ResumeHash] = builderStateFixture(req.ResumeHash, "published", "DevOps-инженер Test", true)
+		}
+		e.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = io.WriteString(w, `{"nextIncompleteScreenId":null,"resume":{"_attributes":{"hash":"`+req.ResumeHash+`","status":"published"}}}`)
 	})
 	mux.HandleFunc("GET /applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
 		e.mu.Lock()
@@ -89,9 +232,10 @@ func newApplyEnv(t *testing.T) *applyEnv {
 			`{"applicantSuitableVacancyByResume":{"hash1":{"vacancies":[%s],"searchCounts":{"value":%d}}}}`,
 			strings.Join(items, ","), len(items))))
 	})
-	mux.HandleFunc("GET /search/vacancy", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /search/vacancy", func(w http.ResponseWriter, r *http.Request) {
 		e.mu.Lock()
 		e.searchReqs++
+		e.searchQueryLog = append(e.searchQueryLog, r.URL.RawQuery)
 		items := append([]string(nil), e.searchItems...)
 		found := e.searchFound
 		e.mu.Unlock()
@@ -202,7 +346,15 @@ func newApplyEnv(t *testing.T) *applyEnv {
 
 	c, err := hhapi.NewClient(
 		config.Account{DisplayName: "acc1", UserAgent: "test-ua/1.0", RPS: 50},
-		config.APIEndpoints{Site: e.srv.URL, Chatik: e.srv.URL, SearchPage: e.srv.URL + "/search/vacancy"},
+		config.APIEndpoints{
+			Site: e.srv.URL, Chatik: e.srv.URL, SearchPage: e.srv.URL + "/search/vacancy",
+			Override: map[string]string{
+				// T29: the editor POST endpoints default to the external
+				// resume-profile-front host — pin them to the fake.
+				"resume_clone_resumes": e.srv.URL + "/profile/shards/resume/clone_resumes",
+				"resume_update":        e.srv.URL + "/profile/shards/resume/update",
+			},
+		},
 		nil, nil,
 	)
 	if err != nil {
@@ -476,4 +628,52 @@ func popupWith(letterRequired bool, inconsistencies bool, chat string) string {
 	}
 	return fmt.Sprintf(`{"type":"POPUP","letterRequired":%t,"test":{"hasTests":false},"acceptAutoResponse":true,"chatWritePossibility":%q%s}`,
 		letterRequired, chat, inc)
+}
+
+// builderStateFixture renders a synthetic /profile/shards/resume/get_by_hash
+// body for the T27 full-clone fake (no PII: synthetic titles and employers).
+func builderStateFixture(hash, status, title string, complete bool) string {
+	titleField := "[]"
+	if title != "" {
+		b, _ := json.Marshal(title)
+		titleField = `[{"string":` + string(b) + `}]`
+	}
+	next := "null"
+	if !complete {
+		next = `"professional_role"`
+	}
+	searchable := "false"
+	hasErrors := "true"
+	if title != "" {
+		searchable, hasErrors = "true", "false"
+	}
+	return `{
+	  "nextIncompleteScreenId": ` + next + `,
+	  "screens": [
+	    {"screenType":"STATIC","screenId":"professional_role","title":"Роль","fieldsOptions":{},"screenContent":[],"messages":[]},
+	    {"screenType":"STATIC","screenId":"common","title":"Основное","fieldsOptions":{},"screenContent":[],"messages":[]}
+	  ],
+	  "resume": {
+	    "_attributes": {"hash":` + mustJSONFake(hash) + `,"status":` + mustJSONFake(status) + `,"isSearchable":` + searchable + `,"hasErrors":` + hasErrors + `},
+	    "title": ` + titleField + `,
+	    "professionalRole": [{"string":160}],
+	    "keySkills": [{"string":"Linux"},{"string":"Docker"}],
+	    "skills": [{"string":"Автоматизация инфраструктуры (тестовые данные)"}],
+	    "workFormats": [{"string":"REMOTE"}],
+	    "educationLevel": []
+	  },
+	  "profile": {
+	    "fields": {
+	      "area": [{"string":1550}],
+	      "citizenship": [{"string":113}],
+	      "experience": [{"id":1,"startDate":"2024-01-01","endDate":null,"companyName":"Тест-компания","position":"DevOps-инженер Test","description":"Тестовое описание"}]
+	    }
+	  },
+	  "additionalProperties": {"anyJob":false,"jobByEducation":null,"simpleExperienceInYears":false}
+	}`
+}
+
+func mustJSONFake(v string) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }

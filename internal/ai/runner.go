@@ -211,14 +211,35 @@ func bindModels(r *runner, models map[string]config.AIModel, providers map[strin
 // semantics (re-ask on invalid output, needs_human verdicts, model fallback).
 func (r *runner) Run(ctx context.Context, accountID, entityType, entityID, runID string,
 	task TaskName, input any) (json.RawMessage, Decision, error) {
+	system, promptVer, err := r.prompts.SystemPrompt(task)
+	if err != nil {
+		return nil, Decision{}, err
+	}
+	return r.run(ctx, accountID, entityType, entityID, runID, task, system, promptVer, input)
+}
+
+// RunWithSystem is the Run pipeline with a caller-supplied system prompt —
+// the per-field improve path (one prompt per resume field, resolved by the
+// autoclone feature). The prompt version becomes the content hash of the
+// effective system so cache keys and ledger records change with every
+// prompt edit. The task must still be configured in [ai.tasks] (model
+// profile, cache TTL) and carry the builtin grounding prompt as its base —
+// the caller composes base + per-field prompt.
+func (r *runner) RunWithSystem(ctx context.Context, accountID, entityType, entityID, runID string,
+	task TaskName, system string, input any) (json.RawMessage, Decision, error) {
+	if strings.TrimSpace(system) == "" {
+		return nil, Decision{}, fmt.Errorf("ai: RunWithSystem: empty system prompt")
+	}
+	return r.run(ctx, accountID, entityType, entityID, runID, task, system, customVersion("", system), input)
+}
+
+// run is the shared pipeline body of Run and RunWithSystem.
+func (r *runner) run(ctx context.Context, accountID, entityType, entityID, runID string,
+	task TaskName, system, promptVer string, input any) (json.RawMessage, Decision, error) {
 
 	taskCfg, ok := r.tasks[string(task)]
 	if !ok {
 		return nil, Decision{}, fmt.Errorf("ai: task %q is not configured", task)
-	}
-	system, promptVer, err := r.prompts.SystemPrompt(task)
-	if err != nil {
-		return nil, Decision{}, err
 	}
 	inputJSON, err := json.Marshal(input)
 	if err != nil {
@@ -524,6 +545,8 @@ func (r *runner) postChecks(task TaskName, verdict json.RawMessage, flagged bool
 		forceReason = checkScoringBands(m, forceReason)
 	case TaskCoverLetter, TaskChatReply:
 		forceReason = checkFreeText(task, m, forceReason, trustedText, trustedNums)
+	case TaskResumeImprove:
+		forceReason = checkImproveGrounding(m, forceReason, trustedText, trustedNums)
 	}
 	applyForceReason(m, forceReason)
 	out, err := json.Marshal(m)

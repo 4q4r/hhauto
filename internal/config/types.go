@@ -160,6 +160,7 @@ type AIPricing struct {
 type Features struct {
 	AutoLift         AutoLift        `toml:"auto_lift"`
 	MultiApply       MultiApply      `toml:"multiapply"`
+	AutoClone        AutoClone       `toml:"autoclone"`
 	TestSolve        TestSolve       `toml:"testsolve"`
 	ChatOps          ChatOps         `toml:"chatops"`
 	Interview        InterviewDetect `toml:"interview"`
@@ -168,6 +169,139 @@ type Features struct {
 	Relevance        Relevance       `toml:"relevance"`
 	ResumeVisibility bool            `toml:"resume_visibility"`
 	WebsocketPush    bool            `toml:"websocket_push"`
+}
+
+// Cover-letter mode vocabulary for runs[].letter_mode (T26 owner decision #6).
+const (
+	// LetterModeTemplate sends the run's static template verbatim (no AI).
+	LetterModeTemplate = "template"
+	// LetterModeTemplateAI polishes the template with the AI (template as the
+	// mandatory base); falls back to the raw template when the AI is down.
+	LetterModeTemplateAI = "template_ai"
+	// LetterModeAICompany is the pre-T26 behavior: the AI composes the letter
+	// for the company/vacancy; the template (if set) is context + fallback.
+	LetterModeAICompany = "ai_company"
+)
+
+// Reapply-mode vocabulary for [features.autoclone].reapply_mode (T26 owner
+// decision #1): which vacancies a clone run may (re)apply to.
+const (
+	// ReapplyAll: everything the source returns (static filters still gate).
+	ReapplyAll = "all"
+	// ReapplyNewOnly: only vacancies no lineage resume has applied to.
+	ReapplyNewOnly = "new_only"
+	// ReapplySkipRecentRejections: everything except vacancies a lineage
+	// resume was rejected from within skip_rejection_days.
+	ReapplySkipRecentRejections = "skip_recent_rejections"
+)
+
+// AutoClone configures the resume autoclone loop (T26): when a run's vacancy
+// pool is exhausted (everything suitable is already applied by the resume
+// lineage), a bounded number of clones is created and used for the next
+// passes. Lineage is tracked locally (hh exposes no parentResumeId).
+type AutoClone struct {
+	Enabled bool `toml:"enabled"`
+	// MaxClonesPerResume bounds the direct children per lineage resume.
+	MaxClonesPerResume int `toml:"max_clones_per_resume"` // default 2
+	// MaxCloneDepth bounds clone-of-clone chains (1 = no chained clones).
+	MaxCloneDepth int `toml:"max_clone_depth"` // default 1
+	// Autolift includes clones in the autolift resume pool (default true).
+	Autolift *bool `toml:"autolift"`
+	// ReapplyMode gates which vacancies a clone run applies to.
+	ReapplyMode string `toml:"reapply_mode"` // all | new_only | skip_recent_rejections
+	// SkipRejectionDays is the rejection-recency window for
+	// skip_recent_rejections.
+	SkipRejectionDays int `toml:"skip_rejection_days"` // default 30
+	// FinishTimeoutMin bounds how long a not_finished clone may be polled
+	// before the autoclone is parked for review (hh clones start as
+	// status="not_finished"; a stuck clone needs a human).
+	FinishTimeoutMin int `toml:"finish_timeout_min"` // default 10
+	// CloneOriginalAction is the source-resume policy after a successful
+	// full clone (+ improve): "keep" (default) leaves the original as-is,
+	// "hide" flips its visibility to no_one (reversible), "delete" removes
+	// it permanently. An unknown or failed action degrades to keep with a
+	// WARN (fail-safe: the original is never lost to an automation bug).
+	CloneOriginalAction string `toml:"clone_original_action"` // keep | hide | delete
+	// Improve configures the per-field AI improvement of the clone (T29).
+	Improve AutoCloneImprove `toml:"improve"`
+	// RunOverride carries point overrides for the implicit clone run; the
+	// clone run otherwise inherits the parent run wholesale (filters, limits,
+	// letter_mode — T26 owner decision #6).
+	RunOverride RunOverride `toml:"run_override"`
+}
+
+// Clone-original-action vocabulary for [features.autoclone].clone_original_action.
+const (
+	// CloneActionKeep leaves the source resume untouched (default).
+	CloneActionKeep = "keep"
+	// CloneActionHide hides the source resume from everyone (visibility
+	// no_one) — reversible through show.
+	CloneActionHide = "hide"
+	// CloneActionDelete permanently deletes the source resume.
+	CloneActionDelete = "delete"
+)
+
+// AutoCloneImprove configures the per-field AI improvement of a fresh clone
+// (T29): every field in Fields gets its own system prompt (builtin default,
+// overridable per field through Prompts), the AI proposes a new value from
+// the resume facts only, the dry-run diff shows было/стало per field and
+// the apply walks the editor update endpoint per screen.
+type AutoCloneImprove struct {
+	// Enabled gates the whole section (default false — nothing improves
+	// until the owner asks for it).
+	Enabled bool `toml:"enabled"`
+	// Fields lists the field ids to improve ("title", "about",
+	// "key_skills", "experience_description", ...). Date fields
+	// ("experience_dates") are NOT AI fields by default: improving one
+	// requires an explicit owner prompt override for that field.
+	Fields []string `toml:"fields"`
+	// ModelProfile is the [ai.models] profile the improve task runs on.
+	ModelProfile string `toml:"model_profile"`
+	// AlwaysAsk lists field ids whose improved values never auto-apply:
+	// they park for review with the proposed diff instead.
+	AlwaysAsk []string `toml:"always_ask"`
+	// Prompts maps a field id to its prompt override ([ai.tasks]-shaped:
+	// inline | file, never both; version optional). Only the prompt fields
+	// are read here — the model profile always comes from ModelProfile.
+	Prompts map[string]AITask `toml:"prompts"`
+	// Editor configures the browser (chromedp) apply of the planned values
+	// (T30). When enabled and Chrome is available, the plan is applied
+	// through the real resume editor pages (browser TLS passes the edge
+	// that gates off-browser POSTs); without it the pipeline keeps the
+	// T29 builder-update path and its degradation semantics.
+	Editor AutoCloneImproveEditor `toml:"editor"`
+}
+
+// AutoCloneImproveEditor configures the T30 browser editor runner.
+type AutoCloneImproveEditor struct {
+	// Enabled gates the browser apply (default false — the builder-update
+	// path stays the apply surface).
+	Enabled bool `toml:"enabled"`
+	// BaseURL is the hh.ru origin the wizard pages are opened on.
+	BaseURL string `toml:"base_url"` // default https://hh.ru
+	// ScreenURLs maps a wizard screen id to a URL template overriding the
+	// default {base}/applicant/resume/{resume}/{screen}. Placeholders:
+	// {resume} and {screen} are required everywhere; {item} is required on
+	// screens hosting per-item fields (experience).
+	ScreenURLs map[string]string `toml:"screen_urls"`
+	// CookieDomain is the domain the account session cookies are injected
+	// under (hh.ru and its subdomains; nothing outside it ever receives
+	// them — the isolation invariant of the browser runner).
+	CookieDomain string `toml:"cookie_domain"` // default .hh.ru
+	// PageTimeoutSec bounds one whole browser run (all screens of a plan).
+	PageTimeoutSec int `toml:"page_timeout_sec"` // default 120
+	// SaveTimeoutSec bounds the post-save wait for the wizard to leave the
+	// screen; the authoritative gate is the get_by_hash read-back either
+	// way.
+	SaveTimeoutSec int `toml:"save_timeout_sec"` // default 20
+}
+
+// RunOverride replaces inherited parent-run values for the clone run; zero
+// fields inherit.
+type RunOverride struct {
+	MaxPerDay      int    `toml:"max_per_day"`
+	LetterMode     string `toml:"letter_mode"`
+	LetterTemplate string `toml:"letter_template"`
 }
 
 // AutoLift configures resume auto-raising.
@@ -274,6 +408,7 @@ type Run struct {
 	Windows           []Window         `toml:"windows"`
 	Filters           RunFilters       `toml:"filters"`
 	LetterTemplate    string           `toml:"letter_template"`
+	LetterMode        string           `toml:"letter_mode"` // template | template_ai | ai_company (default ai_company, T26)
 	AIFilterOverrides AIFilterOverride `toml:"ai_filter_overrides"`
 }
 
@@ -307,6 +442,27 @@ type RunFilters struct {
 	RatingPeriod      string   `toml:"rating_period"` // "all" | "N" (days)
 	RatingCacheHours  int      `toml:"rating_cache_hours"`
 	NoReviewsPolicy   string   `toml:"no_reviews_policy"` // allow | skip | human
+
+	// --- T25: full hh filter coverage (values live-verified 2026-09-25) ---
+	// ProfessionalRoles: hh professional-role IDs, param professional_role
+	// (multi).
+	ProfessionalRoles []string `toml:"professional_roles"`
+	// Metros: hh metro-station IDs, param metro (multi).
+	Metros []string `toml:"metros"`
+	// WorkFormats: param work_format (multi); enum REMOTE|HYBRID|ON_SITE,
+	// case-sensitive ("ONSITE" is silently ignored by hh — rejected here).
+	WorkFormats []string `toml:"work_formats"`
+	// Labels: param label (multi; merged with exclude_agencies). Free-form:
+	// known live values are documented in docs/CONFIGURATION.md; hh ships new
+	// labels without notice, so unknown strings pass validation.
+	Labels []string `toml:"labels"`
+	// Part: param part (multi); enum temp|evening|weekend. hh accepts the
+	// values but no filtering effect could be verified live (2026-09-25) —
+	// sent per the full-coverage decision.
+	Part []string `toml:"part"`
+	// OrderBy: param order_by; enum relevance|publication_time_desc|
+	// salary_desc|salary_asc; "" = hh default.
+	OrderBy string `toml:"order_by"`
 }
 
 // AIFilterOverride tweaks the AI relevance filter for one run.

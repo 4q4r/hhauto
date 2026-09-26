@@ -662,8 +662,23 @@ func (c *Client) searchURL(q SearchQuery) string {
 	if q.Currency != "" {
 		v.Set("currency", q.Currency)
 	}
+	// Labels: repeated label= params (hh applies OR-semantics inside a param
+	// family). not_from_agency is the live name for "без агентств" — the
+	// legacy no_agencies spelling is silently ignored (live-verified
+	// 2026-09-25).
 	if q.LabelNoAgencies {
-		v.Set("label", "no_agencies")
+		v.Add("label", "not_from_agency")
+	}
+	multi("label", q.Labels)
+	multi("professional_role", q.ProfessionalRoles)
+	multi("metro", q.Metros)
+	multi("work_format", q.WorkFormats)
+	multi("part", q.Part)
+	if q.OnlyWithSalary {
+		v.Set("only_with_salary", "true")
+	}
+	if q.OrderBy != "" {
+		v.Set("order_by", q.OrderBy)
 	}
 	if q.PeriodDays > 0 {
 		v.Set("search_period", strconv.Itoa(q.PeriodDays))

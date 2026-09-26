@@ -39,6 +39,13 @@ type Resume struct {
 	Searchable bool            `json:"searchable"`
 	UpdatedAt  time.Time       `json:"updated_at"`
 	Raw        json.RawMessage `json:"raw,omitempty"`
+
+	// T28 lineage fields (native clone discovery): the resume this one was
+	// cloned from (hh sets it on native clones) and the creation instant.
+	// Both empty/zero for resumes hh reports without those attributes, so
+	// the serialized shape stays backwards compatible.
+	ParentResumeID string    `json:"parent_resume_id,omitempty"`
+	CreatedAt      time.Time `json:"created_at,omitempty"`
 }
 
 // Salary is the vacancy salary band as published.
@@ -181,6 +188,10 @@ type Contact struct {
 }
 
 // SearchQuery mirrors hh vacancy-search filters (native server-side filter F1).
+//
+// T25 full-filter coverage: the extended fields below are validated upstream
+// in internal/config (hh silently ignores unknown values, so the config layer
+// is the only defense); the client forwards them as-is.
 type SearchQuery struct {
 	Text            string
 	Areas           []string
@@ -195,6 +206,32 @@ type SearchQuery struct {
 	PeriodDays      int
 	Page            int
 	PerPage         int
+
+	// ProfessionalRoles maps to professional_role (multi): hh role IDs, e.g.
+	// "160" (DevOps). Live-verified 2026-09-25.
+	ProfessionalRoles []string
+	// Metros maps to metro (multi): hh metro-station IDs. Live-verified.
+	Metros []string
+	// WorkFormats maps to work_format (multi). Allowed values (live-verified
+	// 2026-09-25, case-sensitive): "REMOTE", "HYBRID", "ON_SITE".
+	// "ONSITE" (no underscore) is silently ignored by hh.
+	WorkFormats []string
+	// Labels maps to label (multi, OR-semantics; merged with
+	// LabelNoAgencies). Known live vocabulary 2026-09-25: with_salary,
+	// with_address, not_from_agency, accept_handicapped, accept_kids,
+	// accredited_it, accept_labor_contract, night_shifts, low_performance,
+	// internship. Free-form by design: hh ships new labels without notice.
+	Labels []string
+	// Part maps to part (multi): temp | evening | weekend. The values are
+	// accepted by hh, but no filtering effect could be verified live
+	// (2026-09-25); the UI expresses "Подработка" via catalog pages, not
+	// query params. Sent as-is per the full-coverage decision.
+	Part []string
+	// OnlyWithSalary maps to only_with_salary=true. Live-verified.
+	OnlyWithSalary bool
+	// OrderBy maps to order_by: relevance | publication_time_desc |
+	// salary_desc | salary_asc (validated upstream).
+	OrderBy string
 }
 
 // HHAPI is the full site contract consumed by features.

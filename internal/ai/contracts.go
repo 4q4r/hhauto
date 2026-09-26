@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// TaskName enumerates the 8 AI tasks.
+// TaskName enumerates the 9 AI tasks.
 type TaskName string
 
-// The eight task names as they appear in config [ai.tasks] and the
+// The nine task names as they appear in config [ai.tasks] and the
 // ai_decisions ledger.
 const (
 	TaskVacancyScoring TaskName = "vacancy_scoring"
@@ -24,6 +24,13 @@ const (
 	TaskClassification TaskName = "message_classification"
 	TaskContactExtract TaskName = "contact_extraction"
 	TaskLinkDetection  TaskName = "link_detection"
+	// TaskResumeImprove (T29): per-field resume improvement. The system
+	// prompt is resolved per call (one prompt per field — builtin defaults
+	// in internal/features/autoclone, TOML overrides in
+	// [features.autoclone.improve.prompts.<field>]); the model profile and
+	// cache TTL still come from the [ai.tasks.resume_improve] entry the
+	// CLI injects from [features.autoclone.improve].model_profile.
+	TaskResumeImprove TaskName = "resume_improve"
 )
 
 // Common fields present in EVERY task schema output.
