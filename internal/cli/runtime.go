@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"hhauto/internal/ai"
+	"hhauto/internal/browser"
 	"hhauto/internal/captcha"
 	"hhauto/internal/config"
 	"hhauto/internal/cookies"
@@ -346,6 +347,7 @@ func (rt *Runtime) buildFeatures() error {
 		Cfg: *cfg, DB: rt.DB, AI: rt.AI, Notify: rt.Webhooks,
 		Dialer: dialerFor, Log: rt.Log,
 		Review: reviewer, Stopped: stopped,
+		ChromeProvider: browser.NewFromConfig(cfg.Browser, rt.Log),
 	}
 	feats.Add(solver)
 	cont := &contacts.Feature{

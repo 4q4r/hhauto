@@ -18,6 +18,7 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/spf13/cobra"
 
+	"hhauto/internal/browser"
 	"hhauto/internal/config"
 	"hhauto/internal/features/emplrating"
 	"hhauto/internal/features/featurekit"
@@ -1058,6 +1059,7 @@ func newTestsSolveCmd() *cobra.Command {
 			solver := &testsolve.Solver{
 				Cfg: *rt.Cfg, DB: rt.DB, AI: rt.AI, Notify: rt.Webhooks,
 				Dialer: rt.dialerFor, Log: rt.Log, Queue: rt.Queue,
+				ChromeProvider: browser.NewFromConfig(rt.Cfg.Browser, rt.Log),
 			}
 			task := queue.Task{
 				AccountID: acc, Kind: queue.KindSolveTest, Priority: queue.PrioChats,

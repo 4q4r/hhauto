@@ -37,7 +37,28 @@ func Validate(c *Config) error {
 	if err := validateAutoClone(c); err != nil {
 		return err
 	}
+	if err := validateBrowser(c); err != nil {
+		return err
+	}
 	return validateRuns(c)
+}
+
+// validateBrowser checks the [browser] section (T32). The section is
+// feature-independent: both browser consumers (testsolve headless,
+// autoclone editor) read it through their own wiring.
+func validateBrowser(c *Config) error {
+	b := c.Browser
+	switch b.Preset {
+	case "", BrowserPresetDefault, BrowserPresetCareful:
+	default:
+		return fmt.Errorf("browser.preset %q: must be one of default | careful", b.Preset)
+	}
+	switch b.Channel {
+	case "", BrowserChannelAuto, BrowserChannelFree, BrowserChannelPro:
+	default:
+		return fmt.Errorf("browser.channel %q: must be one of auto | free | pro", b.Channel)
+	}
+	return nil
 }
 
 // validateAutoClone checks the [features.autoclone] section (T26) plus the

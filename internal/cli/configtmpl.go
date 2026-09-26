@@ -213,6 +213,12 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # abort_on_password_field = true        # forced true (anti-phishing)
 # page_timeout_sec = 20
 
+[browser]
+# auto_download = true                  # download the cloakbrowser chromium when no Chrome is found
+# humanize = true                       # human-like input in the fillers (typing cadence, micro-delays)
+# preset = "careful"                    # careful (default) = stealth launch flags + slower pacing; default = plain
+# channel = "auto"                      # auto | free | pro (pro = cached builds only; licensed download out of scope)
+
 [email]
 # smtp_host = ""
 # smtp_port = 587                       # STARTTLS mandatory; 465 = implicit TLS

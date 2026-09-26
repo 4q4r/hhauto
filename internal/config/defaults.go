@@ -40,6 +40,8 @@ func applyDefaults(c *Config) {
 		{&c.Pacing.Mode, "adaptive"},
 		{&c.Forms.Mode, "draft_only"},
 		{&c.Forms.SubmitPolicy, "human"},
+		{&c.Browser.Preset, BrowserPresetCareful},
+		{&c.Browser.Channel, BrowserChannelAuto},
 		{&c.Schedule.MissedRunPolicy, "run_once"},
 	} {
 		if *d.dst == "" {
@@ -92,6 +94,8 @@ func applyDefaults(c *Config) {
 		{&c.Email.PerEmployerOnce, true},
 		{&c.Email.AttachResume, true},
 		{&c.Warmup.RespectWeekend, true},
+		{&c.Browser.AutoDownload, true}, // T32: cloakbrowser auto-download on
+		{&c.Browser.Humanize, true},     // T32: humanize launch profile on
 	} {
 		if *d.dst == nil {
 			v := d.val

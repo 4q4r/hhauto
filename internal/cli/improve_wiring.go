@@ -20,6 +20,8 @@ import (
 	"net/http"
 
 	"hhauto/internal/ai"
+	// Aliased: the wiring below declares a local `browser` variable.
+	sysbrowser "hhauto/internal/browser"
 	"hhauto/internal/config"
 	"hhauto/internal/cookies"
 	"hhauto/internal/features/autoclone"
@@ -137,11 +139,13 @@ func buildImprove(cfg *config.Config, runner ai.Runner, db interface {
 			return nil, fmt.Errorf("autoclone: improve.editor.enabled requires the cookie store (the browser needs the account session)")
 		}
 		browser, err = autoclone.NewChromeEditorRunner(autoclone.EditorOptions{
-			Cfg:     improve.Editor,
-			DB:      storeDB,
-			Cookies: editorCookieSource{store: ckStore},
-			Verify:  editor,
-			Log:     log,
+			Cfg:            improve.Editor,
+			DB:             storeDB,
+			Cookies:        editorCookieSource{store: ckStore},
+			Verify:         editor,
+			ChromeProvider: sysbrowser.NewFromConfig(cfg.Browser, log),
+			BrowserCfg:     cfg.Browser,
+			Log:            log,
 		})
 		if err != nil {
 			return nil, err

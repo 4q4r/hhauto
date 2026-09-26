@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"hhauto/internal/ai"
+	"hhauto/internal/browser"
 	"hhauto/internal/config"
 	"hhauto/internal/features"
 	"hhauto/internal/features/featurekit"
@@ -106,6 +107,12 @@ type Solver struct {
 	// Filler executes headless runs when Forms.Mode=headless. nil selects
 	// the chromedp HeadlessFiller; tests inject a fake (no browser).
 	Filler Filler
+
+	// ChromeProvider resolves the browser executable through the shared
+	// browser subsystem (T32: HHAUTO_CHROME_PATH → PATH → cloakbrowser
+	// cache → auto-download). nil = the legacy FindChrome chain (прежнее
+	// поведение).
+	ChromeProvider browser.Provider
 }
 
 // Compile-time conformance with the feature-module contract.
@@ -213,7 +220,10 @@ func (s *Solver) filler() Filler {
 	if s.Filler != nil {
 		return s.Filler
 	}
-	return &HeadlessFiller{Cfg: s.Cfg, DB: s.DB, AI: s.AI, Log: s.log(), Now: s.Now}
+	return &HeadlessFiller{
+		Cfg: s.Cfg, DB: s.DB, AI: s.AI, Log: s.log(), Now: s.Now,
+		Browser: s.ChromeProvider,
+	}
 }
 
 // testAnswerEntry mirrors one item of the test_answer verdict.

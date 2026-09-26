@@ -22,6 +22,7 @@ type Config struct {
 	Email    Email                      `toml:"email"`
 	Warmup   Warmup                     `toml:"warmup"`
 	Schedule Schedule                   `toml:"schedule"`
+	Browser  Browser                    `toml:"browser"`
 }
 
 // General carries deployment-wide paths and the dry-run master switch.
@@ -320,6 +321,42 @@ type MultiApply struct {
 	ExcludeAgenciesDef bool `toml:"exclude_agencies_default"`
 	PrioritizeOnlineHR bool `toml:"prioritize_online_hr"`
 	DedupNativeResp    bool `toml:"dedup_native_autoresponse"`
+}
+
+// Browser release-channel and humanize-preset vocabularies for [browser].
+// Channels mirror the cloakbrowser release layout: the free build is
+// public on GitHub Releases, pro builds are marker/cache-resolved
+// (licensed downloads are out of scope); auto prefers a cached newer
+// marker version and falls back to the pinned free build.
+const (
+	BrowserPresetDefault = "default"
+	BrowserPresetCareful = "careful"
+
+	BrowserChannelAuto = "auto"
+	BrowserChannelFree = "free"
+	BrowserChannelPro  = "pro"
+)
+
+// Browser configures the shared browser subsystem (T32): executable
+// discovery, the cloakbrowser chromium cache/auto-download and the
+// humanize launch profile shared by the testsolve headless filler and
+// the autoclone editor runner.
+type Browser struct {
+	// AutoDownload lets the provider download the cloakbrowser chromium
+	// build when neither HHAUTO_CHROME_PATH nor PATH yield an executable
+	// and the cache holds no compatible binary (nil → true).
+	AutoDownload *bool `toml:"auto_download"`
+	// Humanize enables human-like input in the fillers: typing cadence,
+	// micro-delays and a smooth focus before text entry (nil → true).
+	Humanize *bool `toml:"humanize"`
+	// Preset selects the launch/input profile: careful (default; the
+	// conservative stealth flag set plus slower, deliberate pacing) or
+	// default (no extra launch flags, normal pacing).
+	Preset string `toml:"preset"`
+	// Channel selects the cloakbrowser release channel: auto (a cached
+	// marker version wins, else the pinned free build), free (the pinned
+	// free build only) or pro (pro marker/cache resolution only).
+	Channel string `toml:"channel"`
 }
 
 // TestSolve configures screening-test detection and filling.
