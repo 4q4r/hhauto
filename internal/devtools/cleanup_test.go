@@ -110,13 +110,14 @@ func TestCleanupTestResumes(t *testing.T) {
 		t.Logf("none of the 13 targets present — nothing to delete (already cleaned?)")
 	}
 
-	// 4. Delete each target through the real UI.
-	deleted, failed := 0, 0
+	// 4. Delete each target through the real UI. Fail-fast: a mid-run
+	// failure means the click model is off — stop instead of spraying
+	// unconfirmed clicks at hh (budget discipline).
+	deleted := 0
 	for _, target := range targets {
-		if err := cleanupDeleteOne(ctx, target.Hash); err != nil {
-			failed++
-			t.Errorf("delete %s (id=%s title=%q): %v", cleanupShortHash(target.Hash), target.ID, target.Title, err)
-			continue
+		if err := cleanupDeleteOne(t, ctx, target.Hash); err != nil {
+			t.Fatalf("delete %s (id=%s title=%q): %v — stopping: no blind retries",
+				cleanupShortHash(target.Hash), target.ID, target.Title, err)
 		}
 		deleted++
 		t.Logf("deleted: id=%s hash=%s… title=%q", target.ID, cleanupShortHash(target.Hash), target.Title)
@@ -132,7 +133,7 @@ func TestCleanupTestResumes(t *testing.T) {
 			t.Errorf("unexpected resume survived: id=%s hash=%s… title=%q", r.ID, cleanupShortHash(r.Hash), r.Title)
 		}
 	}
-	t.Logf("done: deleted=%d failed=%d remaining=%d %s", deleted, failed, len(inv), cleanupFormat(inv))
+	t.Logf("done: deleted=%d remaining=%d %s", deleted, len(inv), cleanupFormat(inv))
 }
 
 // --- inventory ----------------------------------------------------------------
@@ -242,25 +243,33 @@ func cleanupSelectTargets(t *testing.T, inv []cleanupResume) []cleanupResume {
 
 // --- deletion (real UI clicks) --------------------------------------------------
 
-// cleanupDeleteOne deletes one resume by full hash: click the card's delete
-// control, then confirm through up to two "Удалить" layers (menu item →
-// dialog button), polling the shard until the hash disappears.
-func cleanupDeleteOne(ctx context.Context, hash string) error {
-	var stepRaw, confRaw string
+// cleanupDeleteOne deletes one resume by full hash through the real UI.
+// Live-verified shapes (2026-09-26): a draft card carries a direct «Удалить»
+// control, while a published resume's ••• menu (data-qa
+// resume-list-action-more) has NO delete item — its trash lives on the
+// resume page (data-qa=resume-delete). One sequence covers both shapes:
+// card control → scoped confirm clicks → shard check → resume-page fallback
+// → poll until the hash disappears from the shard. Every step is logged.
+func cleanupDeleteOne(t *testing.T, ctx context.Context, hash string) error {
+	short := cleanupShortHash(hash)
+	var stepRaw, dialogsRaw string
 	if err := chromedp.Run(ctx,
 		chromedp.Evaluate(cleanupClickCardDeleteJS(hash), &stepRaw)); err != nil {
 		return fmt.Errorf("card delete click: %w", err)
 	}
 	var step struct {
 		Clicked string `json:"clicked"`
+		Kind    string `json:"kind"`
 		By      string `json:"by"`
 		HTML    string `json:"html"`
 	}
 	if err := json.Unmarshal([]byte(stepRaw), &step); err != nil {
 		return fmt.Errorf("decode card click state: %v (%.200s)", err, stepRaw)
 	}
+	t.Logf("[%s] card click: clicked=%q kind=%q by=%q html=%.250s",
+		short, step.Clicked, step.Kind, step.By, step.HTML)
 	if step.Clicked == "no-card" {
-		return fmt.Errorf("card with /resume/%s not found in DOM", cleanupShortHash(hash))
+		return fmt.Errorf("card with /resume/%s not found in DOM", short)
 	}
 	if step.Clicked == "no-control" {
 		return fmt.Errorf("delete control not found in card; card HTML: %.800s", step.HTML)
@@ -271,50 +280,125 @@ func cleanupDeleteOne(ctx context.Context, hash string) error {
 	if err := cleanupSleep(ctx, 900*time.Millisecond); err != nil {
 		return err
 	}
-	// Up to two confirmation layers (dropdown item, then dialog button).
-	for i := 0; i < 2; i++ {
-		var conf struct {
-			Clicked string `json:"clicked"`
-			Text    string `json:"text"`
-		}
-		if err := chromedp.Run(ctx, chromedp.Evaluate(cleanupClickConfirmJS, &confRaw)); err != nil {
-			return fmt.Errorf("confirm click: %w", err)
-		}
-		if err := json.Unmarshal([]byte(confRaw), &conf); err != nil {
-			return fmt.Errorf("decode confirm state: %v (%.200s)", err, confRaw)
-		}
-		if conf.Clicked != "confirm" {
-			break
-		}
-		if err := cleanupSleep(ctx, 900*time.Millisecond); err != nil {
-			return err
-		}
+	if err := chromedp.Run(ctx, chromedp.Evaluate(cleanupDialogsDumpJS, &dialogsRaw)); err != nil {
+		return fmt.Errorf("dialogs dump: %w", err)
 	}
-	// Poll the shard until the hash is gone (authoritative).
+	t.Logf("[%s] dialogs after card click: %s", short, dialogsRaw)
+
+	// 2. Scoped confirm attempts (a modal or the dropdown «Удалить» item).
+	if err := cleanupConfirmLoop(t, ctx, short, 2); err != nil {
+		return err
+	}
+	// 3. Already gone (direct deletion, e.g. a draft)?
+	gone, err := cleanupShardGone(ctx, hash)
+	if err != nil {
+		return err
+	}
+	if gone {
+		return nil
+	}
+	// 4. Resume page fallback: the ••• menu has no «Удалить» for published
+	// resumes — the trash button (data-qa=resume-delete) lives on /resume/<hash>.
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(cleanupBaseURL+"/resume/"+hash),
+		chromedp.Sleep(2500*time.Millisecond)); err != nil {
+		return fmt.Errorf("navigate /resume/%s: %w", short, err)
+	}
+	var resRaw string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(cleanupClickResumeDeleteJS, &resRaw)); err != nil {
+		return fmt.Errorf("resume-delete click: %w", err)
+	}
+	var res struct {
+		Clicked string `json:"clicked"`
+		HTML    string `json:"html"`
+	}
+	if err := json.Unmarshal([]byte(resRaw), &res); err != nil {
+		return fmt.Errorf("decode resume-delete state: %v (%.200s)", err, resRaw)
+	}
+	t.Logf("[%s] resume page delete: clicked=%q html=%.200s", short, res.Clicked, res.HTML)
+	if res.Clicked != "delete" {
+		return fmt.Errorf("resume-delete control not found/clickable on /resume/%s", short)
+	}
+	if err := cleanupSleep(ctx, 900*time.Millisecond); err != nil {
+		return err
+	}
+	if err := chromedp.Run(ctx, chromedp.Evaluate(cleanupDialogsDumpJS, &dialogsRaw)); err != nil {
+		return fmt.Errorf("dialogs dump: %w", err)
+	}
+	t.Logf("[%s] dialogs after resume-delete: %s", short, dialogsRaw)
+	if err := cleanupConfirmLoop(t, ctx, short, 3); err != nil {
+		return err
+	}
+	// 5. Poll the shard until the hash is gone (authoritative).
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("waiting for deletion: %w", err)
 		}
-		var wrap struct {
-			Status int    `json:"status"`
-			URL    string `json:"url"`
-			Body   string `json:"body"`
+		gone, err := cleanupShardGone(ctx, hash)
+		if err != nil {
+			return err
 		}
-		if err := cleanupEvalAwait(ctx, cleanupShardsFetch, &wrap); err != nil {
-			return fmt.Errorf("deletion poll fetch: %w", err)
-		}
-		if wrap.Status == 200 && cleanupIsHH(wrap.URL) &&
-			!strings.Contains(wrap.Body, hash) {
+		if gone {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("hash %s… still present after confirm clicks (HTTP %d)", cleanupShortHash(hash), wrap.Status)
+			var where string
+			_ = chromedp.Run(ctx, chromedp.Evaluate(`location.href`, &where))
+			return fmt.Errorf("hash %s… still present after confirm clicks (page %s)", short, where)
 		}
 		if err := cleanupSleep(ctx, 1500*time.Millisecond); err != nil {
 			return err
 		}
 	}
+}
+
+// cleanupConfirmLoop clicks scoped "Удалить" confirm controls up to n times
+// (dropdown item, then dialog button; a "none" result ends the loop).
+func cleanupConfirmLoop(t *testing.T, ctx context.Context, short string, n int) error {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		var confRaw string
+		if err := chromedp.Run(ctx, chromedp.Evaluate(cleanupClickConfirmJS, &confRaw)); err != nil {
+			return fmt.Errorf("confirm click: %w", err)
+		}
+		var conf struct {
+			Clicked string `json:"clicked"`
+			Scope   string `json:"scope"`
+			Text    string `json:"text"`
+		}
+		if err := json.Unmarshal([]byte(confRaw), &conf); err != nil {
+			return fmt.Errorf("decode confirm state: %v (%.200s)", err, confRaw)
+		}
+		t.Logf("[%s] confirm #%d: clicked=%q scope=%q text=%q", short, i+1, conf.Clicked, conf.Scope, conf.Text)
+		if conf.Clicked != "confirm" {
+			return nil
+		}
+		if err := cleanupSleep(ctx, 900*time.Millisecond); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// cleanupShardGone reports whether the hash has disappeared from the
+// account's shard inventory (one in-page fetch; non-200 is an anomaly).
+func cleanupShardGone(ctx context.Context, hash string) (bool, error) {
+	var wrap struct {
+		Status int    `json:"status"`
+		URL    string `json:"url"`
+		Body   string `json:"body"`
+	}
+	if err := cleanupEvalAwait(ctx, cleanupShardsFetch, &wrap); err != nil {
+		return false, fmt.Errorf("shard fetch: %w", err)
+	}
+	if !cleanupIsHH(wrap.URL) {
+		return false, fmt.Errorf("page context left hh.ru (now %s)", wrap.URL)
+	}
+	if wrap.Status != 200 {
+		return false, fmt.Errorf("shard returned HTTP %d: %.200s", wrap.Status, wrap.Body)
+	}
+	return !strings.Contains(wrap.Body, hash), nil
 }
 
 // cleanupClickCardDeleteJS finds the resume card by its /resume/<hash> link,
@@ -339,23 +423,49 @@ func cleanupClickCardDeleteJS(hash string) string {
     card = card.parentElement;
   }
   if (card === document.body) return JSON.stringify({clicked: 'no-control', html: link.outerHTML.slice(0, 800)});
-  const del = [...card.querySelectorAll('button,[role="button"],a,[data-qa]')].find(el => {
-    if (!vis(el)) return false;
-    const sig = [el.dataset.qa, el.getAttribute('aria-label'), el.getAttribute('title'),
-      String(el.className), norm(el.textContent)].join(' ').toLowerCase();
-    return /delete|remove|trash|удали|корзин/.test(sig);
-  });
+  // Pass 1: explicit delete-like controls; pass 2: the actions/menu (•••)
+  // button that reveals the delete item in a portal — strict first, never a
+  // blind menu click when a direct delete control exists.
+  const sig = el => [el.dataset.qa, el.getAttribute('aria-label'), el.getAttribute('title'),
+    String(el.className), norm(el.textContent)].join(' ').toLowerCase();
+  const ctrls = [...card.querySelectorAll('button,[role="button"],a,[data-qa]')].filter(vis);
+  let del = ctrls.find(el => /delete|remove|trash|удали|корзин/.test(sig(el)));
+  let kind = 'delete';
+  if (!del) { del = ctrls.find(el => /menu|more|dots|actions|еще|ещё|действи/.test(sig(el))); kind = 'menu'; }
   if (!del) return JSON.stringify({clicked: 'no-control', html: card.outerHTML.slice(0, 2000)});
   const target = del.closest('button,[role="button"],a') || del;
   target.click();
-  return JSON.stringify({clicked: 'control', by: (target.dataset.qa || target.getAttribute('aria-label') ||
-    norm(target.textContent) || 'control').slice(0, 80)});
+  return JSON.stringify({clicked: 'control', kind, by: (target.dataset.qa || target.getAttribute('aria-label') ||
+    norm(target.textContent) || 'control').slice(0, 80), html: target.outerHTML.slice(0, 250)});
 })()`
 }
+
+// cleanupDialogsDumpJS reports the visible dialog/modal layers (text +
+// candidate buttons) — the confirmation evidence for the run log.
+const cleanupDialogsDumpJS = `(() => {
+  const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+  const vis = el => {
+    const st = getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+  const sel = '[role="dialog"],[class*="modal"],[class*="Modal"],[class*="popup"],[class*="Popup"],[data-qa*="modal"],[data-qa*="popup"],[data-qa*="confirm"]';
+  const ds = [...document.querySelectorAll(sel)].filter(vis).slice(0, 4);
+  return JSON.stringify(ds.map(d => ({
+    cls: String(d.className).slice(0, 120),
+    text: norm(d.innerText).slice(0, 250),
+    buttons: [...d.querySelectorAll('button,[role="button"],a')].map(b => norm(b.textContent)).filter(Boolean).slice(0, 10)
+  })));
+})()`
 
 // cleanupClickConfirmJS clicks the first visible out-of-card clickable whose
 // text is a delete action (dropdown item or dialog button; cards excluded —
 // the confirm layer always renders in a portal/menu).
+// cleanupClickConfirmJS clicks the first "Удалить" confirm control INSIDE a
+// visible dialog/menu scope (magritte modal/drop containers) — real controls
+// only. Document-wide matching is deliberately avoided: bare wrappers and
+// the cookie banner polluted it once (T31 fix round live evidence).
 const cleanupClickConfirmJS = `(() => {
   const norm = s => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
   const vis = el => {
@@ -364,14 +474,47 @@ const cleanupClickConfirmJS = `(() => {
     const r = el.getBoundingClientRect();
     return r.width > 0 && r.height > 0;
   };
-  const cands = [...document.querySelectorAll('button,[role="button"],a,[data-qa]')].filter(el => {
+  const grab = root => [...root.querySelectorAll('button,[role="button"],[role="menuitem"],a')].filter(el => {
     if (!vis(el) || el.closest('a[href*="/resume/"]')) return false;
     return norm(el.textContent).includes('удалит');
   });
-  if (!cands.length) return JSON.stringify({clicked: 'none'});
-  const el = cands[0].closest('button,[role="button"],a') || cands[0];
-  el.click();
-  return JSON.stringify({clicked: 'confirm', text: norm(el.textContent).slice(0, 60)});
+  const scopes = [...document.querySelectorAll('[role="dialog"],[class*="modal"],[class*="Modal"],[class*="drop"],[class*="Drop"]')].filter(vis);
+  for (const s of scopes) {
+    const hit = grab(s)[0];
+    if (hit) {
+      hit.click();
+      return JSON.stringify({clicked: 'confirm', scope: String(s.className).slice(0, 60),
+        text: norm(hit.textContent).slice(0, 60)});
+    }
+  }
+  return JSON.stringify({clicked: 'none'});
+})()`
+
+// cleanupClickResumeDeleteJS clicks the trash button (data-qa=resume-delete)
+// on the owner view of one resume — the live-verified delete path for
+// published resumes whose ••• menu carries no delete item.
+const cleanupClickResumeDeleteJS = `(() => {
+  const vis = el => {
+    const st = getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+  const btn = document.querySelector('[data-qa="resume-delete"]');
+  if (!btn || !vis(btn)) return JSON.stringify({clicked: 'none', html: (btn ? 'not visible' : 'absent')});
+  btn.click();
+  return JSON.stringify({clicked: 'delete'});
+})()`
+
+// cleanupDismissCookieBannerJS closes the "используем cookies" notice once
+// so its wrapper stops polluting later click matching (hygiene, not a
+// resume action).
+const cleanupDismissCookieBannerJS = `(() => {
+  const norm = s => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const btn = [...document.querySelectorAll('button,[role="button"]')].find(b => norm(b.textContent) === 'понятно');
+  if (!btn) return 'absent';
+  btn.click();
+  return 'dismissed';
 })()`
 
 // --- exploration dump (HH_CLEANUP_DRY=1) ----------------------------------------
@@ -410,6 +553,11 @@ func cleanupOpenResumes(t *testing.T, ctx context.Context) {
 	t.Helper()
 	var state, raw string
 	err := chromedp.Run(ctx,
+		// Desktop layout: hh serves the mobile UI (root-mobile-- classes) at
+		// the default 800x600 headless viewport, where the delete controls
+		// differ — force desktop metrics before the first navigation
+		// (T31 fix round, 2026-09-26).
+		chromedp.EmulateViewport(1440, 900),
 		chromedp.Navigate(cleanupBaseURL+"/applicant/resumes"),
 		chromedp.Poll(`(() => {
   const t = (document.body ? document.body.innerText : '').replace(/\u00a0/g, ' ');
@@ -434,7 +582,9 @@ func cleanupOpenResumes(t *testing.T, ctx context.Context) {
 		t.Fatalf("BLOCKED: not authenticated on %s (state=%q) — session cookies are invalid or expired for browser use; page text head: %q",
 			page.URL, state, page.Text)
 	}
-	t.Logf("opened %s (authenticated)", page.URL)
+	var dismissed string
+	_ = chromedp.Run(ctx, chromedp.Evaluate(cleanupDismissCookieBannerJS, &dismissed))
+	t.Logf("opened %s (authenticated, cookie banner: %s)", page.URL, dismissed)
 }
 
 // --- browser / cookies (isolation invariant: throwaway profile, .hh.ru only) ----
