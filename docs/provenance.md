@@ -1,7 +1,7 @@
 # Provenance — происхождение идей и заимствований
 
 Этот документ фиксирует, что и откуда изучалось при создании hhauto.
-Дата ревизии: 2026-09-24. Источник требований: [PLAN.md §11](PLAN.md).
+Дата ревизии: 2026-09-26. Источник требований: [PLAN.md §11](PLAN.md).
 
 ## Текущий статус: код доноров не копировался
 
@@ -25,7 +25,8 @@
 | `rycln/hhraiser` (Go) | MIT | Алгоритм расписания автоподнятия (times + jitter), идея webhook-уведомлений |
 | `Zoomish/go-hhru-api` (Go) | MIT | Retry-поведение на 429/503 — точечно, переосмыслено в собственных лимитерах hhapi |
 | `celloopa/ghosted`, `valentino7504/jobtrack` (Go) | MIT | Паттерны воронки и локальной истории откликов (идеи) |
-| `yo61/jobhound` | Apache-2.0 | Event-based модель статусов как идея для схем событий |
+| `yo61/jobhound` | Apache-2.0 | Event-based модель статусов как идея для схем событий || `CloakHQ/CloakBrowser` (обёртки Python/JS; Chromium-бинарник) | MIT (код обёрток); бинарник — отдельная BINARY-LICENSE CloakHQ | T32: механика автодонлоада stealth-хромиума — формат кэша `~/.cloakbrowser/chromium-<ver>[-pro]`, маркеры автообновления `latest[_pro]_version_<tag>`, схема архивов и SHA256SUMS (изучено по `cloakbrowser/config.py`, `browser.py`, README); семантика humanize-профиля (`humanize=True`, preset `careful` = медленнее и аккуратнее) и консервативного stealth-набора флагов. Код не копировался; Go-реализация (`internal/browser`) написана с нуля. В рантайме hhauto может скачать бинарник — его лицензия принадлежит CloakHQ |
+| `enowdev/cloak-go` (Go) | MIT | T32: референс осуществимости Go-порта cloakbrowser поверх chromedp (скачивание + верификация + stealth-аргументы + запуск). Код и зависимость не использовались — собственный пакет `internal/browser` |
 
 Анти-примеры (сознательно не использовались):
 

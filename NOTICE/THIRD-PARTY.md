@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Зависимости и источники-доноры проекта hhauto. Дата ревизии: 2026-09-24.
+Зависимости и источники-доноры проекта hhauto. Дата ревизии: 2026-09-26.
 
 ## Go-зависимости (прямые, из go.mod)
 
@@ -48,6 +48,8 @@ stdlib Go; апстрим — BSD-3, файла LICENSE в module cache моду
 | celloopa/ghosted | MIT | Паттерны воронки (идея) |
 | valentino7504/jobtrack | MIT | Паттерны локальной истории (идея) |
 | yo61/jobhound | Apache-2.0 | Event-based модель статусов (идея) |
+| CloakHQ/CloakBrowser | MIT (обёртки); бинарник — BINARY-LICENSE CloakHQ | T32: автодонлоад stealth-хромиума (кэш `~/.cloakbrowser`, маркеры версий, SHA256SUMS), humanize-профиль (humanize + preset careful), stealth-флаги; код не копировался, рантайм-бинарник лицензируется CloakHQ отдельно |
+| enowdev/cloak-go | MIT | T32: референс Go-порта cloakbrowser поверх chromedp; зависимость не добавлялась |
 
 Анти-примеры, не вошедшие намеренно: `feder-cr/AIHawk` (AGPL-3.0, archived —
 копирование исключено), `Vadim-Matsul/hh-ai-responder` (Other — избегать).

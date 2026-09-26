@@ -34,6 +34,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -41,6 +42,7 @@ import (
 	"github.com/chromedp/chromedp"
 
 	"hhauto/internal/ai"
+	"hhauto/internal/browser"
 	"hhauto/internal/config"
 	"hhauto/internal/features/featurekit"
 	"hhauto/internal/features/kit11"
@@ -144,7 +146,13 @@ type HeadlessFiller struct {
 	Log *slog.Logger
 	Now func() time.Time
 	// Chrome overrides executable discovery (tests). nil = FindChrome.
+	// Ignored when Browser is set.
 	Chrome func() (string, error)
+	// Browser resolves the executable through the shared browser subsystem
+	// (T32: HHAUTO_CHROME_PATH → PATH → cloakbrowser cache → auto-download).
+	// nil = the legacy FindChrome chain without cache/download (прежнее
+	// поведение).
+	Browser browser.Provider
 	// clickSubmit overrides the in-page submit click (tests). nil = the
 	// chromedp Evaluate. Returns ErrNoSubmitButton when the DOM has no
 	// clickable submit control (no side effect could happen).
@@ -382,19 +390,31 @@ func (h *HeadlessFiller) Fill(ctx context.Context, req FillRequest) (FillResult,
 	return res, nil
 }
 
-// newBrowser prepares a throwaway-profile chromedp run context: finds
-// Chrome, wires the optional no-auth proxy, arms the page timeout. The
+// newBrowser prepares a throwaway-profile chromedp run context: resolves
+// Chrome (provider chain or legacy discovery), applies the preset stealth
+// flags, wires the optional no-auth proxy, arms the page timeout. The
 // returned cancel stops the browser and removes the profile dir (the run
 // context's own cancel must be called first by the caller).
 func (h *HeadlessFiller) newBrowser(ctx context.Context, req FillRequest) (context.Context, func(), error) {
 	// 1. Chrome discovery fails fast, before any directory or process work.
-	lookup := h.Chrome
-	if lookup == nil {
-		lookup = FindChrome
-	}
-	chromePath, err := lookup()
-	if err != nil {
-		return nil, nil, err
+	var chromePath string
+	cleanupChrome := func() {}
+	if h.Browser != nil {
+		var err error
+		chromePath, cleanupChrome, err = h.Browser.Chrome(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		lookup := h.Chrome
+		if lookup == nil {
+			lookup = FindChrome
+		}
+		var err error
+		chromePath, err = lookup()
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	// 2. Proxy: no-auth flag only (typed refusal otherwise).
@@ -416,6 +436,9 @@ func (h *HeadlessFiller) newBrowser(ctx context.Context, req FillRequest) (conte
 		chromedp.ExecPath(chromePath),
 		chromedp.UserDataDir(dir),
 	)
+	for _, f := range h.stealthFlags() {
+		opts = append(opts, chromedp.Flag(f.Name, f.Value))
+	}
 	if server != "" {
 		opts = append(opts, chromedp.ProxyServer(server))
 	}
@@ -432,9 +455,28 @@ func (h *HeadlessFiller) newBrowser(ctx context.Context, req FillRequest) (conte
 		cancelRun()
 		cancelBrowser()
 		cancelAlloc()
+		cleanupChrome()
 		_ = os.RemoveAll(dir)
 	}
 	return runCtx, cancel, nil
+}
+
+// stealthFlags maps the [browser] preset onto the launch flag set
+// (careful = the conservative stealth pair; zero value = none).
+func (h *HeadlessFiller) stealthFlags() []browser.StealthFlag {
+	flags, err := browser.StealthFlags(h.Cfg.Browser.Preset)
+	if err != nil {
+		h.log().Warn("testsolve: браузерный preset проигнорирован", "err", err)
+		return nil
+	}
+	return flags
+}
+
+// humanize reports the [browser].humanize toggle. A zero-value config
+// keeps the legacy single-pass fill — the toggle is activated by the
+// config defaults (nil→true in applyDefaults), never implicitly.
+func (h *HeadlessFiller) humanize() bool {
+	return h.Cfg.Browser.Humanize != nil && *h.Cfg.Browser.Humanize
 }
 
 // navigate opens the form URL and enforces the allow-list on the final
@@ -481,12 +523,17 @@ func (h *HeadlessFiller) extractPage(ctx context.Context) (extractedPage, error)
 	return page, nil
 }
 
-// fillFields applies the fill operations in one JS pass; the count of
-// unanswered fields is reported (never guessed).
+// fillFields applies the fill operations; with humanize enabled the ops
+// run one by one with the human cadence (chunked typing, micro-delays,
+// smooth focus), otherwise in one legacy JS pass; the count of unanswered
+// fields is reported either way (never guessed).
 func (h *HeadlessFiller) fillFields(ctx context.Context, fields []extractedField, answers []AnswerEntry) (int, error) {
 	ops, unfilled := planFillOps(fields, answers)
 	if len(ops) == 0 {
 		return unfilled, nil
+	}
+	if h.humanize() {
+		return h.fillFieldsHumanized(ctx, ops, unfilled)
 	}
 	var fillRes string
 	if err := chromedp.Run(ctx, chromedp.Evaluate(fillJS(ops), &fillRes)); err != nil {
@@ -494,6 +541,104 @@ func (h *HeadlessFiller) fillFields(ctx context.Context, fields []extractedField
 	}
 	return unfilled, nil
 }
+
+// fillFieldsHumanized applies the ops with the humanize cadence: smooth
+// focus + chunked typing for text values, paced single steps for
+// select/radio/check. The unfilled semantics are identical to the batched
+// path, and pacing never extends the page timeout (Wait honors ctx).
+func (h *HeadlessFiller) fillFieldsHumanized(ctx context.Context, ops []fillOp, unfilled int) (int, error) {
+	pacer, err := browser.NewPacer(h.Cfg.Browser.Preset, time.Now().UnixNano())
+	if err != nil {
+		return unfilled, err
+	}
+	for _, step := range typePlanSteps(ops, pacer) {
+		if err := pacer.Wait(ctx, browser.PaceAction); err != nil {
+			return unfilled, err
+		}
+		var res string
+		if err := chromedp.Run(ctx, chromedp.Evaluate(humanFillJS(step), &res)); err != nil {
+			return unfilled, fmt.Errorf("testsolve: fill: %w", err)
+		}
+	}
+	return unfilled, nil
+}
+
+// humanStep is one humanize fill step: a typed chunk of a text value
+// (typed=true, first/last mark the focus/change edges) or a whole
+// non-text op.
+type humanStep struct {
+	op    fillOp
+	chunk browser.TypeChunk
+	typed bool
+	first bool
+	last  bool
+}
+
+// typePlanSteps projects the fill ops onto cadence steps: text values
+// split through browser.TypePlan (chunk/cap from the preset), everything
+// else stays one step.
+func typePlanSteps(ops []fillOp, pacer *browser.Pacer) []humanStep {
+	var steps []humanStep
+	for _, op := range ops {
+		if op.Kind == "set" {
+			plan := browser.TypePlan(op.Value, pacer.Chunk(), pacer.MaxTyped())
+			for i, ch := range plan {
+				steps = append(steps, humanStep{
+					op: op, chunk: ch, typed: true,
+					first: i == 0, last: i == len(plan)-1,
+				})
+			}
+			continue
+		}
+		steps = append(steps, humanStep{op: op})
+	}
+	return steps
+}
+
+// humanFillJS applies one cadence step. Text steps focus the control on
+// the first chunk (the real focus event), set the value through the
+// native prototype setter up to the chunk boundary and fire input per
+// chunk; the last chunk adds change. Non-text steps reproduce the fillJS
+// behavior for a single op. The control-index resolution mirrors fillJS.
+func humanFillJS(s humanStep) string {
+	opJSON, _ := json.Marshal(s.op)
+	return `(() => {
+  const op = ` + string(opJSON) + `;
+  const typed = ` + jsBool(s.typed) + `, first = ` + jsBool(s.first) + `, last = ` + jsBool(s.last) + `;
+  const to = ` + itoa(s.chunk.To) + `;
+  const controls = [...document.querySelectorAll('input,textarea,select')];
+  const fire = (el, ts) => { for (const t of ts) el.dispatchEvent(new Event(t, {bubbles: true})); };
+  const els = (op.ctrls || []).map(i => controls[i]).filter(Boolean);
+  if (!els.length) return JSON.stringify({filled: 0});
+  const el = els[0];
+  if (el.disabled || el.readOnly) return JSON.stringify({filled: 0});
+  if (typed) {
+    if (first) el.focus();
+    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, op.value.slice(0, to));
+    if (last) { fire(el, ['input', 'change']); } else { fire(el, ['input']); }
+  } else if (op.kind === 'select') {
+    if (el.tagName !== 'SELECT' || op.index >= el.options.length) return JSON.stringify({filled: 0});
+    el.selectedIndex = op.index; fire(el, ['input', 'change']);
+  } else if (op.kind === 'radio') {
+    el.click();
+  } else if (op.kind === 'check') {
+    if (el.checked !== op.checked) el.click();
+  }
+  return JSON.stringify({filled: 1});
+})()`
+}
+
+// jsBool renders a Go bool as a JS literal.
+func jsBool(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+// itoa is a tiny strconv.Itoa alias for the JS builders.
+func itoa(n int) string { return strconv.Itoa(n) }
 
 // domSnapshot serializes the filled DOM (the artifact; screenshots forbidden).
 func (h *HeadlessFiller) domSnapshot(ctx context.Context) (string, error) {

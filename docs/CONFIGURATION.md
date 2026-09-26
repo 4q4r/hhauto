@@ -244,6 +244,12 @@
 # abort_on_password_field = true        # forced true (anti-phishing)
 # page_timeout_sec = 20
 
+[browser]
+# auto_download = true                  # auto-download the cloakbrowser chromium when no Chrome is found
+# humanize = true                       # human-like input in the fillers (typing cadence, micro-delays)
+# preset = "careful"                    # careful (default) = stealth launch flags + slower pacing; default = plain
+# channel = "auto"                      # auto | free | pro (pro = cached builds only; licensed download out of scope)
+
 [email]
 # smtp_host = ""
 # smtp_port = 587                       # STARTTLS mandatory; 465 = implicit TLS
@@ -472,6 +478,25 @@ remote+RU, 2026-09-25: name=28, description=319, все поля=375),
   пингов, максимум 3, список или ИИ.
 - `schedule`: джиттер расписаний, политика пропущенных (`skip | run_once`)
   и потолок догоняющего запуска.
+
+### `[browser]`
+Общая браузерная подсистема (T32): единая точка резолва Chrome для
+headless-филлера тестов и браузерного редактора резюме. Цепочка:
+`HHAUTO_CHROME_PATH` → `PATH` → кэш cloakbrowser (`~/.cloakbrowser`) →
+автодонлоад.
+- `auto_download` (дефолт true): скачать cloakbrowser-хромиум (свободная
+  сборка с GitHub Releases, ~200 МБ; SHA-256 сверяется, когда источник
+  публикует SHA256SUMS; вторичные URL — `CLOAKBROWSER_DOWNLOAD_URL`,
+  версия — `CLOAKBROWSER_VERSION`).
+- `humanize` (дефолт true): человекоподобный ввод в филлерах — плавный
+  фокус, набор текста чанками с микроф-задержками, пейсинг действий.
+- `preset`: `careful` (дефолт) — консервативный stealth-набор флагов
+  запуска (`--disable-blink-features=AutomationControlled`, отключение
+  `--enable-automation`) и медленный аккуратный пейсинг; `default` — без
+  доп. флагов, обычный пейсинг.
+- `channel`: `auto` (маркер автообновления или закреплённая свободная
+  сборка), `free` (только закреплённая), `pro` (только кэшированные
+  pro-сборки; лицензионная загрузка вне v1).
 
 ## Проверка
 

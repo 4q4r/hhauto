@@ -49,6 +49,7 @@ import (
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 
+	"hhauto/internal/browser"
 	"hhauto/internal/config"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/store"
@@ -135,7 +136,15 @@ type EditorOptions struct {
 	Verify  ContentReader
 	// Browser overrides the chromedp session factory (tests). nil = real.
 	Browser BrowserFactory
-	Log     *slog.Logger
+	// ChromeProvider resolves the executable through the shared browser
+	// subsystem (T32: HHAUTO_CHROME_PATH → PATH → cloakbrowser cache →
+	// auto-download). nil = the legacy findEditorChrome chain (прежнее
+	// поведение). Used by the real factory only.
+	ChromeProvider browser.Provider
+	// BrowserCfg carries the [browser] section: the careful-preset stealth
+	// launch flags and the humanize pacing/typing cadence.
+	BrowserCfg config.Browser
+	Log        *slog.Logger
 }
 
 // ChromeEditorRunner is the chromedp-backed EditorRunner.
@@ -693,12 +702,27 @@ func findEditorChrome() (string, error) {
 // the caller degrades to the manual-apply path.
 var ErrChromeMissingEditor = errors.New("autoclone: Chrome не найден (укажите HHAUTO_CHROME_PATH или установите chromium)")
 
-// startChrome is the real BrowserFactory: throwaway profile, session
-// cookies injected before the first navigation, page timeout armed.
+// startChrome is the real BrowserFactory: shared-subsystem Chrome
+// resolution, preset stealth flags, throwaway profile, session cookies
+// injected before the first navigation, page timeout armed.
 func (r *ChromeEditorRunner) startChrome(ctx context.Context, ck []*http.Cookie) (browserRunner, func(), error) {
-	chromePath, err := findEditorChrome()
-	if err != nil {
-		return nil, nil, err
+	var chromePath string
+	cleanupChrome := func() {}
+	if r.opt.ChromeProvider != nil {
+		var err error
+		chromePath, cleanupChrome, err = r.opt.ChromeProvider.Chrome(ctx)
+		if err != nil {
+			cleanupChrome()
+			// Both sentinels stay discoverable: the editor degrades on
+			// ErrChromeMissingEditor, the provider's own error travels too.
+			return nil, nil, fmt.Errorf("%w: %v", ErrChromeMissingEditor, err)
+		}
+	} else {
+		var err error
+		chromePath, err = findEditorChrome()
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	dir, err := os.MkdirTemp("", "hhauto-editor-")
 	if err != nil {
@@ -708,6 +732,9 @@ func (r *ChromeEditorRunner) startChrome(ctx context.Context, ck []*http.Cookie)
 		chromedp.ExecPath(chromePath),
 		chromedp.UserDataDir(dir),
 	)
+	for _, f := range r.stealthFlags() {
+		opts = append(opts, chromedp.Flag(f.Name, f.Value))
+	}
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, opts...)
 	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
 	runCtx, cancelRun := context.WithTimeout(browserCtx, r.pageTimeout())
@@ -716,6 +743,7 @@ func (r *ChromeEditorRunner) startChrome(ctx context.Context, ck []*http.Cookie)
 		cancelRun()
 		cancelBrowser()
 		cancelAlloc()
+		cleanupChrome()
 		_ = os.RemoveAll(dir)
 	}
 
@@ -724,7 +752,31 @@ func (r *ChromeEditorRunner) startChrome(ctx context.Context, ck []*http.Cookie)
 		cleanup()
 		return nil, nil, fmt.Errorf("inject session cookies: %w", err)
 	}
-	return &chromeBrowser{ctx: runCtx, cfg: r.opt.Cfg}, cleanup, nil
+	return &chromeBrowser{ctx: runCtx, cfg: r.opt.Cfg, pacer: editorPacer(r.opt.BrowserCfg)}, cleanup, nil
+}
+
+// stealthFlags maps the [browser] preset onto the launch flag set
+// (careful = the conservative stealth pair; zero value = none).
+func (r *ChromeEditorRunner) stealthFlags() []browser.StealthFlag {
+	flags, err := browser.StealthFlags(r.opt.BrowserCfg.Preset)
+	if err != nil {
+		r.log.Warn("autoclone: браузерный preset проигнорирован", "err", err)
+		return nil
+	}
+	return flags
+}
+
+// editorPacer builds the humanize pacer for the [browser] section; nil
+// when humanize is off — a zero-value config keeps the legacy pacing.
+func editorPacer(cfg config.Browser) *browser.Pacer {
+	if cfg.Humanize == nil || !*cfg.Humanize {
+		return nil
+	}
+	p, err := browser.NewPacer(cfg.Preset, time.Now().UnixNano())
+	if err != nil {
+		return nil
+	}
+	return p
 }
 
 // injectCookiesAction writes the account session into the browser jar,
@@ -763,8 +815,9 @@ func injectCookiesAction(ck []*http.Cookie, domain string, secure bool) chromedp
 
 // chromeBrowser runs the per-screen work on an authenticated session.
 type chromeBrowser struct {
-	ctx context.Context
-	cfg config.AutoCloneImproveEditor
+	ctx   context.Context
+	cfg   config.AutoCloneImproveEditor
+	pacer *browser.Pacer // nil = legacy pacing (humanize off)
 }
 
 func (b *chromeBrowser) saveTimeout() time.Duration {
@@ -792,6 +845,12 @@ func (r *ChromeEditorRunner) pageTimeout() time.Duration {
 // caller's raw context carries no chromedp session.
 func (b *chromeBrowser) runScreen(_ context.Context, url string, ops []editorFillOp) ([]editorOpOutcome, error) {
 	ctx := b.ctx
+	// Humanize pacing between screens (a no-op when humanize is off).
+	if b.pacer != nil {
+		if err := b.pacer.Wait(ctx, browser.PaceAction); err != nil {
+			return nil, err
+		}
+	}
 	var finalURL string
 	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.Location(&finalURL)); err != nil {
 		return nil, fmt.Errorf("navigate %s: %w", url, err)
@@ -803,15 +862,17 @@ func (b *chromeBrowser) runScreen(_ context.Context, url string, ops []editorFil
 		return nil, fmt.Errorf("editor form did not render on %s: %w", url, err)
 	}
 
-	var raw string
-	if err := chromedp.Run(ctx, chromedp.Evaluate(fillEditorJS(ops), &raw)); err != nil {
-		return nil, fmt.Errorf("editor fill: %w", err)
-	}
-	outcomes, err := decodeOpOutcomes(raw)
+	var outcomes []editorOpOutcome
+	outcomes, err := b.fillOps(ctx, ops)
 	if err != nil {
 		return nil, err
 	}
 
+	if b.pacer != nil {
+		if err := b.pacer.Wait(ctx, browser.PaceAction); err != nil {
+			return nil, err
+		}
+	}
 	var clicked string
 	if err := chromedp.Run(ctx, chromedp.Evaluate(clickEditorSaveJS, &clicked)); err != nil {
 		return nil, fmt.Errorf("editor save click: %w", err)
@@ -826,6 +887,91 @@ func (b *chromeBrowser) runScreen(_ context.Context, url string, ops []editorFil
 		"location.href !== "+strconv.Quote(finalURL), nil,
 		chromedp.WithPollingTimeout(b.saveTimeout())))
 	return outcomes, nil
+}
+
+// fillOps applies the screen's fill ops: with the humanize pacer armed,
+// text ops go through chunked typing and the rest through the batched
+// fill; otherwise everything runs in the legacy single pass.
+func (b *chromeBrowser) fillOps(ctx context.Context, ops []editorFillOp) ([]editorOpOutcome, error) {
+	if b.pacer == nil {
+		return b.fillBatch(ctx, ops)
+	}
+	typed, rest := splitTypedOps(ops)
+	out := make([]editorOpOutcome, 0, len(ops))
+	manual, err := b.typeValues(ctx, typed)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, manual...)
+	if len(rest) == 0 {
+		return out, nil
+	}
+	batched, err := b.fillBatch(ctx, rest)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, batched...), nil
+}
+
+// splitTypedOps separates text-value ops (humanized typing) from the rest,
+// preserving order on both sides.
+func splitTypedOps(ops []editorFillOp) (typed, rest []editorFillOp) {
+	for _, op := range ops {
+		if op.Value != "" {
+			typed = append(typed, op)
+		} else {
+			rest = append(rest, op)
+		}
+	}
+	return typed, rest
+}
+
+// fillBatch applies ops through the legacy single-pass fill JS.
+func (b *chromeBrowser) fillBatch(ctx context.Context, ops []editorFillOp) ([]editorOpOutcome, error) {
+	var raw string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(fillEditorJS(ops), &raw)); err != nil {
+		return nil, fmt.Errorf("editor fill: %w", err)
+	}
+	return decodeOpOutcomes(raw)
+}
+
+// typeValues applies text ops with the humanize cadence: smooth focus on
+// the first chunk, chunked native-set slices with per-chunk input events,
+// the full event set on the last chunk. A control that never resolves
+// yields one not-found outcome for its op (the batched semantics).
+func (b *chromeBrowser) typeValues(ctx context.Context, ops []editorFillOp) ([]editorOpOutcome, error) {
+	out := make([]editorOpOutcome, 0, len(ops))
+	for _, op := range ops {
+		if err := b.pacer.Wait(ctx, browser.PaceFocus); err != nil {
+			return out, err
+		}
+		chunk, maxTyped := b.pacer.Chunk(), b.pacer.MaxTyped()
+		plan := browser.TypePlan(op.Value, chunk, maxTyped)
+		for i, ch := range plan {
+			first, last := i == 0, i == len(plan)-1
+			if !first {
+				if err := b.pacer.Wait(ctx, browser.PaceType); err != nil {
+					return out, err
+				}
+			}
+			var raw string
+			if err := chromedp.Run(ctx, chromedp.Evaluate(humanEditorSetJS(op, ch.To, first, last), &raw)); err != nil {
+				return out, fmt.Errorf("editor type fill: %w", err)
+			}
+			var oc editorOpOutcome
+			if err := json.Unmarshal([]byte(raw), &oc); err != nil {
+				return out, fmt.Errorf("decode typed outcome: %w", err)
+			}
+			if !oc.OK {
+				out = append(out, oc) // control never resolved — stop typing it
+				break
+			}
+			if last {
+				out = append(out, oc)
+			}
+		}
+	}
+	return out, nil
 }
 
 func decodeOpOutcomes(raw string) ([]editorOpOutcome, error) {
@@ -851,13 +997,10 @@ func editorReadyJS(ops []editorFillOp) string {
 })()`
 }
 
-// fillEditorJS resolves each op by its selector chain (label-text
-// fallback), sets the value through the native prototype setter and
-// fires the React state events.
-func fillEditorJS(ops []editorFillOp) string {
-	b, _ := json.Marshal(ops)
-	return `(() => {
-  const ops = ` + string(b) + `;
+// editorResolveHelpersJS is the shared in-page helper block for the fill
+// builders: label normalization, visibility and the two control
+// resolution strategies (selector chain first, label-text fallback).
+const editorResolveHelpersJS = `
   const norm = s => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
   const visible = el => {
     const st = getComputedStyle(el);
@@ -889,7 +1032,15 @@ func fillEditorJS(ops []editorFillOp) string {
       if (texts.some(t => norm(t).includes(norm(label)))) return {el, by: 'label:' + label};
     }
     return null;
-  };
+  };`
+
+// fillEditorJS resolves each op by its selector chain (label-text
+// fallback), sets the value through the native prototype setter and
+// fires the React state events.
+func fillEditorJS(ops []editorFillOp) string {
+	b, _ := json.Marshal(ops)
+	return `(() => {
+  const ops = ` + string(b) + `;` + editorResolveHelpersJS + `
   const fire = el => {
     for (const t of ['input', 'change', 'blur', 'focusout']) {
       el.dispatchEvent(new Event(t, {bubbles: ['blur', 'focusout'].includes(t) ? false : true}));
@@ -906,6 +1057,40 @@ func fillEditorJS(ops []editorFillOp) string {
   }
   return JSON.stringify(out);
 })()`
+}
+
+// humanEditorSetJS applies one humanize typing step to a single editor op:
+// the value prefix through `to` is set via the native prototype setter
+// (same resolution as the batched fill), the real focus event fires on
+// the first chunk, per-chunk input events in between and the full event
+// set on the last chunk — identical end state, human cadence.
+func humanEditorSetJS(op editorFillOp, to int, first, last bool) string {
+	opJSON, _ := json.Marshal(op)
+	return `(() => {
+  const op = ` + string(opJSON) + `;
+  const to = ` + strconv.Itoa(to) + `, first = ` + jsBool(first) + `, last = ` + jsBool(last) + `;` + editorResolveHelpersJS + `
+  const hit = bySelectors(op.selectors) || byLabel(op.label);
+  if (!hit) return JSON.stringify({field: op.field, ok: false, err: 'not_found'});
+  if (first) hit.el.focus();
+  const proto = hit.el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, 'value').set.call(hit.el, op.value.slice(0, to));
+  if (last) {
+    for (const t of ['input', 'change', 'blur', 'focusout']) {
+      hit.el.dispatchEvent(new Event(t, {bubbles: ['blur', 'focusout'].includes(t) ? false : true}));
+    }
+  } else {
+    hit.el.dispatchEvent(new Event('input', {bubbles: true}));
+  }
+  return JSON.stringify({field: op.field, ok: true, selector: hit.by});
+})()`
+}
+
+// jsBool renders a Go bool as a JS literal.
+func jsBool(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
 // clickEditorSaveJS clicks the first visible save-like control and
