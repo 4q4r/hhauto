@@ -83,7 +83,7 @@ func NewClient(cfg config.Account, endpoints config.APIEndpoints, dialer proxy.D
 	}
 	switch opts.transport {
 	case "", config.TransportTLSClient:
-		tp, terr := newTLSTransport(jar, cfg.UserAgent, opts.proxyURL, log)
+		tp, terr := newTLSTransport(jar, cfg.UserAgent, opts.proxyURL, opts.browserSpec, log)
 		if terr != nil {
 			return nil, terr
 		}

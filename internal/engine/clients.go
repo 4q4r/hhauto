@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"hhauto/internal/cookies"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/proxy"
+	"hhauto/internal/tlsfp"
 )
 
 // cookiePersister adapts cookies.Store to the per-account hhapi.CookiePersister
@@ -29,6 +31,26 @@ func (p cookiePersister) Save(ctx context.Context, accountID string, c []*http.C
 // registry was built from (an unknown ref is an error, never a direct
 // fallback). The tls-client transport consumes the proxy as a URL
 // (tls-client SetProxy), the legacy http transport as a raw dialer.
+// loadBrowserSpec picks up the captured browser hello for the 1:1 TLS
+// replay. Absent capture and stale/unparseable cache are WARN-level
+// fallbacks to the preset profile; only a present, schema-current spec
+// reaches the transport.
+func loadBrowserSpec(cfg *config.Config, log *slog.Logger) *tlsfp.Spec {
+	path := tlsfp.DefaultPath(cfg.General.DataDir)
+	spec, err := tlsfp.Load(path)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			log.Warn("engine: captured browser TLS spec unusable; using the preset profile (run hhauto tls-probe)", "error", err, "path", path)
+		} else {
+			log.Warn("engine: no captured browser TLS spec; TLS fingerprint approximates the browser (run hhauto tls-probe)", "path", path)
+		}
+		return nil
+	}
+	log.Info("engine: replaying the captured browser ClientHello for hh connections",
+		"browser_version", spec.BrowserVer, "captured_host", spec.Host, "ja3_md5", spec.JA3MD5)
+	return spec
+}
+
 func accountTransport(cfg *config.Config, reg proxy.Registry, acct config.Account, mode, id string) (proxy.Dialer, []hhapi.ClientOption, error) {
 	opts := []hhapi.ClientOption{hhapi.WithTransport(mode)}
 	if acct.ProxyRef == "" {
@@ -63,10 +85,17 @@ func accountTransport(cfg *config.Config, reg proxy.Registry, acct config.Accoun
 // seeded from the cookie store and every response persists back into it.
 // Unknown proxy references and missing user agents fail the whole build:
 // a half-configured account must not run.
+//
+// TLS layer (T37 v3): when a captured browser hello exists under
+// data_dir (hhauto tls-probe), every client replays it 1:1 instead of
+// approximating the browser with a shipped preset. A missing or
+// unusable capture degrades to the preset path with a WARN — it must
+// never fail the accounts build.
 func BuildAPIClients(ctx context.Context, cfg *config.Config, reg proxy.Registry, ckStore cookies.Store, log *slog.Logger) (map[string]hhapi.HHAPI, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("engine: nil config")
 	}
+	browserSpec := loadBrowserSpec(cfg, log)
 	ids := make([]string, 0, len(cfg.Accounts))
 	for id := range cfg.Accounts {
 		ids = append(ids, id)
@@ -83,6 +112,9 @@ func BuildAPIClients(ctx context.Context, cfg *config.Config, reg proxy.Registry
 		dialer, opts, err := accountTransport(cfg, reg, acct, mode, id)
 		if err != nil {
 			return nil, err
+		}
+		if browserSpec != nil {
+			opts = append(opts, hhapi.WithBrowserTLSSpec(browserSpec))
 		}
 		client, err := hhapi.NewClient(acct, cfg.API.Endpoints, dialer, log, opts...)
 		if err != nil {

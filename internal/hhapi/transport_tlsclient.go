@@ -54,6 +54,8 @@ import (
 	fhttp "github.com/bogdanfinn/fhttp"
 	tls_client "github.com/bogdanfinn/tls-client"
 	"github.com/bogdanfinn/tls-client/profiles"
+
+	"hhauto/internal/tlsfp"
 )
 
 // tlsClientTimeout mirrors the legacy http.Client.Timeout.
@@ -174,8 +176,9 @@ var headerOrder = []string{
 
 // clientOptions collects transport-level selections set via ClientOption.
 type clientOptions struct {
-	transport string // "" => config.TransportTLSClient
-	proxyURL  string // tls-client only: full proxy URL (SetProxy form)
+	transport   string      // "" => config.TransportTLSClient
+	proxyURL    string      // tls-client only: full proxy URL (SetProxy form)
+	browserSpec *tlsfp.Spec // tls-client only: captured browser hello (1:1 replay)
 }
 
 // ClientOption extends NewClient without changing the HHAPI contract or the
@@ -197,20 +200,55 @@ func WithProxyURL(raw string) ClientOption {
 	return func(o *clientOptions) { o.proxyURL = raw }
 }
 
+// WithBrowserTLSSpec switches the tls-client transport onto a 1:1 replay
+// of the captured cloakbrowser ClientHello (T37 v3): the TLS layer stops
+// approximating the browser through the closest shipped preset and sends
+// exactly what the browser sends — key shares, GREASE, ECH grease and
+// session ids are still regenerated per connection by uTLS, extension
+// order is permuted per connection like Chrome ≥110 does, and only the
+// HTTP/2 settings keep coming from the reference profile (TLS bytes are
+// the owner-visible fingerprint; H2 SETTINGS cannot be captured without
+// breaking certificate validation). nil or a spec that fails to build
+// falls back to the preset profile with a WARN — an unusable capture
+// must degrade loudly, never silently.
+func WithBrowserTLSSpec(spec *tlsfp.Spec) ClientOption {
+	return func(o *clientOptions) { o.browserSpec = spec }
+}
+
 // newTLSTransport builds the tls-client-backed transport for one account.
 // The shared net/http cookiejar stays the cookie authority (see the file
 // header); the profile is derived from the User-Agent with a WARN whenever
-// it is only an approximation.
-func newTLSTransport(jar *cookiejar.Jar, ua, proxyURL string, log *slog.Logger) (*tlsTransport, error) {
-	p := profileForUA(ua)
-	if !p.exact {
-		log.Warn("hhapi: tls-client profile approximates the configured User-Agent (UA-profile mismatch)",
-			"profile", p.name, "user_agent", ua)
-	}
+// it is only an approximation, unless a captured browser hello takes over
+// the TLS layer entirely (WithBrowserTLSSpec).
+func newTLSTransport(jar *cookiejar.Jar, ua, proxyURL string, browserSpec *tlsfp.Spec, log *slog.Logger) (*tlsTransport, error) {
 	opts := []tls_client.HttpClientOption{
 		tls_client.WithTimeoutSeconds(tlsClientTimeout),
-		tls_client.WithClientProfile(p.profile),
 		tls_client.WithNotFollowRedirects(),
+	}
+	if browserSpec != nil {
+		prof, err := browserClientProfile(ua, browserSpec)
+		if err != nil {
+			log.Warn("hhapi: captured browser TLS spec unusable, falling back to preset profile",
+				"error", err, "captured_from", browserSpec.BrowserVer, "captured_host", browserSpec.Host)
+		} else {
+			// Chrome ≥110 permutes extension order on every connection;
+			// uTLS reproduces that distribution (GREASE/padding/PSK stay
+			// positionally fixed). A frozen captured order would itself
+			// be a replay signal.
+			opts = append(opts, tls_client.WithClientProfile(prof), tls_client.WithRandomTLSExtensionOrder())
+			log.Info("hhapi: tls-client replays the captured browser ClientHello (1:1)",
+				"browser_version", browserSpec.BrowserVer,
+				"captured_host", browserSpec.Host,
+				"ja3_md5", browserSpec.JA3MD5)
+		}
+	}
+	if len(opts) == 2 { // no browser spec in play: preset profile from the UA
+		p := profileForUA(ua)
+		if !p.exact {
+			log.Warn("hhapi: tls-client profile approximates the configured User-Agent (UA-profile mismatch)",
+				"profile", p.name, "user_agent", ua)
+		}
+		opts = append(opts, tls_client.WithClientProfile(p.profile))
 	}
 	tc, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), opts...)
 	if err != nil {
@@ -222,6 +260,37 @@ func newTLSTransport(jar *cookiejar.Jar, ua, proxyURL string, log *slog.Logger) 
 		}
 	}
 	return &tlsTransport{tc: tc, jar: jar}, nil
+}
+
+// browserClientProfile builds the tls-client profile whose TLS layer is
+// the captured browser hello and whose HTTP/2 layer comes from the
+// reference preset profileForUA selects for the same User-Agent (closest
+// shipped settings/pseudo-header order; see WithBrowserTLSSpec).
+func browserClientProfile(ua string, spec *tlsfp.Spec) (profiles.ClientProfile, error) {
+	if spec == nil {
+		return profiles.ClientProfile{}, fmt.Errorf("hhapi: nil browser TLS spec")
+	}
+	id := spec.ClientHelloID()
+	if _, err := id.SpecFactory(); err != nil {
+		return profiles.ClientProfile{}, err
+	}
+	base := profileForUA(ua).profile
+	return profiles.NewClientProfile(
+		id,
+		base.GetSettings(),
+		base.GetSettingsOrder(),
+		base.GetPseudoHeaderOrder(),
+		base.GetConnectionFlow(),
+		base.GetPriorities(),
+		base.GetHeaderPriority(),
+		base.GetStreamID(),
+		base.GetAllowHTTP(),
+		base.GetHttp3Settings(),
+		base.GetHttp3SettingsOrder(),
+		base.GetHttp3PriorityParam(),
+		base.GetHttp3PseudoHeaderOrder(),
+		base.GetHttp3SendGreaseFrames(),
+	), nil
 }
 
 // tlsTransport adapts net/http requests onto the tls-client HttpClient.

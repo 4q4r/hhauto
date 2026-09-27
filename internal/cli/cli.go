@@ -97,6 +97,7 @@ func newRootCmd() *cobra.Command {
 		newAICmd(),
 		newConfigCmd(),
 		newDoctorCmd(),
+		newTLSProbeCmd(),
 		newBackupCmd(),
 		newVersionCmd(),
 	)
