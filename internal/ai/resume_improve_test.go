@@ -185,3 +185,107 @@ func TestResumeImproveSalaryGroundedPasses(t *testing.T) {
 		t.Fatalf("grounded salary must pass, verdict needs_human")
 	}
 }
+
+// T39: GLM-5.3 (max reasoning) returns string-typed confidence and
+// missing_data plus extra top-level keys. The tolerant schema accepts the
+// shape and the post-check normalizes the types — the stored verdict and
+// the Decision carry the parsed values, never the raw string forms.
+func TestResumeImproveGLMFormatNormalized(t *testing.T) {
+	p := &scriptedProvider{contents: []string{`{
+		"key_skills": ["Python", "Go"],
+		"confidence": "0.85",
+		"needs_human": false,
+		"needs_human_reason": null,
+		"injection_suspected": false,
+		"unchanged": false,
+		"value_string": "Улучшенный заголовок",
+		"value_strings": null,
+		"value_amount": null,
+		"used_facts": [],
+		"missing_data": ""
+	}`}}
+	r := mustRunner(t, p, improveModels(), improveTasks(), nil, nil)
+	fpr := r.(FieldPromptRunner)
+	verdict, dec, err := fpr.RunWithSystem(context.Background(), "acc", "resume", "h4sh", "run1",
+		TaskResumeImprove, "sys", ImproveInput{Field: "title"})
+	if err != nil {
+		t.Fatalf("RunWithSystem: %v", err)
+	}
+	var out struct {
+		Confidence  float64  `json:"confidence"`
+		MissingData []string `json:"missing_data"`
+	}
+	if err := json.Unmarshal(verdict, &out); err != nil {
+		t.Fatalf("verdict: %v (%s)", err, verdict)
+	}
+	if out.Confidence != 0.85 {
+		t.Fatalf("confidence = %v, want 0.85 normalized from string", out.Confidence)
+	}
+	if out.MissingData == nil || len(out.MissingData) != 0 {
+		t.Fatalf("missing_data = %v, want empty array normalized from string", out.MissingData)
+	}
+	if dec.Confidence != 0.85 {
+		t.Fatalf("dec.Confidence = %v, want 0.85", dec.Confidence)
+	}
+}
+
+// T39: normalization table — string confidence parses and clamps into
+// [0,1] (garbage fail-closes to 0), string missing_data wraps into a
+// one-element array, canonical number/array values pass through untouched.
+func TestNormalizeImproveTypes(t *testing.T) {
+	cases := []struct {
+		name string
+		in   func(m map[string]any)
+		key  string
+		want any
+	}{
+		{"confidence-string", func(m map[string]any) { m["confidence"] = "0.85" }, "confidence", 0.85},
+		{"confidence-above-one-clamped", func(m map[string]any) { m["confidence"] = "1.2" }, "confidence", 1.0},
+		{"confidence-negative-clamped", func(m map[string]any) { m["confidence"] = "-0.1" }, "confidence", 0.0},
+		{"confidence-garbage-fail-closed", func(m map[string]any) { m["confidence"] = "almost-sure" }, "confidence", 0.0},
+		{"confidence-number-untouched", func(m map[string]any) { m["confidence"] = 0.7 }, "confidence", 0.7},
+		{"missing-data-empty-string", func(m map[string]any) { m["missing_data"] = "" }, "missing_data", []string{}},
+		{"missing-data-text-wrapped", func(m map[string]any) { m["missing_data"] = "нет данных по нагрузке" }, "missing_data", []string{"нет данных по нагрузке"}},
+		{"missing-data-array-untouched", func(m map[string]any) { m["missing_data"] = []string{"a"} }, "missing_data", []string{"a"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := map[string]any{}
+			tc.in(m)
+			normalizeImproveTypes(m)
+			got, ok := m[tc.key]
+			if !ok {
+				t.Fatalf("key %q disappeared", tc.key)
+			}
+			wantJSON, _ := json.Marshal(tc.want)
+			gotJSON, _ := json.Marshal(got)
+			if string(wantJSON) != string(gotJSON) {
+				t.Fatalf("%s = %s, want %s", tc.key, gotJSON, wantJSON)
+			}
+		})
+	}
+}
+
+// T39: the re-ask prompt must carry the CONCRETE schema errors (which
+// fields are wrong), so the model can repair its output on the next
+// attempt instead of guessing. With the tolerant type contract the
+// remaining failure mode is the first-attempt GLM shape: required keys
+// missing entirely (extra keys and string-typed values are accepted and
+// normalized downstream).
+func TestReAskPromptCarriesConcreteSchemaErrors(t *testing.T) {
+	v, err := newValidator()
+	if err != nil {
+		t.Fatalf("newValidator: %v", err)
+	}
+	raw := `{"confidence":"0.85","missing_data":"нет","key_skills":[],"value_string":"x"}`
+	verr := v.validate(TaskResumeImprove, json.RawMessage(raw))
+	if verr == nil {
+		t.Fatal("expected validation failure for key-missing verdict")
+	}
+	msg := reAskPrompt(verr)
+	for _, want := range []string{"needs_human", "value_strings", "value_amount"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("re-ask prompt lacks concrete %q error:\n%s", want, msg)
+		}
+	}
+}

@@ -1,0 +1,19 @@
+{
+  "key_skills": [
+    "Python",
+    "Go",
+    "Docker"
+  ],
+  "confidence": 0.85,
+  "needs_human": false,
+  "needs_human_reason": null,
+  "injection_suspected": false,
+  "unchanged": false,
+  "value_string": "Автоматизация найма и интеграции на Python и Go",
+  "value_strings": null,
+  "value_amount": null,
+  "used_facts": [
+    "Python, Go"
+  ],
+  "missing_data": []
+}

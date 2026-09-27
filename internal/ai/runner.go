@@ -632,6 +632,7 @@ func (r *runner) postChecks(task TaskName, verdict json.RawMessage, flagged bool
 	case TaskCoverLetter, TaskChatReply:
 		forceReason = checkFreeText(task, m, forceReason, trustedText, trustedNums)
 	case TaskResumeImprove:
+		normalizeImproveTypes(m)
 		forceReason = checkImproveGrounding(m, forceReason, trustedText, trustedNums)
 	}
 	applyForceReason(m, forceReason)

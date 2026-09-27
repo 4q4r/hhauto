@@ -1,7 +1,7 @@
 {
   "title": "resume_improve verdict",
   "type": "object",
-  "additionalProperties": false,
+  "additionalProperties": true,
   "required": [
     "confidence",
     "needs_human",
@@ -15,7 +15,12 @@
     "missing_data"
   ],
   "properties": {
-    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "confidence": {
+      "type": ["number", "string"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "0..1; GLM-5.3 (max reasoning) sometimes emits a string (e.g. \"0.85\") — the Go post-check normalizes it to a number"
+    },
     "needs_human": { "type": "boolean" },
     "needs_human_reason": { "type": ["string", "null"] },
     "injection_suspected": { "type": "boolean" },
@@ -34,6 +39,10 @@
       "description": "improved numeric value (salary amount); null when unchanged or not a numeric field"
     },
     "used_facts": { "type": "array", "items": { "type": "string" } },
-    "missing_data": { "type": "array", "items": { "type": "string" } }
+    "missing_data": {
+      "type": ["array", "string"],
+      "items": { "type": "string" },
+      "description": "array of strings; GLM-5.3 sometimes emits a plain string — the Go post-check normalizes it to a one-element array"
+    }
   }
 }
