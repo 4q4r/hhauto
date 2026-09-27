@@ -556,6 +556,9 @@ func (r *runner) reaskLoop(ctx context.Context, provider Provider, req Request) 
 		}
 		usage.add(resp)
 		lastRaw = resp.Content
+		if extracted, ok := ExtractJSON(resp.Content); ok {
+			resp.Content = string(extracted)
+		}
 		lastErr = r.validator.validate(req.Task, json.RawMessage(resp.Content))
 		if lastErr == nil {
 			return resp, false, usage, nil
