@@ -411,8 +411,8 @@ func acceptsAutoResponse(raw json.RawMessage) (accepts, found bool) {
 }
 
 func newResumeCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "resume", Short: "Resume operations (list | lift)"}
-	cmd.AddCommand(newResumeListCmd(), newResumeLiftCmd())
+	cmd := &cobra.Command{Use: "resume", Short: "Resume operations (list | lift | improve)"}
+	cmd.AddCommand(newResumeListCmd(), newResumeLiftCmd(), newResumeImproveCmd())
 	return cmd
 }
 

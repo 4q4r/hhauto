@@ -38,8 +38,15 @@ type contentEditorAPI interface {
 // injectImproveTask ensures the resume_improve task exists when improve is
 // enabled: the model profile always comes from the improve section (single
 // source of truth); an explicit [ai.tasks.resume_improve] entry wins.
-func injectImproveTask(cfg *config.Config) {
-	if !cfg.Features.AutoClone.Improve.Enabled {
+// force=true (T35, the `resume improve` command) injects even when the
+// improve feature itself is disabled — the command is the enable signal;
+// an empty model profile is left to the command's fail-fast error.
+func injectImproveTask(cfg *config.Config, force bool) {
+	improve := cfg.Features.AutoClone.Improve
+	if !improve.Enabled && !force {
+		return
+	}
+	if improve.ModelProfile == "" {
 		return
 	}
 	if cfg.AI.Tasks == nil {
@@ -47,7 +54,7 @@ func injectImproveTask(cfg *config.Config) {
 	}
 	if _, ok := cfg.AI.Tasks["resume_improve"]; !ok {
 		cfg.AI.Tasks["resume_improve"] = config.AITask{
-			ModelProfile: cfg.Features.AutoClone.Improve.ModelProfile,
+			ModelProfile: improve.ModelProfile,
 		}
 	}
 }
@@ -107,6 +114,35 @@ func (e editorCookieSource) EditorCookies(ctx context.Context, accountID string)
 	return e.store.Load(ctx, accountID)
 }
 
+// buildEditorRunner constructs the T30 browser editor runner when
+// [features.autoclone.improve.editor] is enabled. accountID pins the
+// owning account for the plan (T35: the resume-improve command drives
+// BASE resumes — pinned skips the lineage resolution); "" keeps the strict
+// clone-lineage account lookup. verify is the read-back surface. Returns
+// (nil, nil) when the editor is disabled (the builder-update API path is
+// the apply surface).
+func buildEditorRunner(cfg *config.Config, db *store.DB, ckStore cookies.Store,
+	verify autoclone.ContentReader, accountID string, log *slog.Logger,
+) (autoclone.EditorRunner, error) {
+	improve := cfg.Features.AutoClone.Improve
+	if !improve.Editor.Enabled {
+		return nil, nil
+	}
+	if ckStore == nil {
+		return nil, fmt.Errorf("autoclone: improve.editor.enabled requires the cookie store (the browser needs the account session)")
+	}
+	return autoclone.NewChromeEditorRunner(autoclone.EditorOptions{
+		Cfg:            improve.Editor,
+		DB:             db,
+		Cookies:        editorCookieSource{store: ckStore},
+		Verify:         verify,
+		AccountID:      accountID,
+		ChromeProvider: sysbrowser.NewFromConfig(cfg.Browser, log),
+		BrowserCfg:     cfg.Browser,
+		Log:            log,
+	})
+}
+
 // buildImprove constructs the clone improver from the improve config.
 // Returns (nil, nil) when improve is disabled. Dry-run rides the general
 // config flag: the diff is computed and logged, nothing is applied.
@@ -133,23 +169,9 @@ func buildImprove(cfg *config.Config, runner ai.Runner, db interface {
 		return nil, err
 	}
 	editor := &lineageEditor{db: storeDB, apiFor: apiFor}
-	var browser autoclone.EditorRunner
-	if improve.Editor.Enabled {
-		if ckStore == nil {
-			return nil, fmt.Errorf("autoclone: improve.editor.enabled requires the cookie store (the browser needs the account session)")
-		}
-		browser, err = autoclone.NewChromeEditorRunner(autoclone.EditorOptions{
-			Cfg:            improve.Editor,
-			DB:             storeDB,
-			Cookies:        editorCookieSource{store: ckStore},
-			Verify:         editor,
-			ChromeProvider: sysbrowser.NewFromConfig(cfg.Browser, log),
-			BrowserCfg:     cfg.Browser,
-			Log:            log,
-		})
-		if err != nil {
-			return nil, err
-		}
+	browser, err := buildEditorRunner(cfg, storeDB, ckStore, editor, "", log)
+	if err != nil {
+		return nil, err
 	}
 	return autoclone.New(autoclone.Options{
 		API:      editor,
@@ -160,5 +182,40 @@ func buildImprove(cfg *config.Config, runner ai.Runner, db interface {
 		Cfg:      improve,
 		DryRun:   cfg.General.DryRun,
 		Log:      log,
+	})
+}
+
+// buildImproveForCommand constructs the improver for the standalone
+// `resume improve` command (T35): the content surface is the ACCOUNT's own
+// client (not the clone-lineage editor — base resumes have no lineage
+// row), the editor runner pins the account, and the config copy carries
+// the command's field/dry-run choices. cfg.Enabled is already forced by
+// the caller (the command is the enable signal).
+func buildImproveForCommand(rt *Runtime, improve config.AutoCloneImprove, accountID string, dryRun bool) (*autoclone.Improver, error) {
+	fpr, ok := rt.AI.(ai.FieldPromptRunner)
+	if !ok {
+		return nil, fmt.Errorf("autoclone: the AI runner does not support per-field prompts (FieldPromptRunner)")
+	}
+	editor, err := rt.contentEditorFor(accountID)
+	if err != nil {
+		return nil, err
+	}
+	browser, err := buildEditorRunner(rt.Cfg, rt.DB, rt.Cookies, editor, accountID, rt.Log)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := autoclone.NewPromptRegistry(improve)
+	if err != nil {
+		return nil, err
+	}
+	return autoclone.New(autoclone.Options{
+		API:      editor,
+		Editor:   browser,
+		Runner:   fpr,
+		DB:       rt.DB,
+		Registry: registry,
+		Cfg:      improve,
+		DryRun:   dryRun || rt.Cfg.General.DryRun,
+		Log:      rt.Log,
 	})
 }

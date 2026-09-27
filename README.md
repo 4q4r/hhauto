@@ -199,12 +199,13 @@ TOML, по умолчанию `~/.config/hhauto/hhauto.toml` (переопред
 |---|---|
 | `hhauto onboarding` | интерактивный мастер первого запуска |
 | `hhauto account add\|list\|check\|remove` | аккаунты: `add --id --proxy --cookies-file`, `check` — живая проверка сессии, `remove --yes` |
-| `hhauto run [--once] [--profile ID] [--feature X] [--account ID] [--dry-run]` | движок до прерывания; `--once` — разово обработать текущие задачи |
+| `hhauto run [--once] [--daemon] [--task-type T] [--profile ID] [--feature X] [--account ID] [--dry-run]` | движок до прерывания; `--once` — разово обработать текущие задачи; `--daemon` — цикл «отклики → сон 24ч» до стопа (exit 2 = сессия слетела); `--task-type all\|multiapply\|resume_improve` — параллельные инстансы с разными задачами (`all` — эксклюзивно, как раньше) |
 | `hhauto stop` | аварийный стоп: пишет `<data_dir>/STOP`, работающий движок останавливается аккуратно |
 | `hhauto status [--account ID]` | состояния аккаунтов, счётчики дня, ревью, ближайшие расписания |
 | `hhauto funnel [--days N]` | воронка: просмотрено → прошло фильтры → отклики → пропуски |
 | `hhauto vacancies search --profile ID [--limit N]` | превью каскада без отклика (никогда не откликается) |
 | `hhauto resume list \| lift [--account ID]` | снимки резюме; ручной подъём |
+| `hhauto resume improve --resume HASH [--account ID] [--fields title,about] [--dry-run] [--confirm]` | улучшение полей резюме через ИИ (T29-пайплайн) для любого резюме; базовое (не клон) — только с `--confirm`; без браузер-редактора применяется через API-update с деградацией в review |
 | `hhauto chats list\|show\|reply\|leave` | чаты: `reply --text` (ссылки запрещены), `leave --yes`, `list --state` |
 | `hhauto contacts export [--format csv\|json]` | экспорт собранных контактов |
 | `hhauto tests list\|show\|open\|solve ID` | тесты: артефакты ответов, URL внешней формы, принудительное решение черновиком |

@@ -85,7 +85,7 @@ func TestLineageEditorResolvesPerAccount(t *testing.T) {
 func TestBuildImproveEditorWiring(t *testing.T) {
 	cfg := improveWiringCfg()
 	cfg.AI.Tasks = map[string]config.AITask{}
-	injectImproveTask(cfg)
+	injectImproveTask(cfg, false)
 	cfg.Features.AutoClone.Improve.Editor.Enabled = true
 
 	db := cliTestStore(t)

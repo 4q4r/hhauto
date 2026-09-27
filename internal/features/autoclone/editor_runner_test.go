@@ -33,9 +33,11 @@ import (
 type fakeCookieSource struct {
 	byAccount map[string][]*http.Cookie
 	err       error
+	requested []string // accounts asked for (T35 pinned-account coverage)
 }
 
 func (f *fakeCookieSource) EditorCookies(_ context.Context, accountID string) ([]*http.Cookie, error) {
+	f.requested = append(f.requested, accountID)
 	if f.err != nil {
 		return nil, f.err
 	}

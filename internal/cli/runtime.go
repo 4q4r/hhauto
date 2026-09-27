@@ -76,6 +76,10 @@ type BuildOptions struct {
 	Feature    string // --feature: restrict the registry to this feature
 	Profile    string // --profile: restrict runs to this run id
 	LogLevel   string // --log-level: overrides log.level
+	// ResumeImprove (T35) force-injects the resume_improve AI task from
+	// [features.autoclone.improve].model_profile even when the improve
+	// feature is disabled — the standalone command is the enable signal.
+	ResumeImprove bool
 }
 
 // schedBinding records one engine.RegisterSchedule binding so status can
@@ -246,7 +250,7 @@ func Build(ctx context.Context, opts BuildOptions) (*Runtime, error) {
 		}
 	}
 
-	rt.AI, err = buildAI(cfg, rt.DB, rt.Log)
+	rt.AI, err = buildAI(cfg, rt.DB, rt.Log, opts.ResumeImprove)
 	if err != nil {
 		return fail(err)
 	}

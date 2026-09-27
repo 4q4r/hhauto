@@ -22,8 +22,8 @@ import (
 	"hhauto/internal/store"
 )
 
-func buildAI(cfg *config.Config, db *store.DB, log *slog.Logger) (ai.Runner, error) {
-	injectImproveTask(cfg)
+func buildAI(cfg *config.Config, db *store.DB, log *slog.Logger, forceImproveTask bool) (ai.Runner, error) {
+	injectImproveTask(cfg, forceImproveTask)
 	if len(cfg.AI.Tasks) == 0 {
 		return nil, nil
 	}
