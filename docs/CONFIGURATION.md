@@ -111,6 +111,27 @@
 # input_per_mtok_usd = 0.15
 # output_per_mtok_usd = 0.6
 
+# [ai.jev]                              # T33: Jev (System One) префильтр ПЕРЕД LLM
+                                        # Выключен по умолчанию (full AI). Когда включён,
+                                        # зачисленные задачи сначала классифицирует Jev-compatible
+                                        # эндпоинт: confidence >= порога -> вердикт БЕЗ вызова LLM,
+                                        # ниже порога / эндпоинт недоступен / кривой ответ -> LLM.
+                                        # Дешёвый быстрый путь не может сломать прогон.
+# enabled = false                       # false = режим full AI (раннер без префильтера)
+# endpoint = "https://api.typesafe.ai/v1/systemone"  # любой Jev-compatible URL (http/https)
+# api_key_env = "TYPESAFE_API_KEY"      # ключ ТОЛЬКО через переменную окружения (fail-fast на старте)
+# confidence_threshold = 0.85           # (0,1]; >= порога решает Jev, ниже — эскалация на LLM
+# tasks = ["message_classification", "link_detection", "contact_extraction"]
+                                        # только эти три задачи Jev-совместимы (классификация без
+                                        # генерации текста). Особенности: message_classification и
+                                        # link_detection решаются Jev полностью (по одному Choice на
+                                        # URL из input.urls); contact_extraction: уверенное «нет
+                                        # контактов» решается Jev, уверенное «да» эскалирует на LLM —
+                                        # Jev не может извлечь value/normalized/source_quote.
+                                        # Вердикты Jev проходят ту же строгую schema-валидацию,
+                                        # детерминированные post-checks и пишутся в ledger с
+                                        # Model="jev", Source="jev" (LLM-решения: Source="llm").
+
 [features]
 # resume_visibility = false
 # websocket_push = false

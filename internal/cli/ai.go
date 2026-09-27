@@ -66,6 +66,34 @@ func buildAI(cfg *config.Config, db *store.DB, log *slog.Logger) (ai.Runner, err
 	if db != nil {
 		ledger = aiLedgerBridge{db: db}
 	}
+	opts := []ai.RunnerOption{
+		ai.WithBudget(ai.BudgetConfig{
+			DailyTokens: cfg.AI.DailyBudgetTokens,
+			DailyUSD:    cfg.AI.DailyBudgetUSD,
+			OnExceed:    cfg.AI.OnBudgetExceed,
+			Pricing:     cfg.AI.Pricing,
+		}),
+	}
+	// T33: optional Jev prefilter. The key is resolved fail-fast like the
+	// provider keys above — a half-configured prefilter must not start.
+	if cfg.AI.Jev.Enabled {
+		key := ""
+		if cfg.AI.Jev.APIKeyEnv != "" {
+			key = os.Getenv(cfg.AI.Jev.APIKeyEnv)
+		}
+		if key == "" {
+			return nil, fmt.Errorf("ai: [ai.jev] enabled but api_key_env %s is not set (set the variable or disable ai.jev)", cfg.AI.Jev.APIKeyEnv)
+		}
+		tasks := make([]ai.TaskName, 0, len(cfg.AI.Jev.Tasks))
+		for _, t := range cfg.AI.Jev.Tasks {
+			tasks = append(tasks, ai.TaskName(t))
+		}
+		solver, err := ai.NewJevSolver(ai.NewJevClient(cfg.AI.Jev.Endpoint, key), cfg.AI.Jev.ConfidenceThreshold, tasks, log)
+		if err != nil {
+			return nil, fmt.Errorf("ai: jev: %w", err)
+		}
+		opts = append(opts, ai.WithJev(solver))
+	}
 	runner, err := ai.New(
 		providers,
 		cfg.AI.Models,
@@ -73,12 +101,7 @@ func buildAI(cfg *config.Config, db *store.DB, log *slog.Logger) (ai.Runner, err
 		ledger,
 		ai.NewMemoryCache(),
 		log,
-		ai.WithBudget(ai.BudgetConfig{
-			DailyTokens: cfg.AI.DailyBudgetTokens,
-			DailyUSD:    cfg.AI.DailyBudgetUSD,
-			OnExceed:    cfg.AI.OnBudgetExceed,
-			Pricing:     cfg.AI.Pricing,
-		}),
+		opts...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("ai: %w", err)

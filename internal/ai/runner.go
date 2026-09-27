@@ -106,7 +106,26 @@ type runner struct {
 	guard     *Guard
 	budget    *budgetGuard
 	budgetCfg BudgetConfig
+	jev       *JevSolver // optional prefilter; nil = full-AI mode (T33)
 	now       func() time.Time
+}
+
+// jev constants for prefilter-sourced decisions: Model marks the System-One
+// endpoint and PromptVer versions the solver's question mapping.
+const (
+	jevModelName = "jev"
+	jevPromptVer = "jev-1"
+)
+
+// WithJev installs the optional Jev (System One) prefilter (T33). nil keeps
+// full-AI mode. When set, enrolled tasks ([ai.jev].tasks) try Jev first: a
+// confident verdict is returned without an LLM call; low confidence,
+// unavailability or malformed answers escalate to the normal LLM pipeline.
+func WithJev(s *JevSolver) RunnerOption {
+	return func(r *runner) error {
+		r.jev = s
+		return nil
+	}
 }
 
 // New validates the whole reference graph up front (fail fast, no silent
@@ -246,6 +265,17 @@ func (r *runner) run(ctx context.Context, accountID, entityType, entityID, runID
 		return nil, Decision{}, fmt.Errorf("ai: encode input: %w", err)
 	}
 
+	// 0) Optional Jev prefilter (T33): enrolled tasks with a non-empty
+	// account try the System-One endpoint first. A decided verdict returns
+	// without touching the LLM pipeline (no cache, no budget — different
+	// service); low confidence, unavailability or malformed answers fall
+	// through to the full LLM path below (full-AI semantics preserved).
+	if r.jev != nil && accountID != "" && r.jev.Handles(task) {
+		if verdict, dec, done, err := r.jevRun(ctx, task, accountID, entityType, entityID, runID, inputJSON); done {
+			return verdict, dec, err
+		}
+	}
+
 	// Trusted convention: TrustedBlocks() rides in the system prompt (the
 	// stable prompt-cache prefix); everything else stays in the untrusted
 	// user block.
@@ -281,6 +311,7 @@ func (r *runner) run(ctx context.Context, accountID, entityType, entityID, runID
 		EntityID:    entityID,
 		RunID:       runID,
 		Model:       model.Model,
+		Source:      SourceLLM,
 		PromptVer:   promptVer,
 		InputDigest: inputDigest(inputJSON),
 		Injection:   flagged,
@@ -349,6 +380,61 @@ func (r *runner) run(ctx context.Context, accountID, entityType, entityID, runID
 		return verdict, dec, recErr
 	}
 	return verdict, dec, nil
+}
+
+// jevRun is the T33 prefilter path for one enrolled task: Jev verdict →
+// schema validation → the same deterministic post-checks and ledger record
+// as the LLM path. done=false means "escalate to the LLM" (undecided,
+// unavailable or invalid); done=true is terminal — including a record
+// failure, where the verdict is returned alongside the error (audit gap
+// visible, never silent) exactly like the main pipeline.
+func (r *runner) jevRun(ctx context.Context, task TaskName, accountID, entityType, entityID, runID string, inputJSON []byte) (json.RawMessage, Decision, bool, error) {
+	start := r.now()
+	verdict, conf, err := r.jev.Solve(ctx, task, json.RawMessage(inputJSON))
+	if err != nil {
+		r.log.Warn("ai: jev prefilter failed; escalating to llm", "task", string(task), "err", err)
+		return nil, Decision{}, false, nil
+	}
+	if verdict == nil {
+		r.log.Debug("ai: jev undecided; escalating to llm", "task", string(task), "confidence", conf)
+		return nil, Decision{}, false, nil
+	}
+	// Defense in depth: a Jev verdict must pass the same strict schema
+	// validation as an LLM verdict; a failure escalates instead of trusting.
+	if err := r.validator.validate(task, verdict); err != nil {
+		r.log.Warn("ai: jev verdict failed schema validation; escalating to llm", "task", string(task), "err", err)
+		return nil, Decision{}, false, nil
+	}
+	// Deterministic post-checks apply verbatim (guard flag wins, never
+	// blocks; offer/invitation still route to a human).
+	flagged, _ := r.guard.Inspect(string(inputJSON))
+	_, trustedNums := trustedSources("", inputJSON)
+	verdict = r.postChecks(task, verdict, flagged, "", trustedNums)
+
+	dec := Decision{
+		ID:          ulid.Make().String(),
+		CreatedAt:   r.now().UTC(),
+		AccountID:   accountID,
+		Task:        task,
+		EntityType:  entityType,
+		EntityID:    entityID,
+		RunID:       runID,
+		Model:       jevModelName,
+		Source:      SourceJev,
+		PromptVer:   jevPromptVer,
+		InputDigest: inputDigest(inputJSON),
+		Injection:   flagged,
+		Outcome:     "pending",
+	}
+	dec.LatencyMS = r.now().Sub(start).Milliseconds()
+	dec.Confidence = commonFloat(verdict, "confidence")
+	dec.NeedsHuman = commonBool(verdict, "needs_human")
+	dec.Injection = dec.Injection || commonBool(verdict, "injection_suspected")
+
+	if err := r.record(&dec, verdict); err != nil {
+		return verdict, dec, true, err
+	}
+	return verdict, dec, true, nil
 }
 
 // withTrustedBlocks appends the input's TrustedBlocks() to the system prompt
@@ -782,7 +868,8 @@ func (r *runner) record(dec *Decision, verdict json.RawMessage) error {
 		Decision: Decision{
 			ID: dec.ID, CreatedAt: dec.CreatedAt, AccountID: dec.AccountID,
 			Task: dec.Task, EntityType: dec.EntityType, EntityID: dec.EntityID,
-			RunID: dec.RunID, Model: dec.Model, PromptVer: dec.PromptVer,
+			RunID: dec.RunID, Model: dec.Model, Source: dec.Source,
+			PromptVer:   dec.PromptVer,
 			InputDigest: dec.InputDigest, Verdict: verdict,
 			Score: dec.Score, Confidence: dec.Confidence,
 			NeedsHuman: dec.NeedsHuman, Injection: dec.Injection,

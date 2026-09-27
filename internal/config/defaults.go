@@ -19,6 +19,11 @@ type boolPtrDefault struct {
 	val bool
 }
 
+type floatDefault struct {
+	dst *float64
+	val float64
+}
+
 // applyDefaults fills every unset (zero) value with the documented default
 // from docs/PLAN.md §5 so that a minimal TOML file yields a working config.
 //
@@ -80,6 +85,23 @@ func applyDefaults(c *Config) {
 	for _, d := range []intDefault{
 		{&c.Features.AutoClone.Improve.Editor.PageTimeoutSec, 120},
 		{&c.Features.AutoClone.Improve.Editor.SaveTimeoutSec, 20},
+	} {
+		if *d.dst == 0 {
+			*d.dst = d.val
+		}
+	}
+
+	// T33: Jev-compatible prefilter defaults (endpoint per the owner's
+	// live contract; threshold 0.85).
+	for _, d := range []stringDefault{
+		{&c.AI.Jev.Endpoint, "https://api.typesafe.ai/v1/systemone"},
+	} {
+		if *d.dst == "" {
+			*d.dst = d.val
+		}
+	}
+	for _, d := range []floatDefault{
+		{&c.AI.Jev.ConfidenceThreshold, 0.85},
 	} {
 		if *d.dst == 0 {
 			*d.dst = d.val

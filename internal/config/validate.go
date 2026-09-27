@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -341,6 +342,45 @@ func validateAI(c *Config) error {
 		if _, ok := c.AI.Models[t.ModelProfile]; !ok {
 			return fmt.Errorf("ai.tasks[%q].model_profile %q: unknown model", id, t.ModelProfile)
 		}
+	}
+	return validateJev(c)
+}
+
+// validateJev checks [ai.jev] (T33): the endpoint must be an absolute
+// http(s) URL, an enabled prefilter needs an api_key_env, at least one
+// enrolled task, and only the classification-only tasks may be enrolled;
+// the confidence threshold must lie in (0,1]. A disabled section stays
+// valid with defaults (endpoint and threshold are filled by applyDefaults).
+func validateJev(c *Config) error {
+	j := c.AI.Jev
+	// An empty endpoint is only acceptable while the prefilter is
+	// disabled: hand-built Configs may skip applyDefaults, and a disabled
+	// zero-value section must stay valid.
+	if j.Endpoint == "" {
+		if j.Enabled {
+			return fmt.Errorf("ai.jev.endpoint: required when ai.jev.enabled = true")
+		}
+	} else if u, err := url.Parse(j.Endpoint); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("ai.jev.endpoint %q: must be an absolute http(s) URL", j.Endpoint)
+	}
+	for _, t := range j.Tasks {
+		switch t {
+		case "message_classification", "link_detection", "contact_extraction":
+		default:
+			return fmt.Errorf("ai.jev.tasks: %q is not a jev-compatible task (allowed: message_classification, link_detection, contact_extraction)", t)
+		}
+	}
+	if !j.Enabled {
+		return nil
+	}
+	if j.APIKeyEnv == "" {
+		return fmt.Errorf("ai.jev.api_key_env: required when ai.jev.enabled = true (the key is read from the environment, never from the config file)")
+	}
+	if len(j.Tasks) == 0 {
+		return fmt.Errorf("ai.jev.tasks: at least one task is required when ai.jev.enabled = true")
+	}
+	if j.ConfidenceThreshold <= 0 || j.ConfidenceThreshold > 1 {
+		return fmt.Errorf("ai.jev.confidence_threshold %v: must be in (0,1]", j.ConfidenceThreshold)
 	}
 	return nil
 }
