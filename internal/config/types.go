@@ -334,9 +334,18 @@ type RunOverride struct {
 	LetterTemplate string `toml:"letter_template"`
 }
 
+// AutoLift mode vocabulary (T36): server_timer plans lifts from the hh
+// shard's nextTouchAt (falling back to updated_at + 4h per resume);
+// fixed_times is the legacy wall-clock schedule gated by the 4h store timer.
+const (
+	AutoLiftModeServerTimer = "server_timer"
+	AutoLiftModeFixedTimes  = "fixed_times"
+)
+
 // AutoLift configures resume auto-raising.
 type AutoLift struct {
 	Enabled        bool   `toml:"enabled"`
+	Mode           string `toml:"mode"`             // server_timer (default) | fixed_times
 	PerDay         int    `toml:"per_day"`          // default 6
 	Jitter         string `toml:"jitter"`           // e.g. "20-40m"
 	Respect4hTimer *bool  `toml:"respect_4h_timer"` // default true; explicit false respected

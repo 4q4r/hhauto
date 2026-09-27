@@ -46,6 +46,11 @@ type Resume struct {
 	// the serialized shape stays backwards compatible.
 	ParentResumeID string    `json:"parent_resume_id,omitempty"`
 	CreatedAt      time.Time `json:"created_at,omitempty"`
+
+	// T36 server lift timer: hh reports when the resume may be lifted next
+	// (_attributes.nextTouchAt, ms epoch or ISO string). Zero = the field
+	// was absent/null for this resume.
+	NextTouchAt time.Time `json:"next_touch_at,omitempty"`
 }
 
 // Salary is the vacancy salary band as published.

@@ -34,6 +34,7 @@ type floatDefault struct {
 func applyDefaults(c *Config) {
 	for _, d := range []stringDefault{
 		{&c.General.Timezone, "Local"},
+		{&c.Features.AutoLift.Mode, AutoLiftModeServerTimer},
 		{&c.Log.Level, "info"},
 		{&c.Log.Format, "text"},
 		{&c.API.Kind, "web"},

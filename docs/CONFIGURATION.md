@@ -137,10 +137,11 @@
 # websocket_push = false
 # emaildup = false                      # WF8: email-duplicate sends (consumed by contacts)
 [features.auto_lift]
-# enabled = false                       # WF1: 6 lifts/day (hh 4h server timer)
+# enabled = false                       # WF1: подъём по серверному таймеру hh (nextTouchAt)
+# mode = "server_timer"                 # server_timer (дефолт) | fixed_times (легаси-слоты)
 # per_day = 6
 # jitter = "20-40m"
-# respect_4h_timer = true
+# respect_4h_timer = true               # только для fixed_times
 [features.multiapply]
 # enabled = false                       # WF2: discovery -> filters -> apply
 # ai_filter = false
@@ -371,7 +372,12 @@ UA и заголовки, `rps` и `concurrency` — локальные лими
 Тумблеры фич. По умолчанию выключены: `auto_lift`, `multiapply`, `chatops`,
 `testsolve`, `interview`, `contacts`, `emaildup`, `warmup` — система без
 конфигурации ничего не отправляет. Ключевые ручки:
-- `auto_lift`: `per_day = 6`, `jitter = "20-40m"`, уважение серверного 4ч-таймера;
+- `auto_lift` (T36): `mode = "server_timer"` (дефолт) — план подъёмов из
+  шардового `nextTouchAt` (пусто → `updated_at + 4h`), один расчёт при
+  старте/после релогина, дальше локальный отсчёт 4ч + `jitter` от последнего
+  поднятия (шарда между подъёмами не перечитывается); если шард не отдаёт
+  `nextTouchAt` — фолбэк в легаси. `fixed_times` — прежнее поведение
+  (`per_day` слоты + `respect_4h_timer`);
 - `multiapply`: `ai_filter`, порог `min_match_percent`, исключение агентств,
   приоритизация онлайн-HR, дедуп с нативным автоответчиком hh;
 - `autoclone` (T26): когда пул вакансий рана исчерпан (всё подходящее уже

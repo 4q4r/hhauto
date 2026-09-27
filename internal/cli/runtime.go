@@ -329,7 +329,7 @@ func (rt *Runtime) buildFeatures() error {
 	stopped := func(ctx context.Context) bool { return rt.Kill != nil && rt.Kill.Tripped(ctx) }
 	lift := autolift.New(autolift.Options{
 		Config: *cfg, DB: rt.DB, APIFor: apiFor, ChainFor: chainFor,
-		Pacer: rt.Pacer, Log: rt.Log,
+		Pacer: rt.Pacer, Log: rt.Log, Queue: rt.Queue,
 	})
 	feats.Add(lift)
 	improver, err := buildImprove(cfg, rt.AI, rt.DB, rt.contentEditorFor, rt.Cookies, rt.Log)

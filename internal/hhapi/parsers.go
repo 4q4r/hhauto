@@ -132,6 +132,10 @@ func parseResumes(body []byte) ([]Resume, error) {
 		if created.IsZero() {
 			created = epochMS(m["created"])
 		}
+		nextTouch := epochMS(attrs["nextTouchAt"])
+		if nextTouch.IsZero() {
+			nextTouch = epochMS(m["nextTouchAt"])
+		}
 		if updated.IsZero() {
 			updated = timeFrom(m, "updated_at", "updatedAt", "modify_time")
 		}
@@ -146,6 +150,7 @@ func parseResumes(body []byte) ([]Resume, error) {
 
 			ParentResumeID: str(attrs, "parentResumeId"),
 			CreatedAt:      created,
+			NextTouchAt:    nextTouch,
 		})
 	}
 	return resumes, nil
