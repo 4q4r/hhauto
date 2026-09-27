@@ -38,23 +38,10 @@ func Validate(c *Config) error {
 	if err := validateAutoClone(c); err != nil {
 		return err
 	}
-	if err := validateAutoLift(c); err != nil {
-		return err
-	}
 	if err := validateBrowser(c); err != nil {
 		return err
 	}
 	return validateRuns(c)
-}
-
-// validateAutoLift checks the [features.auto_lift] mode vocabulary (T36).
-func validateAutoLift(c *Config) error {
-	switch c.Features.AutoLift.Mode {
-	case "", AutoLiftModeServerTimer, AutoLiftModeFixedTimes:
-	default:
-		return fmt.Errorf("features.auto_lift.mode %q: must be one of server_timer | fixed_times", c.Features.AutoLift.Mode)
-	}
-	return nil
 }
 
 // validateBrowser checks the [browser] section (T32). The section is

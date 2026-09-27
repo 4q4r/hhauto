@@ -100,7 +100,6 @@ resume_visibility = true
 enabled = false
 per_day = 6
 jitter = "20-40m"
-respect_4h_timer = true
 
 [features.multiapply]
 enabled = true

@@ -34,7 +34,6 @@ type floatDefault struct {
 func applyDefaults(c *Config) {
 	for _, d := range []stringDefault{
 		{&c.General.Timezone, "Local"},
-		{&c.Features.AutoLift.Mode, AutoLiftModeServerTimer},
 		{&c.Log.Level, "info"},
 		{&c.Log.Format, "text"},
 		{&c.API.Kind, "web"},
@@ -110,7 +109,6 @@ func applyDefaults(c *Config) {
 	}
 
 	for _, d := range []boolPtrDefault{
-		{&c.Features.AutoLift.Respect4hTimer, true},
 		{&c.Features.AutoClone.Autolift, true},
 		{&c.Pacing.NightPause, true},
 		{&c.Features.ChatOps.AutoReply, true}, // owner decision #6: auto-reply is ON by default

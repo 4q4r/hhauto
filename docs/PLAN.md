@@ -120,8 +120,8 @@ Chrome — фича opt-in), santhosh-tekuri/jsonschema/v6, agnivade/levenshtein
 - `[ai]` daily_budget (0=безлимит); `[ai.providers.<id>]` dialect="openai-chat"|"openai-responses"|"anthropic-messages", base_url, key_env;
   `[ai.models.<id>]` model, reasoning_effort, max_output_tokens, temperature, fallback;
   `[ai.tasks.<task>]` model_profile, prompt: inline|file, cache_ttl; `[ai.pricing]` (опц.)
-- `[features.*]` тумблеры всех фич (autolift: enabled=true, per_day=6, jitter="20-40m",
-  respect_4h_timer=true; multiapply: ai_filter=true, min_match_percent=60; testsolve;
+- `[features.*]` тумблеры всех фич (autolift: enabled=true, per_day=6, jitter="20-40m";
+  multiapply: ai_filter=true, min_match_percent=60; testsolve;
   chatops (auto_leave_rejected=false*, warmup=false* по умолч.); interview; contacts; emaildup=false*)
 - `[pacing]` active_window="08:00-22:00", mode="adaptive"|"uniform"|"burst", night_pause=true,
   min_delay/jitter — всё конфигурируемо

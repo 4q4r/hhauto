@@ -4,7 +4,7 @@ package autolift
 // nextTouchAt (per resume: nextTouchAt, or updated_at + 4h when empty).
 // One server computation at start / after relogin; afterwards a plain
 // local 4h count from the last lift + jitter — no shard re-fetch between
-// lifts. fixed_times (legacy) ignores nextTouchAt entirely.
+// lifts.
 
 import (
 	"bytes"
@@ -118,10 +118,9 @@ func TestServerTimerPastNextTouchLiftsNowAndArms4h(t *testing.T) {
 	}
 }
 
-// Empty nextTouchAt falls back to updated_at + 4h per resume — but only
-// when the shard serves the field at all (another resume carries it).
+// Empty nextTouchAt falls back to updated_at + 4h per resume.
 func TestServerTimerEmptyNextTouchUsesUpdatedPlus4h(t *testing.T) {
-	// hash0 keeps the field present in the shard response.
+	// hash0 anchors the earliest plan moment (now+2h).
 	h := newHarness(t, nil,
 		liftable("hash0", now.Add(-1*time.Hour)),
 		liftable("hash1", now.Add(-5*time.Hour)), // elapsed → due now
@@ -220,55 +219,6 @@ func TestServerTimerJitterSampledAfterNextTouch(t *testing.T) {
 	a, b := mk(7), mk(7)
 	if a != b {
 		t.Fatalf("same seed produced different delays: %v vs %v", a, b)
-	}
-}
-
-// Shard without the field at all → legacy behavior (store 4h timer gate),
-// no plan, no arm; passes keep reading the shard.
-func TestServerTimerFallbackLegacyWhenFieldAbsent(t *testing.T) {
-	h := newHarness(t, nil,
-		liftable("fresh", now.Add(-1*time.Hour)),
-		liftable("stale", now.Add(-5*time.Hour)),
-	)
-	var calls []armed
-	f, _ := stFeature(t, h, &captureQueue{}, &calls)
-
-	if err := f.RunAccount(context.Background(), "acc1"); err != nil {
-		t.Fatalf("RunAccount: %v", err)
-	}
-	if h.fake.touch != 1 {
-		t.Fatalf("touch calls = %d, want 1 (legacy store-timer gate)", h.fake.touch)
-	}
-	if len(calls) != 0 {
-		t.Fatalf("legacy fallback armed a timer (%+v), want none", calls)
-	}
-	// No plan built: the next pass reads the shard again (legacy rhythm).
-	// Reads: start 1 + verify 1 + second pass 1 (verify rides every lift).
-	if err := f.RunAccount(context.Background(), "acc1"); err != nil {
-		t.Fatalf("second RunAccount: %v", err)
-	}
-	if h.fake.lists != 3 {
-		t.Fatalf("shard reads = %d, want 3 (no plan → re-read each pass)", h.fake.lists)
-	}
-}
-
-// fixed_times mode ignores nextTouchAt: the legacy store timer decides.
-func TestFixedTimesModeIgnoresNextTouchAt(t *testing.T) {
-	h := newHarness(t, func(c *config.Config) {
-		c.Features.AutoLift.Mode = config.AutoLiftModeFixedTimes
-	}, liftable("hash1", now.Add(-5*time.Hour)))
-	h.fake.resumes[0].NextTouch = now.Add(2 * time.Hour) // future! legacy lifts anyway
-	var calls []armed
-	f, _ := stFeature(t, h, &captureQueue{}, &calls)
-
-	if err := f.RunAccount(context.Background(), "acc1"); err != nil {
-		t.Fatalf("RunAccount: %v", err)
-	}
-	if h.fake.touch != 1 {
-		t.Fatalf("touch calls = %d, want 1 (legacy gate: 4h elapsed)", h.fake.touch)
-	}
-	if len(calls) != 0 {
-		t.Fatalf("fixed_times armed a timer (%+v), want none", calls)
 	}
 }
 
