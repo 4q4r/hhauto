@@ -279,7 +279,7 @@ func TestRunTrustedBlocksInfluenceCacheKey(t *testing.T) {
 
 // ---------- Finding 1: deterministic post-checks on cover_letter ------------
 
-const coverVerdictWithNumbers = `{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"letter":"Вёл команду из 12 инженеров, готов к переезду.","used_facts":[],"missing_data":[]}`
+const coverVerdictWithNumbers = `{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"letter":"Вёл команду из 12 инженеров, готов к переезду.","mode":"ai_company","used_facts":[],"missing_data":[]}`
 
 func TestRunCoverLetterNumberNotInSources(t *testing.T) {
 	p := &scriptedProvider{contents: []string{coverVerdictWithNumbers}}
@@ -309,7 +309,7 @@ func TestRunCoverLetterNumberNotInSources(t *testing.T) {
 }
 
 func TestRunCoverLetterNumbersFromSourcesPass(t *testing.T) {
-	p := &scriptedProvider{contents: []string{`{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"letter":"Разрабатываю на Go 4 года, в основном PostgreSQL и gRPC.","used_facts":[],"missing_data":[]}`}}
+	p := &scriptedProvider{contents: []string{`{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"letter":"Разрабатываю на Go 4 года, в основном PostgreSQL и gRPC.","mode":"ai_company","used_facts":[],"missing_data":[]}`}}
 	tasks := map[string]config.AITask{"cover_letter": {ModelProfile: "profile"}}
 	r, _ := New(map[string]Provider{"p": p},
 		map[string]config.AIModel{"profile": {Provider: "p", Model: "m1"}},
@@ -329,7 +329,7 @@ func TestRunCoverLetterNumbersFromSourcesPass(t *testing.T) {
 }
 
 func TestRunCoverLetterForbiddenTopicLanguageLevel(t *testing.T) {
-	p := &scriptedProvider{contents: []string{`{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"letter":"Мой английский на уровне B1, готов к тестированию.","used_facts":[],"missing_data":[]}`}}
+	p := &scriptedProvider{contents: []string{`{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"letter":"Мой английский на уровне B1, готов к тестированию.","mode":"ai_company","used_facts":[],"missing_data":[]}`}}
 	tasks := map[string]config.AITask{"cover_letter": {ModelProfile: "profile"}}
 	r, _ := New(map[string]Provider{"p": p},
 		map[string]config.AIModel{"profile": {Provider: "p", Model: "m1"}},
@@ -349,7 +349,7 @@ func TestRunCoverLetterForbiddenTopicLanguageLevel(t *testing.T) {
 }
 
 func TestRunCoverLetterForbiddenTopicInSourcesPasses(t *testing.T) {
-	p := &scriptedProvider{contents: []string{`{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"letter":"Мой английский на уровне B1, готов к тестированию.","used_facts":[],"missing_data":[]}`}}
+	p := &scriptedProvider{contents: []string{`{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"letter":"Мой английский на уровне B1, готов к тестированию.","mode":"ai_company","used_facts":[],"missing_data":[]}`}}
 	tasks := map[string]config.AITask{"cover_letter": {ModelProfile: "profile"}}
 	r, _ := New(map[string]Provider{"p": p},
 		map[string]config.AIModel{"profile": {Provider: "p", Model: "m1"}},
@@ -369,7 +369,7 @@ func TestRunCoverLetterForbiddenTopicInSourcesPasses(t *testing.T) {
 }
 
 func TestRunChatReplyForbiddenTopicSalary(t *testing.T) {
-	p := &scriptedProvider{contents: []string{`{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"reply":"Готов обсудить условия от 300к.","intent":"ack"}`}}
+	p := &scriptedProvider{contents: []string{`{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"reply":"Готов обсудить условия от 300к.","intent":"ack","used_facts":[]}`}}
 	tasks := map[string]config.AITask{"chat_reply": {ModelProfile: "profile"}}
 	r, _ := New(map[string]Provider{"p": p},
 		map[string]config.AIModel{"profile": {Provider: "p", Model: "m1"}},
@@ -388,7 +388,7 @@ func TestRunChatReplyForbiddenTopicSalary(t *testing.T) {
 }
 
 func TestRunChatReplySalaryFromFactsPasses(t *testing.T) {
-	p := &scriptedProvider{contents: []string{`{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"reply":"Ожидания от 300к, как в профиле.","intent":"ack"}`}}
+	p := &scriptedProvider{contents: []string{`{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"reply":"Ожидания от 300к, как в профиле.","intent":"ack","used_facts":[]}`}}
 	tasks := map[string]config.AITask{"chat_reply": {ModelProfile: "profile"}}
 	r, _ := New(map[string]Provider{"p": p},
 		map[string]config.AIModel{"profile": {Provider: "p", Model: "m1"}},

@@ -17,7 +17,7 @@
       "source_quote": "звоните +7 900 123-45-67"
     },
     {
-      "type": "messenger",
+      "type": "telegram",
       "value": "@romashka_hr",
       "normalized": "telegram:@romashka_hr",
       "source_quote": "Telegram: @romashka_hr"

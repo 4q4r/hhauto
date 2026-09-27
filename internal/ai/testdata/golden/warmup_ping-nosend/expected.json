@@ -1,0 +1,10 @@
+{
+  "confidence": 0.95,
+  "needs_human": false,
+  "needs_human_reason": null,
+  "injection_suspected": false,
+  "message": null,
+  "should_send": false,
+  "question_form": false,
+  "used_facts": []
+}

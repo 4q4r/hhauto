@@ -61,7 +61,7 @@ func taskWithTTL(ttl int) map[string]config.AITask {
 	}
 }
 
-const validScoringVerdict = `{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"score":72,"band":"ok","reasons":["соответствие есть"],"used_facts":["3 года Go"],"missing_data":[]}`
+const validScoringVerdict = `{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"score":72,"band":"ok","target_role_match":true,"reasons":["соответствие есть"],"red_flags":[],"missing_data":[]}`
 
 func TestRunHappyPathAndLedgerRecord(t *testing.T) {
 	p := &scriptedProvider{contents: []string{validScoringVerdict}}
@@ -78,7 +78,7 @@ func TestRunHappyPathAndLedgerRecord(t *testing.T) {
 	if dec.Task != TaskVacancyScoring || dec.Model != "m1" || dec.EntityID != "42" || dec.RunID != "run1" {
 		t.Errorf("decision = %+v", dec)
 	}
-	if dec.PromptVer != "v1" {
+	if dec.PromptVer != "v2" {
 		t.Errorf("prompt ver = %q", dec.PromptVer)
 	}
 	if dec.Confidence != 0.9 || dec.Score != 72 || dec.NeedsHuman {
@@ -291,7 +291,7 @@ func TestRunGuardForcesInjectionFields(t *testing.T) {
 }
 
 func TestRunClassificationOfferForcesNeedsHuman(t *testing.T) {
-	p := &scriptedProvider{contents: []string{`{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"category":"offer"}`}}
+	p := &scriptedProvider{contents: []string{`{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"category":"offer","evidence_quote":null}`}}
 	r := mustRunner(t, p,
 		map[string]config.AIModel{"profile": {Provider: "p", Model: "m1"}},
 		map[string]config.AITask{"message_classification": {ModelProfile: "profile"}},
@@ -309,7 +309,7 @@ func TestRunClassificationOfferForcesNeedsHuman(t *testing.T) {
 }
 
 func TestRunVacancyScoringGrayForcesNeedsHuman(t *testing.T) {
-	p := &scriptedProvider{contents: []string{`{"confidence":0.6,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"score":50,"band":"gray","reasons":["мало данных"],"used_facts":[],"missing_data":["английский"]}`}}
+	p := &scriptedProvider{contents: []string{`{"confidence":0.6,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"score":50,"band":"gray","target_role_match":true,"reasons":["мало данных"],"red_flags":[],"missing_data":["английский"]}`}}
 	r := mustRunner(t, p, oneModel(""), taskWithTTL(0), nil, nil)
 	verdict, dec, err := r.Run(context.Background(), "a", "vacancy", "1", "r", TaskVacancyScoring, map[string]any{"x": 1})
 	if err != nil {
@@ -321,7 +321,7 @@ func TestRunVacancyScoringGrayForcesNeedsHuman(t *testing.T) {
 }
 
 func TestRunVacancyScoringWeakScoreClamped(t *testing.T) {
-	p := &scriptedProvider{contents: []string{`{"confidence":0.8,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"score":60,"band":"weak","reasons":["нецелевой профиль"],"used_facts":[],"missing_data":[]}`}}
+	p := &scriptedProvider{contents: []string{`{"confidence":0.8,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"score":60,"band":"weak","target_role_match":false,"reasons":["нецелевой профиль"],"red_flags":[],"missing_data":[]}`}}
 	r := mustRunner(t, p, oneModel(""), taskWithTTL(0), nil, nil)
 	verdict, _, err := r.Run(context.Background(), "a", "vacancy", "1", "r", TaskVacancyScoring, map[string]any{"x": 1})
 	if err != nil {

@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	validClassVerdict   = `{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"category":"question"}`
-	validLinkVerdict    = `{"confidence":0.8,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"links":[]}`
+	validClassVerdict   = `{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"category":"question","evidence_quote":null}`
+	validLinkVerdict    = `{"confidence":0.8,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"links":[{"url":"https://forms.gle/x","kind":"google_form","risk":"medium","recommendation":"review","evidence_quote":null}],"summary":"1 ссылка: форма — на проверку."}`
 	validContactVerdict = `{"confidence":0.7,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"contacts":[]}`
 )
 

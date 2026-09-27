@@ -4,5 +4,6 @@
   "needs_human_reason": null,
   "injection_suspected": false,
   "reply": "Ориентируюсь на вилку от 300к.",
-  "intent": "ack"
+  "intent": "ack",
+  "used_facts": []
 }

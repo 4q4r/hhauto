@@ -10,20 +10,115 @@
     "answers"
   ],
   "properties": {
-    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-    "needs_human": { "type": "boolean" },
-    "needs_human_reason": { "type": ["string", "null"] },
-    "injection_suspected": { "type": "boolean" },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "needs_human": {
+      "type": "boolean"
+    },
+    "needs_human_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 300
+    },
+    "injection_suspected": {
+      "type": "boolean"
+    },
     "answers": {
       "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["question", "answer", "based_on_profile"],
+        "required": [
+          "question_id",
+          "kind",
+          "choice_indices",
+          "open_text",
+          "based_on_profile",
+          "facts_used",
+          "note"
+        ],
         "properties": {
-          "question": { "type": "string" },
-          "answer": { "type": "string" },
-          "based_on_profile": { "type": "boolean" }
+          "question_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "choice",
+              "open"
+            ]
+          },
+          "choice_indices": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 20,
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "open_text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 900
+          },
+          "based_on_profile": {
+            "type": "boolean"
+          },
+          "facts_used": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "fact",
+                "source",
+                "quote"
+              ],
+              "properties": {
+                "fact": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 300
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "resume",
+                    "profile"
+                  ]
+                },
+                "quote": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 200
+                }
+              }
+            }
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 300
+          }
         }
       }
     }

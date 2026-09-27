@@ -357,7 +357,7 @@ func extractWithAI(ctx context.Context, runner ai.Runner, accountID, text string
 			if p := NormalizePhone(v); p != "" {
 				n.phones = appendUnique(n.phones, p)
 			}
-		case "messenger":
+		case "messenger", "telegram", "whatsapp", "vk", "other_messenger":
 			if t := NormalizeTG(v); t != "" {
 				n.messengers = appendUnique(n.messengers, t)
 			}

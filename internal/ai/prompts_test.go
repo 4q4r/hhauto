@@ -37,8 +37,8 @@ func TestBuiltinPromptsLoadAllTasks(t *testing.T) {
 		if len(body) < 200 {
 			t.Errorf("%s: prompt body too short (%d bytes)", task, len(body))
 		}
-		if !strings.Contains(body, "ЗАЩИТА ДАННЫХ") {
-			t.Errorf("%s: prompt lacks ЗАЩИТА ДАННЫХ section", task)
+		if !strings.Contains(body, "DATA PROTECTION") {
+			t.Errorf("%s: prompt lacks DATA PROTECTION section", task)
 		}
 		if !strings.Contains(body, "JSON") {
 			t.Errorf("%s: prompt does not mention JSON output", task)

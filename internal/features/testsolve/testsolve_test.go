@@ -60,7 +60,7 @@ func (f *fakeRunner) Run(_ context.Context, _ string, _, _ string, _ string, tas
 			ans = ""
 		}
 		answers = append(answers, map[string]any{
-			"question": q.Text, "answer": ans, "based_on_profile": false,
+			"question_id": q.Text, "open_text": ans, "based_on_profile": false,
 		})
 	}
 	v := map[string]any{

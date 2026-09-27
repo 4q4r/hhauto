@@ -761,20 +761,38 @@ func (h *HeadlessFiller) answerBatch(ctx context.Context, accountID string, fiel
 	if err != nil {
 		return nil, false, fmt.Errorf("testsolve: ai test_answer: %w", err)
 	}
-	var verdict struct {
+	var decoded struct {
 		ai.Common
-		Answers []AnswerEntry `json:"answers"`
+		Answers []struct {
+			QuestionID     string  `json:"question_id"`
+			Kind           string  `json:"kind"`
+			ChoiceIndices  []int   `json:"choice_indices"`
+			OpenText       *string `json:"open_text"`
+			BasedOnProfile bool    `json:"based_on_profile"`
+		} `json:"answers"`
 	}
-	if err := json.Unmarshal(raw, &verdict); err != nil {
+	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return nil, false, fmt.Errorf("testsolve: verdict decode: %w", err)
 	}
-	unsure := verdict.NeedsHuman || verdict.InjectionSuspected
-	for _, a := range verdict.Answers {
+	answers := make([]AnswerEntry, 0, len(decoded.Answers))
+	for i, a := range decoded.Answers {
+		var options []string
+		if i < len(fields) {
+			options = fields[i].Options
+		}
+		answers = append(answers, AnswerEntry{
+			Question:       a.QuestionID,
+			Answer:         answerText(a.OpenText, a.ChoiceIndices, options),
+			BasedOnProfile: a.BasedOnProfile,
+		})
+	}
+	unsure := decoded.NeedsHuman || decoded.InjectionSuspected
+	for _, a := range answers {
 		if strings.TrimSpace(a.Answer) == "" {
 			unsure = true
 		}
 	}
-	return verdict.Answers, unsure, nil
+	return answers, unsure, nil
 }
 
 // headlessArtifact renders the answers JSON stored on the assessment row.

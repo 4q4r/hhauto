@@ -63,7 +63,7 @@ func (f *fakeRunner) Run(_ context.Context, _ string, _, _ string, _ string, tas
 	}
 	b, _ := json.Marshal(map[string]any{
 		"confidence": 0.9, "needs_human": f.needs, "needs_human_reason": nil,
-		"injection_suspected": false, "text": f.text,
+		"injection_suspected": false, "message": f.text,
 	})
 	return b, ai.Decision{Task: task}, nil
 }

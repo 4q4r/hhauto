@@ -5,9 +5,19 @@
   "injection_suspected": false,
   "answers": [
     {
-      "question": "Сколько лет вы разрабатываете на Go?",
-      "answer": "4 года коммерческой разработки на Go",
-      "based_on_profile": true
+      "question_id": "1",
+      "kind": "open",
+      "choice_indices": null,
+      "open_text": "4 года коммерческой разработки на Go",
+      "based_on_profile": true,
+      "facts_used": [
+        {
+          "fact": "4 года коммерческой разработки на Go",
+          "source": "resume",
+          "quote": "из них 4 года с Go"
+        }
+      ],
+      "note": null
     }
   ]
 }

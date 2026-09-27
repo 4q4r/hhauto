@@ -4,5 +4,6 @@
   "needs_human_reason": null,
   "injection_suspected": false,
   "reply": "Здравствуйте! Спасибо за интерес к моей кандидатуре. Да, готов обсудить позицию подробнее.",
-  "intent": "ack"
+  "intent": "ack",
+  "used_facts": []
 }

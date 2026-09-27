@@ -49,7 +49,7 @@ var errJevUndecided = errors.New("jev: task input is outside jev competence")
 var (
 	jevClassOptions       = []string{"rejection", "invitation", "test_assignment", "question", "offer", "spam", "other"}
 	jevLinkOptions        = []string{"google_form", "yandex_form", "ats", "calendar", "test_platform", "messenger", "other"}
-	jevContactTypeOptions = []string{"phone", "email", "messenger", "other"}
+	jevContactTypeOptions = []string{"email", "phone", "telegram", "whatsapp", "vk", "other_messenger", "url", "other"}
 )
 
 // JevSolver routes enrolled tasks to the Jev endpoint. Safe for concurrent
@@ -189,7 +189,8 @@ func (s *JevSolver) verdictClassification(byID map[string]JevAnswer) (json.RawMe
 	return jevMarshal(map[string]any{
 		"confidence": a.Confidence, "needs_human": false,
 		"needs_human_reason": nil, "injection_suspected": false,
-		"category": category,
+		"category":       category,
+		"evidence_quote": nil, // Jev returns choices only; evidence stays with the LLM path
 	}), a.Confidence, nil
 }
 
@@ -217,7 +218,12 @@ func (s *JevSolver) verdictLinkDetection(inputJSON []byte, byID map[string]JevAn
 		if a.Confidence < conf {
 			conf = a.Confidence
 		}
-		links = append(links, map[string]any{"url": u, "kind": kind, "risk": jevLinkRisk(kind)})
+		links = append(links, map[string]any{
+			"url": u, "kind": kind, "risk": jevLinkRisk(kind),
+			// Conservative recommendation: Jev links always go to review;
+			// evidence stays with the LLM path (Jev returns choices only).
+			"recommendation": "review", "evidence_quote": nil,
+		})
 	}
 	if conf < s.threshold {
 		return nil, conf, nil
@@ -225,7 +231,8 @@ func (s *JevSolver) verdictLinkDetection(inputJSON []byte, byID map[string]JevAn
 	return jevMarshal(map[string]any{
 		"confidence": conf, "needs_human": false,
 		"needs_human_reason": nil, "injection_suspected": false,
-		"links": links,
+		"links":   links,
+		"summary": fmt.Sprintf("Jev: %d внешняя(ие) ссылка(и) — классифицированы, на проверку", len(links)),
 	}), conf, nil
 }
 

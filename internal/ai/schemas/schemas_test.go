@@ -130,14 +130,14 @@ func TestCommonFieldsRequired(t *testing.T) {
 // TestSchemaValidatesGoldenVerdicts feeds one known-good verdict per task.
 func TestSchemaValidatesGoldenVerdicts(t *testing.T) {
 	good := map[string]string{
-		"vacancy_scoring":        `{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"score":72,"band":"ok","reasons":["match"],"used_facts":["3 года Go"],"missing_data":[]}`,
-		"cover_letter":           `{"confidence":0.95,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"letter":"Здравствуйте!","used_facts":["Go"],"missing_data":["англ. уровень"]}`,
-		"chat_reply":             `{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"reply":"Спасибо, рассмотрю.","intent":"ack"}`,
-		"test_answer":            `{"confidence":0.85,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"answers":[{"question":"Опыт с Go?","answer":"3 года","based_on_profile":true}]}`,
-		"warmup_ping":            `{"confidence":0.8,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"text":"Здравствуйте! Уточните, пожалуйста, статус."}`,
-		"message_classification": `{"confidence":0.92,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"category":"rejection"}`,
+		"vacancy_scoring":        `{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"score":72,"band":"ok","target_role_match":true,"reasons":["match"],"red_flags":[],"missing_data":[]}`,
+		"cover_letter":           `{"confidence":0.95,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"letter":"Здравствуйте! Готов обсудить задачу и опыт.","mode":"ai_company","used_facts":[{"fact":"Go","source":"resume","quote":"Go"}],"missing_data":["англ. уровень"]}`,
+		"chat_reply":             `{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"intent":"ack","reply":"Спасибо, рассмотрю.","used_facts":[]}`,
+		"test_answer":            `{"confidence":0.85,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"answers":[{"question_id":"Q1","kind":"open","choice_indices":null,"open_text":"3 года","based_on_profile":true,"facts_used":[],"note":null}]}`,
+		"warmup_ping":            `{"confidence":0.8,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"message":"Здравствуйте! Уточните, пожалуйста, статус.","should_send":true,"question_form":true,"used_facts":[]}`,
+		"message_classification": `{"confidence":0.92,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"category":"rejection","evidence_quote":null}`,
 		"contact_extraction":     `{"confidence":0.88,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"contacts":[{"type":"email","value":"hr@example.com","normalized":"hr@example.com","source_quote":"hr@example.com"}]}`,
-		"link_detection":         `{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"links":[{"url":"https://forms.gle/x","kind":"google_form","risk":"medium"}]}`,
+		"link_detection":         `{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"links":[{"url":"https://forms.gle/x","kind":"google_form","risk":"medium","recommendation":"review","evidence_quote":null}],"summary":"1 ссылка: форма — на проверку."}`,
 	}
 	for name, verdict := range good {
 		t.Run(name, func(t *testing.T) {
@@ -160,7 +160,7 @@ func TestSchemaValidatesGoldenVerdicts(t *testing.T) {
 func TestSchemaRejectsExtraFields(t *testing.T) {
 	sch, _ := compile(t, "warmup_ping")
 	var inst any
-	d := json.NewDecoder(strings.NewReader(`{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"text":"привет","evil":"x"}`))
+	d := json.NewDecoder(strings.NewReader(`{"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false,"message":"привет","evil":"x"}`))
 	d.UseNumber()
 	if err := d.Decode(&inst); err != nil {
 		t.Fatal(err)

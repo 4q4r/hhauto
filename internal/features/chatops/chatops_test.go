@@ -153,7 +153,7 @@ func (f *fakeRunner) Run(_ context.Context, _ string, _, _ string, _ string, tas
 	case ai.TaskTestAnswer:
 		ans := make([]map[string]any, 0, len(f.answers))
 		for _, a := range f.answers {
-			ans = append(ans, map[string]any{"question": a.Q, "answer": a.A, "based_on_profile": false})
+			ans = append(ans, map[string]any{"question_id": a.Q, "open_text": a.A, "based_on_profile": false})
 		}
 		conf := f.testConf
 		if conf == 0 {

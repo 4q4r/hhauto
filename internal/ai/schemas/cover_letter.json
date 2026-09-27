@@ -8,16 +8,89 @@
     "needs_human_reason",
     "injection_suspected",
     "letter",
+    "mode",
     "used_facts",
     "missing_data"
   ],
   "properties": {
-    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-    "needs_human": { "type": "boolean" },
-    "needs_human_reason": { "type": ["string", "null"] },
-    "injection_suspected": { "type": "boolean" },
-    "letter": { "type": "string" },
-    "used_facts": { "type": "array", "items": { "type": "string" } },
-    "missing_data": { "type": "array", "items": { "type": "string" } }
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "needs_human": {
+      "type": "boolean"
+    },
+    "needs_human_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 300
+    },
+    "injection_suspected": {
+      "type": "boolean"
+    },
+    "letter": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 40,
+      "maxLength": 1600
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "template",
+        "template_ai",
+        "ai_company"
+      ]
+    },
+    "used_facts": {
+      "type": "array",
+      "maxItems": 15,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "fact",
+          "source",
+          "quote"
+        ],
+        "properties": {
+          "fact": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "resume",
+              "profile",
+              "vacancy",
+              "template"
+            ]
+          },
+          "quote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          }
+        }
+      }
+    },
+    "missing_data": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 150
+      }
+    }
   }
 }
