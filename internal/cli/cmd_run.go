@@ -4,6 +4,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -16,25 +17,59 @@ import (
 
 	"hhauto/internal/audit"
 	"hhauto/internal/engine"
+	"hhauto/internal/features/multiapply"
+	"hhauto/internal/hhapi"
 	"hhauto/internal/queue"
+	"hhauto/internal/review"
+	"hhauto/internal/store"
+	"hhauto/internal/tasklock"
 )
 
 func newRunCmd() *cobra.Command {
 	var (
-		once    bool
-		profile string
-		feature string
-		account string
-		dryRun  bool
+		once     bool
+		daemon   bool
+		profile  string
+		feature  string
+		account  string
+		taskType string
+		dryRun   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Run the engine until interrupted (--once: process due tasks now and exit)",
+		Short: "Run the engine until interrupted (--once: process due tasks now and exit; --daemon: apply → sleep 24h → repeat)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			tt, err := normalizeTaskType(taskType)
+			if err != nil {
+				return exitErr("--task-type: %v", err)
+			}
+			feat, runnable := runTaskTypeFeature(tt)
+			if !runnable {
+				return exitErr("тип задач %q не имеет циклических воркеров движка: улучшение резюме — команда `hhauto resume improve` (тот же lock), цикл автоотклика — --task-type multiapply --daemon", tt)
+			}
+			if daemon && once {
+				return exitErr("флаги --daemon и --once взаимоисключающие")
+			}
+			// Multi-instance lock (T35): fail fast BEFORE any heavy wiring
+			// when another instance holds this task type. "all" (default)
+			// keeps the legacy single-instance exclusivity.
+			cfgOnly, err := LoadConfigOnly(flags.configPath)
+			if err != nil {
+				return exitErr("%v", err)
+			}
+			unlock, err := acquireTaskLock(cfgOnly.General.DataDir, tt)
+			if err != nil {
+				return exitErr("%v", err)
+			}
+			defer unlock()
+
 			opts := buildOpts()
 			opts.Profile = profile
 			opts.Feature = feature
 			opts.Account = account
+			if feat != "" {
+				opts.Feature = feat // the task type narrows the engine to its features
+			}
 			if dryRun {
 				opts.DryRun = true
 			}
@@ -44,6 +79,9 @@ func newRunCmd() *cobra.Command {
 				return exitErr("wiring: %v", err)
 			}
 			defer func() { _ = rt.Close() }() // command teardown
+			if daemon {
+				return runDaemonMode(ctx, rt, tt, outFor(cmd))
+			}
 			if once {
 				_, _, err := runOnce(ctx, rt, outFor(cmd))
 				return err
@@ -73,11 +111,128 @@ func newRunCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&once, "once", false, "process the tasks that are due right now, then exit")
+	cmd.Flags().BoolVar(&daemon, "daemon", false, "daemon loop: one apply pass, then sleep exactly 24h from the last pass, until STOP/signal (exit 2 = session lost)")
+	cmd.Flags().StringVar(&taskType, "task-type", "", "claim this task type: all (default, exclusive) | multiapply | resume_improve — parallel instances need different types")
 	cmd.Flags().StringVar(&profile, "profile", "", "restrict to one run profile id")
 	cmd.Flags().StringVar(&feature, "feature", "", "restrict to one feature (autolift|multiapply|chatops|testsolve|contacts|warmup|emaildup)")
 	cmd.Flags().StringVar(&account, "account", "", "restrict to one account id")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "force dry-run for this invocation")
 	return cmd
+}
+
+// acquireTaskLock takes the T35 multi-instance lock for one task type.
+// The lock directory is the OS temp dir; the file name hashes the data
+// dir, so different deployments never collide. It returns the release
+// func (idempotent).
+func acquireTaskLock(dataDir, taskType string) (func(), error) {
+	h, err := tasklock.Acquire(os.TempDir(), dataDir, taskType)
+	if err != nil {
+		return nil, fmt.Errorf("другой процесс hhauto уже выполняет этот тип задач: %w", err)
+	}
+	return h.Release, nil
+}
+
+// runDaemonMode drives the T35 apply daemon over the (already filtered)
+// runtime: bootstrap gate → one apply pass over every enabled run profile
+// → state persist → sleep until last+24h. Runs[].windows are bypassed by
+// design (the daemon's own cadence gates firing; the pacer and the
+// account active window still apply inside the pipeline).
+func runDaemonMode(ctx context.Context, rt *Runtime, taskType string, o out) error {
+	apply := multiapplyFeature(rt)
+	if apply == nil {
+		return exitErr("daemon: фича multiapply не сконструирована (проверьте [features.multiapply] enabled)")
+	}
+	reviewer := rt.review.For(rt.DB)
+	accounts := sortedAccountIDs(rt.Cfg)
+	deps := daemonDeps{
+		DataDir:  rt.Cfg.General.DataDir,
+		TaskType: taskType,
+		Interval: daemonInterval,
+		Kill:     rt.Kill,
+		Log:      rt.Log,
+		Bootstrap: func(ctx context.Context) error {
+			for _, id := range accounts {
+				api, err := rt.APIFor(id)
+				if err != nil {
+					return err
+				}
+				if err := api.BootstrapSession(ctx); err != nil {
+					if errors.Is(err, hhapi.ErrLoggedOut) {
+						daemonMarkSessionLost(ctx, rt, reviewer, id, err)
+					}
+					return err
+				}
+			}
+			return nil
+		},
+		Cycle: func(ctx context.Context) error {
+			return daemonApplyCycle(ctx, rt, apply, o)
+		},
+	}
+	return runDaemon(ctx, deps)
+}
+
+// multiapplyFeature resolves the constructed multiapply feature (the
+// daemon's apply pass executor) from the registry.
+func multiapplyFeature(rt *Runtime) *multiapply.Feature {
+	for _, f := range rt.Feats.All() {
+		if f.Name() == "multiapply" {
+			if a, ok := f.(*multiapply.Feature); ok {
+				return a
+			}
+		}
+	}
+	return nil
+}
+
+// daemonMarkSessionLost parks the account for human attention (the
+// engine's session-loss semantics): ensure the row (bootstrap may be the
+// process's first touch of the account), flip the status, open the review
+// item. Best effort: logging failures must not mask the exit cause.
+func daemonMarkSessionLost(ctx context.Context, rt *Runtime, reviewer review.Reviewer, accountID string, cause error) {
+	if uerr := rt.DB.AccountsUpsert(ctx, store.Account{ID: accountID}); uerr != nil {
+		rt.Log.Error("daemon: account upsert", "account", accountID, "err", uerr)
+	}
+	if serr := rt.DB.AccountsSetStatus(ctx, accountID, "logged_out"); serr != nil {
+		rt.Log.Error("daemon: mark logged_out", "account", accountID, "err", serr)
+	}
+	if _, rerr := reviewer.Add(ctx, accountID, "session_expired",
+		fmt.Sprintf("session bootstrap failed: %v", cause),
+		fmt.Sprintf(`{"target":%q}`, accountID+":session")); rerr != nil {
+		rt.Log.Error("daemon: review add", "account", accountID, "err", rerr)
+	}
+}
+
+// daemonApplyCycle runs every enabled run profile once (sorted for
+// determinism), accumulating failures; the daemon treats a failed cycle
+// as done (tomorrow's pass is the retry).
+func daemonApplyCycle(ctx context.Context, rt *Runtime, apply *multiapply.Feature, o out) error {
+	ids := make([]string, 0, len(rt.Cfg.Runs))
+	for id, run := range rt.Cfg.Runs {
+		if run.Enabled {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	if len(ids) == 0 {
+		o.println("daemon: нет включённых run-профилей — цикл пропущен")
+		return nil
+	}
+	var failed int
+	for _, id := range ids {
+		if rt.Kill.Tripped(ctx) {
+			break
+		}
+		o.printf("daemon: запуск профиля %s\n", id)
+		if err := apply.RunProfile(ctx, id); err != nil {
+			rt.Log.Warn("daemon: run profile failed", "run", id, "err", err)
+			failed++
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d run profile(s) failed", failed)
+	}
+	return nil
 }
 
 // stop arms the kill-switch file channel without touching the engine: a

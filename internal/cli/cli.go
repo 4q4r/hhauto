@@ -4,6 +4,7 @@ package cli
 // cmd_*.go; each command builds exactly the runtime slice it needs.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -39,10 +40,31 @@ func Execute(version, commit, date string) int {
 	root := newRootCmd()
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
+		var ee *ExitError
+		if errors.As(err, &ee) {
+			return ee.Code // semantic exit codes (T35: 2 = session rotated)
+		}
 		return 1
 	}
 	return 0
 }
+
+// ExitError carries a semantic process exit code (T35): the daemon's
+// session-loss exit (2) must be distinguishable from both success (0) and
+// a generic failure (1).
+type ExitError struct {
+	Code int
+	Err  error
+}
+
+func (e *ExitError) Error() string {
+	if e.Err == nil {
+		return fmt.Sprintf("exit code %d", e.Code)
+	}
+	return e.Err.Error()
+}
+
+func (e *ExitError) Unwrap() error { return e.Err }
 
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{

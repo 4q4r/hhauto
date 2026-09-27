@@ -134,6 +134,11 @@ type EditorOptions struct {
 	DB      *store.DB // lineage: clone hash → account
 	Cookies EditorCookieSource
 	Verify  ContentReader
+	// AccountID pins the owning account (T35): when set, ApplyFieldPlan
+	// skips the lineage resolution entirely — the resume-improve command
+	// drives BASE resumes through the editor, which have no lineage row.
+	// Empty keeps the strict clone invariant.
+	AccountID string
 	// Browser overrides the chromedp session factory (tests). nil = real.
 	Browser BrowserFactory
 	// ChromeProvider resolves the executable through the shared browser
@@ -185,9 +190,17 @@ func (r *ChromeEditorRunner) ApplyFieldPlan(ctx context.Context, cloneHash strin
 	if len(plan) == 0 {
 		return ApplyResult{}, nil
 	}
-	accountID, err := r.accountForClone(ctx, cloneHash)
-	if err != nil {
-		return ApplyResult{}, err
+	var (
+		accountID string
+		err       error
+	)
+	if r.opt.AccountID != "" {
+		accountID = r.opt.AccountID // T35 pinned: base resumes have no lineage
+	} else {
+		accountID, err = r.accountForClone(ctx, cloneHash)
+		if err != nil {
+			return ApplyResult{}, err
+		}
 	}
 	ck, err := r.opt.Cookies.EditorCookies(ctx, accountID)
 	if err != nil {

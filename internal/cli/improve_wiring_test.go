@@ -30,7 +30,7 @@ func improveWiringCfg() *config.Config {
 func TestInjectImproveTask(t *testing.T) {
 	cfg := improveWiringCfg()
 	cfg.AI.Tasks = map[string]config.AITask{}
-	injectImproveTask(cfg)
+	injectImproveTask(cfg, false)
 	got, ok := cfg.AI.Tasks["resume_improve"]
 	if !ok || got.ModelProfile != "main" {
 		t.Fatalf("injected task = %+v", got)
@@ -38,7 +38,7 @@ func TestInjectImproveTask(t *testing.T) {
 
 	// Explicit owner config wins over the injection.
 	cfg.AI.Tasks["resume_improve"] = config.AITask{ModelProfile: "custom"}
-	injectImproveTask(cfg)
+	injectImproveTask(cfg, false)
 	if cfg.AI.Tasks["resume_improve"].ModelProfile != "custom" {
 		t.Fatalf("explicit task overwritten: %+v", cfg.AI.Tasks["resume_improve"])
 	}
@@ -47,7 +47,7 @@ func TestInjectImproveTask(t *testing.T) {
 	cfg2 := improveWiringCfg()
 	cfg2.Features.AutoClone.Improve.Enabled = false
 	cfg2.AI.Tasks = map[string]config.AITask{}
-	injectImproveTask(cfg2)
+	injectImproveTask(cfg2, false)
 	if _, ok := cfg2.AI.Tasks["resume_improve"]; ok {
 		t.Fatal("disabled improve must not inject the task")
 	}
@@ -58,7 +58,7 @@ func TestInjectImproveTask(t *testing.T) {
 func TestBuildImprove(t *testing.T) {
 	cfg := improveWiringCfg()
 	cfg.AI.Tasks = map[string]config.AITask{}
-	injectImproveTask(cfg)
+	injectImproveTask(cfg, false)
 
 	// Disabled → nil.
 	cfg.Features.AutoClone.Improve.Enabled = false
