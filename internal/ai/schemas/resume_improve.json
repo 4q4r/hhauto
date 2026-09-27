@@ -40,7 +40,7 @@
     },
     "used_facts": { "type": "array", "items": { "type": "string" } },
     "missing_data": {
-      "type": ["array", "string"],
+      "type": ["array", "string", "null"],
       "items": { "type": "string" },
       "description": "array of strings; GLM-5.3 sometimes emits a plain string — the Go post-check normalizes it to a one-element array"
     }
