@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -31,6 +32,7 @@ type fakeResume struct {
 	Status     string
 	Searchable bool
 	Updated    time.Time
+	NextTouch  time.Time // T36: served as _attributes.nextTouchAt (ms epoch)
 }
 
 // hhFake is a stateful hh.ru fake wired through a real hhapi client (the
@@ -45,6 +47,7 @@ type hhFake struct {
 	mu        sync.Mutex
 	resumes   []fakeResume
 	touch     int // successful touches
+	lists     int // shard GETs (T36: server-timer passes must not re-list)
 	touchErr  func(call int) error
 	noopTouch bool      // success without bumping updated_at (verify-failure mode)
 	updated   time.Time // updated_at served after a successful touch
@@ -62,6 +65,7 @@ func newHHFake(t *testing.T, _ *store.DB, resumes ...fakeResume) *hhFake {
 	mux.HandleFunc("GET /shards/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		f.lists++
 		_, _ = io.WriteString(w, f.resumesJSON())
 	})
 	mux.HandleFunc("POST /applicant/resumes/touch", func(w http.ResponseWriter, r *http.Request) {
@@ -118,10 +122,14 @@ func (f *hhFake) resumesJSON() string {
 		if i > 0 {
 			b.WriteString(",")
 		}
+		nt := "null"
+		if !r.NextTouch.IsZero() {
+			nt = strconv.FormatInt(r.NextTouch.UnixMilli(), 10)
+		}
 		fmt.Fprintf(&b, `{"hash":%q,"title":%q,"updated_at":%q,"_attributes":{"percent":90,`+
-			`"status":{"id":%q,"name":%q},"isSearchable":%t,"canPublishOrUpdate":true}}`,
+			`"status":{"id":%q,"name":%q},"isSearchable":%t,"canPublishOrUpdate":true,"nextTouchAt":%s}}`,
 			r.Hash, r.Title, r.Updated.In(fixedLoc).Format("2006-01-02T15:04:05-0700"),
-			r.Status, statusName(r.Status), r.Searchable)
+			r.Status, statusName(r.Status), r.Searchable, nt)
 	}
 	b.WriteString(`]}`)
 	return b.String()

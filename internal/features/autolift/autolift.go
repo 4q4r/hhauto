@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"strconv"
+	"sync"
 	"time"
 
 	"hhauto/internal/captcha"
@@ -46,12 +48,27 @@ type Options struct {
 	Now      func() time.Time
 	Rand     *rand.Rand // jitter source; nil → time-seeded default
 	Log      *slog.Logger
+
+	// Queue is retained by RegisterTasks (chatops pattern): server_timer
+	// mode re-arms itself by enqueueing the next lift at the plan moment.
+	Queue queue.Queue
+	// AfterFunc is the wake-up timer seam (tests capture the arm); nil →
+	// time.AfterFunc.
+	AfterFunc func(d time.Duration, fn func()) *time.Timer
 }
 
 // Feature is the WF1 implementation of features.Feature.
 type Feature struct {
-	opt Options
-	log *slog.Logger
+	opt   Options
+	log   *slog.Logger
+	q     queue.Queue
+	after func(d time.Duration, fn func()) *time.Timer
+
+	// planMu guards the server_timer state: the local lift plan (account →
+	// resume hash → next lift moment) and the pending arm timer per account.
+	planMu    sync.Mutex
+	plans     map[string]map[string]time.Time
+	armTimers map[string]*time.Timer
 }
 
 // New builds the feature.
@@ -65,7 +82,15 @@ func New(o Options) *Feature {
 	if o.Rand == nil {
 		o.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
-	return &Feature{opt: o, log: o.Log}
+	after := o.AfterFunc
+	if after == nil {
+		after = time.AfterFunc
+	}
+	return &Feature{
+		opt: o, log: o.Log, q: o.Queue, after: after,
+		plans:     map[string]map[string]time.Time{},
+		armTimers: map[string]*time.Timer{},
+	}
 }
 
 // Name implements features.Feature.
@@ -86,6 +111,7 @@ type LiftPayload struct {
 // [min,max] — and baked into the seeded deadline; Spec.Jitter stays 0 so
 // the engine never adds a second layer on top (Wave 3 review fix 4).
 func (f *Feature) RegisterTasks(ctx context.Context, q queue.Queue, reg *scheduler.Registry) error {
+	f.q = q
 	cfg := f.opt.Config
 	minJ, maxJ, err := featurekit.ParseJitterRange(cfg.Features.AutoLift.Jitter)
 	if err != nil {
@@ -142,11 +168,36 @@ func scheduleTimes(perDay int) []string {
 	return times
 }
 
-// RunAccount runs one lift pass for the account's resumes.
+// RunAccount runs one lift pass for the account's resumes. In server_timer
+// mode (T36) the first pass computes a local lift plan from the shard
+// (nextTouchAt, or updated_at + 4h when empty) and later passes lift by the
+// plan, re-counting 4h + jitter locally after each lift — the shard is not
+// re-fetched between lifts (owner ruling); the plan is recomputed only on
+// process start or after a logout/relogin invalidates it.
 func (f *Feature) RunAccount(ctx context.Context, accountID string) error {
 	if !f.Enabled() {
 		return ErrDisabled
 	}
+	if f.serverMode() {
+		if plan := f.currentPlan(accountID); plan != nil {
+			return f.runPlanned(ctx, accountID, plan)
+		}
+	}
+	return f.runDiscover(ctx, accountID)
+}
+
+// serverMode reports whether lifts are planned from the server timer
+// (everything but an explicit fixed_times is server_timer — the new default).
+func (f *Feature) serverMode() bool {
+	return f.opt.Config.Features.AutoLift.Mode != config.AutoLiftModeFixedTimes
+}
+
+// runDiscover lists the resumes and runs one gated pass. It is the legacy
+// fixed_times path verbatim; server_timer mode reuses it as the start pass
+// (plan computation) and as the permanent fallback when the shard serves no
+// nextTouchAt at all (field unavailable → legacy store-timer gating and the
+// fixed-slot schedule keeps repetition alive).
+func (f *Feature) runDiscover(ctx context.Context, accountID string) error {
 	api, err := f.opt.APIFor(accountID)
 	if err != nil {
 		return fmt.Errorf("autolift: api for %s: %w", accountID, err)
@@ -158,25 +209,19 @@ func (f *Feature) RunAccount(ctx context.Context, accountID string) error {
 		return fmt.Errorf("autolift: list resumes for %s: %w", accountID, err)
 	}
 	stored := f.writeThrough(ctx, accountID, got)
-
-	// T26: clones are full resumes and lift on the same 4h store timer, but
-	// [features.autoclone] autolift=false excludes the tracked clone pool.
-	exclude := map[string]bool{}
-	if f.opt.Config.Features.AutoClone.Autolift != nil && !*f.opt.Config.Features.AutoClone.Autolift {
-		clones, cerr := f.opt.DB.ResumeClonesListByAccount(ctx, accountID)
-		if cerr != nil {
-			f.log.Warn("autolift: clone pool lookup failed; lifting everything", "account", accountID, "err", cerr)
-		}
-		for _, c := range clones {
-			exclude[c.CloneHash] = true
-		}
-	}
+	exclude := f.cloneExcludes(ctx, accountID)
 
 	respectTimer := f.opt.Config.Features.AutoLift.Respect4hTimer == nil ||
 		*f.opt.Config.Features.AutoLift.Respect4hTimer
 	dryRun := f.opt.Config.General.DryRun
 	day := featurekit.DayUTC(f.opt.Now())
 	window := featurekit.LiftWindow(f.opt.Now())
+
+	// T36: when the shard serves the server timer, gating is by nextTouchAt
+	// (empty → updated_at + 4h) instead of the store timer; the plan is
+	// built from the same snapshot. Respect4hTimer is a fixed_times knob.
+	serverAvail := f.serverMode() && nextTouchAvail(got)
+	lifted := map[string]bool{}
 
 	for _, r := range got {
 		if !isLiftable(r) {
@@ -188,11 +233,16 @@ func (f *Feature) RunAccount(ctx context.Context, accountID string) error {
 			f.incr(ctx, day, "lift.skip_clone")
 			continue
 		}
-		row, ok := byHash(stored, r.HHID)
-		if respectTimer && ok && !row.UpdatedAt.IsZero() && f.opt.Now().Sub(row.UpdatedAt) < timer4h {
-			f.log.Debug("autolift: 4h timer not elapsed", "account", accountID, "resume", r.HHID)
-			f.incr(ctx, day, "lift.skip_timer")
-			continue
+		if serverAvail {
+			if f.gateServerTimer(ctx, accountID, day, r, dryRun) {
+				continue
+			}
+		} else {
+			if f.gateStoreTimer(stored, respectTimer, r, f.opt.Now()) {
+				f.log.Debug("autolift: 4h timer not elapsed", "account", accountID, "resume", r.HHID)
+				f.incr(ctx, day, "lift.skip_timer")
+				continue
+			}
 		}
 		if dryRun {
 			f.log.Info("autolift: dry-run lift", "account", accountID, "resume", r.HHID)
@@ -201,12 +251,213 @@ func (f *Feature) RunAccount(ctx context.Context, accountID string) error {
 		}
 		if err := f.liftOne(ctx, accountID, api, r.HHID, day, window); err != nil {
 			if errors.Is(err, errAccountStopped) {
-				return nil // account stopped: do not process further resumes
+				f.dropPlan(accountID) // relogin → recompute from the server
+				return nil            // account stopped: do not process further resumes
 			}
 			f.log.Warn("autolift: lift failed", "account", accountID, "resume", r.HHID, "err", err)
+			continue
 		}
+		lifted[r.HHID] = true
+	}
+
+	if serverAvail && !dryRun {
+		f.setPlan(accountID, f.buildPlan(got, exclude, lifted))
+		f.arm(accountID)
 	}
 	return nil
+}
+
+// cloneExcludes resolves the tracked clone pool excluded from lifting by
+// [features.autoclone] autolift=false (T26: clones lift like base resumes
+// unless the gate is off). A pool lookup failure lifts everything.
+func (f *Feature) cloneExcludes(ctx context.Context, accountID string) map[string]bool {
+	exclude := map[string]bool{}
+	if f.opt.Config.Features.AutoClone.Autolift == nil || *f.opt.Config.Features.AutoClone.Autolift {
+		return exclude
+	}
+	clones, err := f.opt.DB.ResumeClonesListByAccount(ctx, accountID)
+	if err != nil {
+		f.log.Warn("autolift: clone pool lookup failed; lifting everything", "account", accountID, "err", err)
+		return exclude
+	}
+	for _, c := range clones {
+		exclude[c.CloneHash] = true
+	}
+	return exclude
+}
+
+// gateServerTimer applies the T36 server timer for one resume: dry-run
+// logs the planned lift moment, an unelapsed timer is counted and logged.
+// true = hold the lift back.
+func (f *Feature) gateServerTimer(ctx context.Context, accountID, day string, r hhapi.Resume, dryRun bool) bool {
+	at := r.NextTouchAt
+	if at.IsZero() {
+		at = r.UpdatedAt.Add(timer4h)
+	}
+	if dryRun {
+		f.log.Info("autolift: dry-run planned lift", "account", accountID, "resume", r.HHID, "at", at.UTC().Format(time.RFC3339))
+		f.incr(ctx, day, "lift.dry_run")
+		return true
+	}
+	if at.After(f.opt.Now()) {
+		f.log.Debug("autolift: server timer not elapsed", "account", accountID, "resume", r.HHID, "at", at.UTC().Format(time.RFC3339))
+		f.incr(ctx, day, "lift.skip_timer")
+		return true
+	}
+	return false
+}
+
+// gateStoreTimer is the legacy 4h store-timer gate. true = hold back.
+func (f *Feature) gateStoreTimer(stored []store.Resume, respectTimer bool, r hhapi.Resume, nowT time.Time) bool {
+	row, ok := byHash(stored, r.HHID)
+	return respectTimer && ok && !row.UpdatedAt.IsZero() && nowT.Sub(row.UpdatedAt) < timer4h
+}
+
+// runPlanned executes one local plan pass: every resume whose plan moment
+// has elapsed is lifted (no shard read); lifted resumes are re-counted
+// locally as now + 4h + jitter and the next wake is armed.
+func (f *Feature) runPlanned(ctx context.Context, accountID string, plan map[string]time.Time) error {
+	api, err := f.opt.APIFor(accountID)
+	if err != nil {
+		return fmt.Errorf("autolift: api for %s: %w", accountID, err)
+	}
+	nowT := f.opt.Now()
+	dryRun := f.opt.Config.General.DryRun
+	day := featurekit.DayUTC(nowT)
+	window := featurekit.LiftWindow(nowT)
+
+	for hash, at := range plan {
+		if dryRun {
+			f.log.Info("autolift: dry-run planned lift", "account", accountID, "resume", hash, "at", at.UTC().Format(time.RFC3339))
+			f.incr(ctx, day, "lift.dry_run")
+			continue
+		}
+		if at.After(nowT) {
+			continue
+		}
+		if err := f.liftOne(ctx, accountID, api, hash, day, window); err != nil {
+			if errors.Is(err, errAccountStopped) {
+				f.dropPlan(accountID) // relogin → recompute from the server
+				return nil
+			}
+			f.log.Warn("autolift: lift failed", "account", accountID, "resume", hash, "err", err)
+			continue
+		}
+	}
+	if dryRun {
+		return nil // no plan mutation, no arm: dry-run is read-only
+	}
+	for hash, at := range plan {
+		if !at.After(nowT) {
+			plan[hash] = nowT.Add(timer4h).Add(f.sampleJitter())
+		}
+	}
+	f.setPlan(accountID, plan)
+	f.arm(accountID)
+	return nil
+}
+
+// nextTouchAvail reports whether the shard response carries the server
+// timer at all (T36 legacy fallback: absent everywhere → legacy mode).
+func nextTouchAvail(resumes []hhapi.Resume) bool {
+	for _, r := range resumes {
+		if !r.NextTouchAt.IsZero() {
+			return true
+		}
+	}
+	return false
+}
+
+// buildPlan computes the local lift plan from the shard snapshot: the
+// server nextTouchAt when present, updated_at + 4h when empty (both + one
+// jitter sample); resumes lifted in this pass are re-counted from now.
+func (f *Feature) buildPlan(got []hhapi.Resume, exclude, lifted map[string]bool) map[string]time.Time {
+	nowT := f.opt.Now()
+	plan := make(map[string]time.Time, len(got))
+	for _, r := range got {
+		if r.HHID == "" || !isLiftable(r) || exclude[r.HHID] {
+			continue
+		}
+		switch {
+		case lifted[r.HHID]:
+			plan[r.HHID] = nowT.Add(timer4h).Add(f.sampleJitter())
+		case r.NextTouchAt.IsZero():
+			plan[r.HHID] = r.UpdatedAt.Add(timer4h)
+		default:
+			plan[r.HHID] = r.NextTouchAt.Add(f.sampleJitter())
+		}
+	}
+	return plan
+}
+
+// sampleJitter draws one jitter sample from the configured range (0 when
+// unset) — the antibot delay applied after the plan moment.
+func (f *Feature) sampleJitter() time.Duration {
+	minJ, maxJ, err := featurekit.ParseJitterRange(f.opt.Config.Features.AutoLift.Jitter)
+	if err != nil {
+		return 0
+	}
+	return featurekit.JitterDuration(minJ, maxJ, f.opt.Rand)
+}
+
+// arm schedules the next lift task at the earliest plan moment. The queue
+// is transient and Dequeue does not wait for Deadline, so the wake-up is a
+// one-shot timer that enqueues at fire time; re-arming replaces the pending
+// timer. Restart recovery is the boot seed + fresh plan computation.
+func (f *Feature) arm(accountID string) {
+	if f.q == nil {
+		return
+	}
+	nowT := f.opt.Now()
+	wake := time.Time{}
+	for _, at := range f.currentPlan(accountID) {
+		if at.After(nowT) && (wake.IsZero() || at.Before(wake)) {
+			wake = at
+		}
+	}
+	if wake.IsZero() {
+		return
+	}
+	delay := wake.Sub(nowT)
+	f.planMu.Lock()
+	defer f.planMu.Unlock()
+	if prev := f.armTimers[accountID]; prev != nil {
+		prev.Stop()
+	}
+	f.armTimers[accountID] = f.after(delay, func() {
+		f.planMu.Lock()
+		delete(f.armTimers, accountID)
+		f.planMu.Unlock()
+		err := f.q.Enqueue(context.Background(), queue.Task{
+			AccountID: accountID,
+			Kind:      queue.KindLift,
+			DedupKey:  "lift:timer:" + strconv.FormatInt(wake.Unix(), 10),
+			Priority:  queue.PrioLift,
+			Deadline:  wake,
+			Payload:   LiftPayload{AccountID: accountID, Window: featurekit.LiftWindow(wake)},
+		})
+		if err != nil {
+			f.log.Debug("autolift: timer re-arm dropped", "account", accountID, "err", err)
+		}
+	})
+}
+
+func (f *Feature) currentPlan(accountID string) map[string]time.Time {
+	f.planMu.Lock()
+	defer f.planMu.Unlock()
+	return f.plans[accountID]
+}
+
+func (f *Feature) setPlan(accountID string, plan map[string]time.Time) {
+	f.planMu.Lock()
+	defer f.planMu.Unlock()
+	f.plans[accountID] = plan
+}
+
+func (f *Feature) dropPlan(accountID string) {
+	f.planMu.Lock()
+	defer f.planMu.Unlock()
+	delete(f.plans, accountID)
 }
 
 // errAccountStopped signals that the account was disabled mid-run.
