@@ -77,14 +77,18 @@ type Provider interface {
 
 // Decision is one audited AI verdict (persisted by the ledger).
 type Decision struct {
-	ID          string
-	CreatedAt   time.Time
-	AccountID   string
-	Task        TaskName
-	EntityType  string // vacancy|chat|message|test|link
-	EntityID    string
-	RunID       string
-	Model       string
+	ID         string
+	CreatedAt  time.Time
+	AccountID  string
+	Task       TaskName
+	EntityType string // vacancy|chat|message|test|link
+	EntityID   string
+	RunID      string
+	Model      string
+	// Source names the pipeline stage that produced the verdict:
+	// "llm" (default provider pipeline) or "jev" (the optional System-One
+	// prefilter). Empty in records created before T33.
+	Source      string
 	PromptVer   string
 	InputDigest string
 	Verdict     json.RawMessage

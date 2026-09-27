@@ -112,7 +112,8 @@ type Account struct {
 	ProfileFile   string            `toml:"profile_file"`    // overrides global profile.md
 }
 
-// AI aggregates the LLM subsystem: budgets, providers, models, tasks, pricing.
+// AI aggregates the LLM subsystem: budgets, providers, models, tasks, pricing
+// and the optional Jev prefilter.
 type AI struct {
 	DailyBudgetTokens int                   `toml:"daily_budget_tokens"` // 0 = unlimited
 	DailyBudgetUSD    float64               `toml:"daily_budget_usd"`
@@ -121,6 +122,34 @@ type AI struct {
 	Models            map[string]AIModel    `toml:"models"`
 	Tasks             map[string]AITask     `toml:"tasks"`
 	Pricing           map[string]AIPricing  `toml:"pricing"`
+	// Jev (T33): optional System-One prefilter in front of the LLM
+	// pipeline. Disabled by default — false means full-AI mode. When
+	// enabled, enrolled tasks are classified by the Jev-compatible
+	// endpoint first; verdicts at or above confidence_threshold are
+	// returned without an LLM call, everything else (low confidence,
+	// endpoint unavailable, malformed answers) escalates to the LLM.
+	// The API key never lives in this file: it is read from the
+	// api_key_env environment variable at startup (fail-fast).
+	Jev AIJev `toml:"jev"`
+}
+
+// AIJev configures the Jev-compatible prefilter endpoint (T33).
+type AIJev struct {
+	// Enabled gates the whole prefilter (default false = full AI).
+	Enabled bool `toml:"enabled"`
+	// Endpoint is the Jev-compatible System-One URL; defaults to
+	// https://api.typesafe.ai/v1/systemone. Must be an absolute http(s) URL.
+	Endpoint string `toml:"endpoint"`
+	// APIKeyEnv names the environment variable holding the Bearer key;
+	// required (and resolved fail-fast at startup) when Enabled.
+	APIKeyEnv string `toml:"api_key_env"`
+	// ConfidenceThreshold gates Jev verdicts: >= threshold is decided by
+	// Jev, below escalates to the LLM; default 0.85, must be in (0,1].
+	ConfidenceThreshold float64 `toml:"confidence_threshold"`
+	// Tasks enrolls tasks in the prefilter; allowed values are the
+	// classification-only tasks: message_classification,
+	// link_detection, contact_extraction.
+	Tasks []string `toml:"tasks"`
 }
 
 // AIProvider is one LLM API endpoint (one of the three dialects).
