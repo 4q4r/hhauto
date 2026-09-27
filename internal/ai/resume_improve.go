@@ -9,6 +9,7 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -84,6 +85,44 @@ func (in ImproveInput) TrustedBlocks() string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// normalizeImproveTypes repairs the type drift observed on GLM-5.3 (max
+// reasoning): string confidence and string missing_data. String confidence
+// parses into [0,1] (unparseable fail-closes to 0 — never inflates trust);
+// string missing_data wraps into a one-element array (an empty string
+// becomes an empty one). Canonical number/array values pass through
+// untouched, and extra top-level keys (e.g. key_skills) are tolerated by
+// the schema and simply ride along.
+func normalizeImproveTypes(m map[string]any) {
+	if s, ok := m["confidence"].(string); ok {
+		m["confidence"] = normalizedConfidence(s)
+	}
+	switch s := m["missing_data"].(type) {
+	case string:
+		if strings.TrimSpace(s) == "" {
+			m["missing_data"] = []any{}
+		} else {
+			m["missing_data"] = []any{s}
+		}
+	}
+}
+
+// normalizedConfidence parses a string confidence into [0,1]; an
+// unparseable value fail-closes to 0 (the conservative direction: low
+// confidence routes to a human, high confidence does not).
+func normalizedConfidence(s string) float64 {
+	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return 0
+	}
+	if f < 0 {
+		return 0
+	}
+	if f > 1 {
+		return 1
+	}
+	return f
 }
 
 // checkImproveGrounding is the deterministic post-check for
