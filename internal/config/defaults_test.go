@@ -24,7 +24,6 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 		{"api.endpoints.chatik", c.API.Endpoints.Chatik, "https://chatik.hh.ru"},
 		{"api.endpoints.search_page", c.API.Endpoints.SearchPage, "https://hh.ru/search/vacancy"},
 		{"features.auto_lift.per_day", c.Features.AutoLift.PerDay, 6},
-		{"features.auto_lift.respect_4h_timer", *c.Features.AutoLift.Respect4hTimer, true},
 		{"pacing.active_window", c.Pacing.ActiveWindow, "08:00-22:00"},
 		{"pacing.mode", c.Pacing.Mode, "adaptive"},
 		{"pacing.night_pause", *c.Pacing.NightPause, true},

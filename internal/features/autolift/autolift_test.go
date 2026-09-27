@@ -275,21 +275,6 @@ func TestFourHourTimerSkipsFreshResume(t *testing.T) {
 	}
 }
 
-func TestRespect4hTimerFalseIgnoresTimer(t *testing.T) {
-	h := newHarness(t, func(c *config.Config) {
-		v := false
-		c.Features.AutoLift.Respect4hTimer = &v
-	}, fakeResume{Hash: "hash1", Status: "published", Searchable: true, Updated: now.Add(-1 * time.Hour)})
-	f := h.feature(t)
-
-	if err := f.RunAccount(context.Background(), "acc1"); err != nil {
-		t.Fatalf("RunAccount: %v", err)
-	}
-	if h.fake.touch != 1 {
-		t.Fatalf("touch calls = %d, want 1 (timer disabled)", h.fake.touch)
-	}
-}
-
 func TestUnpublishedOrHiddenResumeSkipped(t *testing.T) {
 	h := newHarness(t, nil,
 		fakeResume{Hash: "h1", Status: "draft", Searchable: true, Updated: now.Add(-5 * time.Hour)},
@@ -316,13 +301,9 @@ func TestDoneIntentSkipsSecondRunInSameWindow(t *testing.T) {
 	if err := f.RunAccount(context.Background(), "acc1"); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
-	// Backdate the resume so the 4h timer would allow another touch.
-	fake := h.fake
-	fake.mu.Lock()
-	for i := range fake.resumes {
-		fake.resumes[i].Updated = now.Add(-5 * time.Hour)
-	}
-	fake.mu.Unlock()
+	// Force the local plan due: the done intent of this window must be
+	// the hard barrier against a second touch.
+	f.setPlan("acc1", map[string]time.Time{"hash1": now.Add(-time.Minute)})
 
 	if err := f.RunAccount(context.Background(), "acc1"); err != nil {
 		t.Fatalf("second run: %v", err)

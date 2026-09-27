@@ -178,25 +178,14 @@ func (f *Feature) RunAccount(ctx context.Context, accountID string) error {
 	if !f.Enabled() {
 		return ErrDisabled
 	}
-	if f.serverMode() {
-		if plan := f.currentPlan(accountID); plan != nil {
-			return f.runPlanned(ctx, accountID, plan)
-		}
+	if plan := f.currentPlan(accountID); plan != nil {
+		return f.runPlanned(ctx, accountID, plan)
 	}
 	return f.runDiscover(ctx, accountID)
 }
 
-// serverMode reports whether lifts are planned from the server timer
-// (everything but an explicit fixed_times is server_timer — the new default).
-func (f *Feature) serverMode() bool {
-	return f.opt.Config.Features.AutoLift.Mode != config.AutoLiftModeFixedTimes
-}
-
-// runDiscover lists the resumes and runs one gated pass. It is the legacy
-// fixed_times path verbatim; server_timer mode reuses it as the start pass
-// (plan computation) and as the permanent fallback when the shard serves no
-// nextTouchAt at all (field unavailable → legacy store-timer gating and the
-// fixed-slot schedule keeps repetition alive).
+// runDiscover lists the resumes, builds the lift plan from the snapshot and
+// runs one server-timer-gated pass (start pass and post-relogin recompute).
 func (f *Feature) runDiscover(ctx context.Context, accountID string) error {
 	api, err := f.opt.APIFor(accountID)
 	if err != nil {
@@ -208,19 +197,15 @@ func (f *Feature) runDiscover(ctx context.Context, accountID string) error {
 		f.handleError(ctx, accountID, "list_resumes", err)
 		return fmt.Errorf("autolift: list resumes for %s: %w", accountID, err)
 	}
-	stored := f.writeThrough(ctx, accountID, got)
+	f.writeThrough(ctx, accountID, got)
 	exclude := f.cloneExcludes(ctx, accountID)
 
-	respectTimer := f.opt.Config.Features.AutoLift.Respect4hTimer == nil ||
-		*f.opt.Config.Features.AutoLift.Respect4hTimer
 	dryRun := f.opt.Config.General.DryRun
 	day := featurekit.DayUTC(f.opt.Now())
 	window := featurekit.LiftWindow(f.opt.Now())
 
-	// T36: when the shard serves the server timer, gating is by nextTouchAt
-	// (empty → updated_at + 4h) instead of the store timer; the plan is
-	// built from the same snapshot. Respect4hTimer is a fixed_times knob.
-	serverAvail := f.serverMode() && nextTouchAvail(got)
+	// T36: gating is by nextTouchAt (empty → updated_at + 4h); the plan is
+	// built from the same snapshot.
 	lifted := map[string]bool{}
 
 	for _, r := range got {
@@ -233,16 +218,8 @@ func (f *Feature) runDiscover(ctx context.Context, accountID string) error {
 			f.incr(ctx, day, "lift.skip_clone")
 			continue
 		}
-		if serverAvail {
-			if f.gateServerTimer(ctx, accountID, day, r, dryRun) {
-				continue
-			}
-		} else {
-			if f.gateStoreTimer(stored, respectTimer, r, f.opt.Now()) {
-				f.log.Debug("autolift: 4h timer not elapsed", "account", accountID, "resume", r.HHID)
-				f.incr(ctx, day, "lift.skip_timer")
-				continue
-			}
+		if f.gateServerTimer(ctx, accountID, day, r, dryRun) {
+			continue
 		}
 		if dryRun {
 			f.log.Info("autolift: dry-run lift", "account", accountID, "resume", r.HHID)
@@ -260,7 +237,7 @@ func (f *Feature) runDiscover(ctx context.Context, accountID string) error {
 		lifted[r.HHID] = true
 	}
 
-	if serverAvail && !dryRun {
+	if !dryRun {
 		f.setPlan(accountID, f.buildPlan(got, exclude, lifted))
 		f.arm(accountID)
 	}
@@ -307,12 +284,6 @@ func (f *Feature) gateServerTimer(ctx context.Context, accountID, day string, r 
 	return false
 }
 
-// gateStoreTimer is the legacy 4h store-timer gate. true = hold back.
-func (f *Feature) gateStoreTimer(stored []store.Resume, respectTimer bool, r hhapi.Resume, nowT time.Time) bool {
-	row, ok := byHash(stored, r.HHID)
-	return respectTimer && ok && !row.UpdatedAt.IsZero() && nowT.Sub(row.UpdatedAt) < timer4h
-}
-
 // runPlanned executes one local plan pass: every resume whose plan moment
 // has elapsed is lifted (no shard read); lifted resumes are re-counted
 // locally as now + 4h + jitter and the next wake is armed.
@@ -355,17 +326,6 @@ func (f *Feature) runPlanned(ctx context.Context, accountID string, plan map[str
 	f.setPlan(accountID, plan)
 	f.arm(accountID)
 	return nil
-}
-
-// nextTouchAvail reports whether the shard response carries the server
-// timer at all (T36 legacy fallback: absent everywhere → legacy mode).
-func nextTouchAvail(resumes []hhapi.Resume) bool {
-	for _, r := range resumes {
-		if !r.NextTouchAt.IsZero() {
-			return true
-		}
-	}
-	return false
 }
 
 // buildPlan computes the local lift plan from the shard snapshot: the
@@ -589,8 +549,8 @@ func byHash(rows []store.Resume, hash string) (store.Resume, bool) {
 	return store.Resume{}, false
 }
 
-// writeThrough persists the API snapshot (the store row is the 4h-timer
-// source of truth) and returns the stored rows. resumes.account_id carries
+// writeThrough persists the API snapshot (the store row is the verify
+// baseline) and returns the stored rows. resumes.account_id carries
 // a FOREIGN KEY to accounts(id), so the account row is ensured first (an
 // empty status keeps the existing one — status ownership stays with the
 // session-health feature).

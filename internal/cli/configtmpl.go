@@ -101,7 +101,6 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # enabled = false                       # WF1: 6 lifts/day (hh 4h server timer)
 # per_day = 6
 # jitter = "20-40m"
-# respect_4h_timer = true
 [features.multiapply]
 # enabled = false                       # WF2: discovery -> filters -> apply
 # ai_filter = false
