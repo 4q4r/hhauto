@@ -132,8 +132,9 @@ func (f *fakeAI) verdictFor(task string, input map[string]any) map[string]any {
 	case "cover_letter":
 		v := e2eCommon(0.9)
 		v["letter"] = e2eLetter
-		v["used_facts"] = []string{}
-		v["missing_data"] = []string{}
+		v["mode"] = "ai_company"
+		v["used_facts"] = []any{}
+		v["missing_data"] = []any{}
 		return v
 	case "message_classification":
 		category := "other"
@@ -144,11 +145,13 @@ func (f *fakeAI) verdictFor(task string, input map[string]any) map[string]any {
 		}
 		v := e2eCommon(0.95)
 		v["category"] = category
+		v["evidence_quote"] = nil
 		return v
 	case "chat_reply":
 		v := e2eCommon(0.95)
 		v["reply"] = e2eReply
 		v["intent"] = "ack"
+		v["used_facts"] = []any{}
 		return v
 	case "test_answer":
 		answers := []any{}
@@ -157,9 +160,13 @@ func (f *fakeAI) verdictFor(task string, input map[string]any) map[string]any {
 				qm, _ := q.(map[string]any)
 				text, _ := qm["text"].(string)
 				answers = append(answers, map[string]any{
-					"question":         text,
-					"answer":           "Отвечу подробно на интервью: тема мне хорошо знакома.",
+					"question_id":      text,
+					"kind":             "open",
+					"choice_indices":   nil,
+					"open_text":        "Отвечу подробно на интервью: тема мне хорошо знакома.",
 					"based_on_profile": true,
+					"facts_used":       []any{},
+					"note":             nil,
 				})
 			}
 		}
@@ -168,13 +175,19 @@ func (f *fakeAI) verdictFor(task string, input map[string]any) map[string]any {
 		return v
 	case "warmup_ping":
 		v := e2eCommon(0.9)
-		v["text"] = e2ePing
+		v["message"] = e2ePing
+		v["should_send"] = true
+		v["question_form"] = true
+		v["used_facts"] = []any{}
 		return v
 	case "vacancy_scoring":
 		v := e2eCommon(0.9)
 		v["score"] = 90
 		v["band"] = "strong"
-		v["reasons"] = []string{}
+		v["target_role_match"] = true
+		v["reasons"] = []string{"требования вакансии покрывают подтверждённый опыт"}
+		v["red_flags"] = []any{}
+		v["missing_data"] = []any{}
 		return v
 	default:
 		v := e2eCommon(0.5)

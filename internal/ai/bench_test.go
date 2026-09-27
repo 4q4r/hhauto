@@ -83,7 +83,7 @@ func BenchmarkGuard(b *testing.B) {
 var benchVerdict = json.RawMessage(`{"confidence":0.9,"needs_human":false,` +
 	`"needs_human_reason":null,"injection_suspected":false,` +
 	`"letter":"Здравствуйте! Подхожу под ваш стек: Go, PostgreSQL, Kafka. Готов обсудить задачи.",` +
-	`"used_facts":["Go"],"missing_data":[]}`)
+	`"mode":"ai_company","used_facts":[{"fact":"Go","source":"resume","quote":"Go"}],"missing_data":[]}`)
 
 func BenchmarkPostChecks(b *testing.B) {
 	r := &runner{} // postChecks reads no runner state; receiver is structural

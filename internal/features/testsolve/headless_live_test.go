@@ -69,7 +69,7 @@ func (r *scriptedLiveRunner) Run(_ context.Context, _ string, _, _ string, _ str
 			}
 		}
 		answers = append(answers, map[string]any{
-			"question": q.Text, "answer": ans, "based_on_profile": false,
+			"question_id": q.Text, "open_text": ans, "based_on_profile": false,
 		})
 	}
 	b, _ := json.Marshal(map[string]any{

@@ -569,15 +569,29 @@ func (f *Feature) answerQuestions(ctx context.Context, accountID string, questio
 		if err != nil {
 			return nil, false, fmt.Errorf("chatops: test_answer: %w", err)
 		}
-		var verdict struct {
+		var decoded struct {
 			ai.Common
-			Answers []aiAnswerEntry `json:"answers"`
+			Answers []struct {
+				QuestionID     string  `json:"question_id"`
+				OpenText       *string `json:"open_text"`
+				BasedOnProfile bool    `json:"based_on_profile"`
+			} `json:"answers"`
 		}
-		if err := json.Unmarshal(raw, &verdict); err != nil {
+		if err := json.Unmarshal(raw, &decoded); err != nil {
 			return nil, false, fmt.Errorf("chatops: test verdict decode: %w", err)
 		}
-		out = append(out, verdict.Answers...)
-		if verdict.NeedsHuman || verdict.InjectionSuspected {
+		entries := make([]aiAnswerEntry, 0, len(decoded.Answers))
+		for _, a := range decoded.Answers {
+			ans := ""
+			if a.OpenText != nil {
+				ans = *a.OpenText
+			}
+			entries = append(entries, aiAnswerEntry{
+				Question: a.QuestionID, Answer: ans, BasedOnProfile: a.BasedOnProfile,
+			})
+		}
+		out = append(out, entries...)
+		if decoded.NeedsHuman || decoded.InjectionSuspected {
 			unsure = true
 		}
 		// Wave-3 review #9: batch confidence gates — choice (one question)
@@ -586,10 +600,10 @@ func (f *Feature) answerQuestions(ctx context.Context, accountID string, questio
 		if len(qs) > 1 {
 			threshold = answerMultiMinConfidence
 		}
-		if verdict.Confidence < threshold {
+		if decoded.Confidence < threshold {
 			unsure = true
 		}
-		for _, a := range verdict.Answers {
+		for _, a := range entries {
 			if strings.TrimSpace(a.Answer) == "" {
 				unsure = true
 			}

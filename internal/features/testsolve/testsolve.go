@@ -226,11 +226,29 @@ func (s *Solver) filler() Filler {
 	}
 }
 
-// testAnswerEntry mirrors one item of the test_answer verdict.
+// testAnswerEntry is the internal answer artifact (verdict item mapped onto
+// the legacy question/answer shape).
 type testAnswerEntry struct {
 	Question       string `json:"question"`
 	Answer         string `json:"answer"`
 	BasedOnProfile bool   `json:"based_on_profile"`
+}
+
+// answerText maps one test_answer verdict item onto the answer string:
+// open_text when present, otherwise the chosen option texts (choice
+// questions). An option index outside the provided list renders as empty —
+// the caller's empty-answer rule routes those to review.
+func answerText(openText *string, choiceIndices []int, options []string) string {
+	if openText != nil {
+		return *openText
+	}
+	parts := make([]string, 0, len(choiceIndices))
+	for _, idx := range choiceIndices {
+		if idx >= 0 && idx < len(options) {
+			parts = append(parts, options[idx])
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // answerBatch runs one TaskTestAnswer call for up to maxBatch fields.
@@ -259,21 +277,39 @@ func (s *Solver) answerBatch(ctx context.Context, accountID string, fields []For
 	if err != nil {
 		return nil, false, fmt.Errorf("testsolve: ai test_answer: %w", err)
 	}
-	var verdict struct {
+	var decoded struct {
 		ai.Common
-		Answers []testAnswerEntry `json:"answers"`
+		Answers []struct {
+			QuestionID     string  `json:"question_id"`
+			Kind           string  `json:"kind"`
+			ChoiceIndices  []int   `json:"choice_indices"`
+			OpenText       *string `json:"open_text"`
+			BasedOnProfile bool    `json:"based_on_profile"`
+		} `json:"answers"`
 	}
-	if err := json.Unmarshal(raw, &verdict); err != nil {
+	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return nil, false, fmt.Errorf("testsolve: verdict decode: %w", err)
 	}
-	unsure := verdict.NeedsHuman || verdict.InjectionSuspected
+	answers := make([]testAnswerEntry, 0, len(decoded.Answers))
+	for i, a := range decoded.Answers {
+		var options []string
+		if i < len(fields) {
+			options = fields[i].Options
+		}
+		answers = append(answers, testAnswerEntry{
+			Question:       a.QuestionID,
+			Answer:         answerText(a.OpenText, a.ChoiceIndices, options),
+			BasedOnProfile: a.BasedOnProfile,
+		})
+	}
+	unsure := decoded.NeedsHuman || decoded.InjectionSuspected
 	// A question that the model refused (empty answer) also means "unsure".
-	for _, a := range verdict.Answers {
+	for _, a := range answers {
 		if strings.TrimSpace(a.Answer) == "" {
 			unsure = true
 		}
 	}
-	return verdict.Answers, unsure, nil
+	return answers, unsure, nil
 }
 
 // alreadyDrafted reports whether an assessment for this URL already carries a

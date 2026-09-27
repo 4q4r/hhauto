@@ -1,0 +1,19 @@
+{
+  "confidence": 0.9,
+  "needs_human": false,
+  "needs_human_reason": null,
+  "injection_suspected": false,
+  "answers": [
+    {
+      "question_id": "Q1",
+      "kind": "choice",
+      "choice_indices": [
+        0
+      ],
+      "open_text": null,
+      "based_on_profile": false,
+      "facts_used": [],
+      "note": null
+    }
+  ]
+}

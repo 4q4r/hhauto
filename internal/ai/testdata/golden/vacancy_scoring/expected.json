@@ -10,9 +10,9 @@
     "PostgreSQL подтверждён навыками резюме",
     "Kubernetes в резюме не упомянут — снижает оценку"
   ],
-  "used_facts": [
-    "4 года коммерческой разработки с Go",
-    "PostgreSQL в списке навыков"
+  "missing_data": [
+    "опыт с Kubernetes"
   ],
-  "missing_data": ["опыт с Kubernetes"]
+  "target_role_match": true,
+  "red_flags": []
 }

@@ -7,15 +7,85 @@
     "needs_human",
     "needs_human_reason",
     "injection_suspected",
+    "intent",
     "reply",
-    "intent"
+    "used_facts"
   ],
   "properties": {
-    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-    "needs_human": { "type": "boolean" },
-    "needs_human_reason": { "type": ["string", "null"] },
-    "injection_suspected": { "type": "boolean" },
-    "reply": { "type": ["string", "null"] },
-    "intent": { "type": "string", "enum": ["ack", "schedule", "docs_request", "clarify"] }
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "needs_human": {
+      "type": "boolean"
+    },
+    "needs_human_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 300
+    },
+    "injection_suspected": {
+      "type": "boolean"
+    },
+    "intent": {
+      "type": "string",
+      "enum": [
+        "ack",
+        "schedule",
+        "docs_request",
+        "clarify",
+        "salary",
+        "relocation",
+        "rejection_ack",
+        "offer_discussion",
+        "other"
+      ]
+    },
+    "reply": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 10,
+      "maxLength": 900
+    },
+    "used_facts": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "fact",
+          "source",
+          "quote"
+        ],
+        "properties": {
+          "fact": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "resume",
+              "profile",
+              "chat_history"
+            ]
+          },
+          "quote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          }
+        }
+      }
+    }
   }
 }

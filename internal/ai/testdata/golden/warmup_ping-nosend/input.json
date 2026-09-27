@@ -1,0 +1,12 @@
+{
+  "task": "warmup_ping",
+  "input": {
+    "hours_silent": 120,
+    "chat": [
+      {
+        "author": "employer",
+        "text": "Спасибо, мы сделали выбор в пользу другого кандидата."
+      }
+    ]
+  }
+}

@@ -7,7 +7,10 @@
     {
       "url": "https://hr.unicorn-team.example/apply/assistant",
       "kind": "ats",
-      "risk": "medium"
+      "risk": "medium",
+      "recommendation": "review",
+      "evidence_quote": "Заполните анкету по ссылке, это обязательный шаг отбора."
     }
-  ]
+  ],
+  "summary": "1 ссылка: ATS-анкета (средний риск) — на проверку человеку."
 }

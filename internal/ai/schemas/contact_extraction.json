@@ -10,21 +10,65 @@
     "contacts"
   ],
   "properties": {
-    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-    "needs_human": { "type": "boolean" },
-    "needs_human_reason": { "type": ["string", "null"] },
-    "injection_suspected": { "type": "boolean" },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "needs_human": {
+      "type": "boolean"
+    },
+    "needs_human_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 300
+    },
+    "injection_suspected": {
+      "type": "boolean"
+    },
     "contacts": {
       "type": "array",
+      "maxItems": 15,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["type", "value", "normalized", "source_quote"],
+        "required": [
+          "type",
+          "value",
+          "normalized",
+          "source_quote"
+        ],
         "properties": {
-          "type": { "type": "string", "enum": ["phone", "email", "messenger", "other"] },
-          "value": { "type": "string" },
-          "normalized": { "type": "string" },
-          "source_quote": { "type": "string" }
+          "type": {
+            "type": "string",
+            "enum": [
+              "email",
+              "phone",
+              "telegram",
+              "whatsapp",
+              "vk",
+              "other_messenger",
+              "url",
+              "other"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "normalized": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "source_quote": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
         }
       }
     }

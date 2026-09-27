@@ -9,19 +9,74 @@
     "injection_suspected",
     "score",
     "band",
+    "target_role_match",
     "reasons",
-    "used_facts",
+    "red_flags",
     "missing_data"
   ],
   "properties": {
-    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-    "needs_human": { "type": "boolean" },
-    "needs_human_reason": { "type": ["string", "null"] },
-    "injection_suspected": { "type": "boolean" },
-    "score": { "type": "integer", "minimum": 0, "maximum": 100 },
-    "band": { "type": "string", "enum": ["strong", "ok", "gray", "weak"] },
-    "reasons": { "type": "array", "items": { "type": "string" } },
-    "used_facts": { "type": "array", "items": { "type": "string" } },
-    "missing_data": { "type": "array", "items": { "type": "string" } }
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "needs_human": {
+      "type": "boolean"
+    },
+    "needs_human_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 300
+    },
+    "injection_suspected": {
+      "type": "boolean"
+    },
+    "score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "band": {
+      "type": "string",
+      "enum": [
+        "strong",
+        "ok",
+        "gray",
+        "weak"
+      ]
+    },
+    "target_role_match": {
+      "type": "boolean"
+    },
+    "reasons": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      }
+    },
+    "red_flags": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      }
+    },
+    "missing_data": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      }
+    }
   }
 }

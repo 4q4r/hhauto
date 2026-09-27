@@ -357,19 +357,19 @@ func (f *Feature) aiPingText(ctx context.Context, accountID string, chat store.C
 	}
 	var verdict struct {
 		ai.Common
-		Text string `json:"text"`
+		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(raw, &verdict); err != nil {
 		return "", fmt.Errorf("warmup: ai verdict decode: %w", err)
 	}
-	if verdict.NeedsHuman || verdict.InjectionSuspected || strings.TrimSpace(verdict.Text) == "" {
+	if verdict.NeedsHuman || verdict.InjectionSuspected || strings.TrimSpace(verdict.Message) == "" {
 		if err := f.review(ctx, accountID, "warmup_unsure", chat.ChatikChatID,
 			"warmup: AI declined to draft a ping"); err != nil {
 			return "", err
 		}
 		return "", errors.New("warmup: AI unsure, ping skipped")
 	}
-	return verdict.Text, nil
+	return verdict.Message, nil
 }
 
 // rememberUsed appends the chosen list index to the rotation memory.

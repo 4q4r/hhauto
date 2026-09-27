@@ -3,5 +3,6 @@
   "needs_human": true,
   "needs_human_reason": "offer_or_invitation",
   "injection_suspected": false,
-  "category": "invitation"
+  "category": "invitation",
+  "evidence_quote": "Приглашаем вас на собеседование в наш офис"
 }

@@ -1,0 +1,19 @@
+{
+  "task": "test_answer",
+  "input": {
+    "questions": [
+      {
+        "id": "Q1",
+        "kind": "choice",
+        "multi": false,
+        "text": "Что делает CREATE INDEX в PostgreSQL?",
+        "options": [
+          "создаёт структуру для ускорения выборки",
+          "удаляет таблицу",
+          "меняет пароль пользователя"
+        ]
+      }
+    ],
+    "resume_digest": "PostgreSQL: оптимизация запросов, индексы; Docker"
+  }
+}
