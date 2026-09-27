@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"hhauto/internal/config"
+	"hhauto/internal/hhapi"
 	"hhauto/internal/store"
 )
 
@@ -73,5 +74,35 @@ func TestBuildAPIClientsFailsClosed(t *testing.T) {
 	_, err := BuildAPIClients(context.Background(), cfg3, stubProxyReg{dialErr: errors.New("unknown ref")}, nil, discardLogger())
 	if err == nil {
 		t.Fatal("unresolvable proxy_ref must fail the build")
+	}
+}
+
+// T38 regression: the CLI callers (account check, ai status) pass a nil
+// logger — the T37 loadBrowserSpec must not panic on it (no captured TLS
+// spec in a temp data_dir hits the Warn path).
+func TestBuildAPIClientsNilLoggerNoPanic(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{}
+	cfg.General.DataDir = dir
+	cfg.API.Transport = config.TransportTLSClient
+	cfg.Accounts = map[string]config.Account{
+		"a1": {DisplayName: "one", UserAgent: "ua/1"},
+	}
+	ck := &fakeCookies{loadOK: true}
+	var cl map[string]hhapi.HHAPI
+	var err error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("BuildAPIClients panicked with a nil logger: %v", r)
+			}
+		}()
+		cl, err = BuildAPIClients(context.Background(), cfg, nil, ck, nil)
+	}()
+	if err != nil {
+		t.Fatalf("BuildAPIClients: %v", err)
+	}
+	if cl["a1"] == nil {
+		t.Fatal("client a1 missing")
 	}
 }

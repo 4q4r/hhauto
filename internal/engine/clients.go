@@ -95,6 +95,11 @@ func BuildAPIClients(ctx context.Context, cfg *config.Config, reg proxy.Registry
 	if cfg == nil {
 		return nil, fmt.Errorf("engine: nil config")
 	}
+	if log == nil {
+		// CLI one-shots (account check, ai status) build clients without
+		// a logger; the WARN/INFO paths below must not panic on it.
+		log = slog.New(slog.DiscardHandler)
+	}
 	browserSpec := loadBrowserSpec(cfg, log)
 	ids := make([]string, 0, len(cfg.Accounts))
 	for id := range cfg.Accounts {

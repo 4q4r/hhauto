@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -83,7 +84,10 @@ func (c *Client) xsrfToken() string {
 	return c.xsrf
 }
 
-// Me parses the session block of the settings SSR page.
+// Me parses the session block of the settings SSR page. Live shapes:
+// legacy (2026-09-24) session/user carried userId; live 2026-09-27 moved
+// the id to the top-level "hhid" node with the profile in
+// "account"/"hhidAccount" — both stay supported.
 func (c *Client) Me(ctx context.Context) (*User, error) {
 	page, err := c.getDoc(ctx, "me", c.endpointURL(epSettings, c.eps.siteDefault("/applicant/settings")), "")
 	if err != nil {
@@ -96,12 +100,48 @@ func (c *Client) Me(ctx context.Context) (*User, error) {
 	}
 	u := &User{}
 	u.ID = int64(num(session, "userId", "uid", "id"))
-	u.Email = str(session, "email")
-	u.FullName = firstNonEmpty(str(session, "fullName"), strings.TrimSpace(str(session, "firstName")+" "+str(session, "lastName")), str(session, "name"))
+	if u.ID == 0 {
+		// Live 2026-09-27 shape: the id rides the top-level "hhid" node
+		// (a number) or hides inside the account/hhidAccount blocks.
+		if hh := num(state, "hhid"); hh != 0 {
+			u.ID = int64(hh)
+		}
+	}
+	u.Email = firstNonEmpty(str(session, "email"), accountField(state, "email"))
+	u.FullName = firstNonEmpty(
+		str(session, "fullName"),
+		strings.TrimSpace(str(session, "firstName")+" "+str(session, "lastName")),
+		str(session, "name"),
+		fullNameOf(state, "account"),
+		fullNameOf(state, "hhidAccount"),
+	)
 	if u.ID == 0 {
 		return nil, fmt.Errorf("hhapi: me: %w (no user id in session state)", ErrNotFound)
 	}
 	return u, nil
+}
+
+// accountField reads one string field of the account/hhidAccount blocks.
+func accountField(state map[string]json.RawMessage, field string) string {
+	for _, key := range []string{"account", "hhidAccount"} {
+		blk := obj(state[key])
+		if blk == nil {
+			continue
+		}
+		if v := str(blk, field); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// fullNameOf renders "firstName lastName" from an account-shaped block.
+func fullNameOf(state map[string]json.RawMessage, key string) string {
+	blk := obj(state[key])
+	if blk == nil {
+		return ""
+	}
+	return strings.TrimSpace(str(blk, "firstName") + " " + str(blk, "lastName"))
 }
 
 // --- Cookies: jar bridge and persistence hook ---
@@ -138,6 +178,20 @@ func (c *Client) LoadCookies(ctx context.Context, cookies []*http.Cookie) error 
 		host := site.Host
 		if ck.Domain != "" {
 			host = strings.TrimPrefix(ck.Domain, ".")
+		} else {
+			// A header-line export carries no Domain. Scope to the
+			// registrable parent (hh's own Set-Cookie behavior,
+			// Domain=.hh.ru): a host-only hh.ru scope drops the session
+			// on hh's regional redirects (hh.ru → taganrog.hh.ru) and
+			// every SSR page answers the anonymous ForbiddenPage. IP
+			// hosts (test servers) keep the host-only scope — a jar
+			// rejects Domain attributes on IPs.
+			hostIP := hostWithoutPort(site.Host)
+			if hostIP == "" || net.ParseIP(hostIP) == nil {
+				if et1, ok := registrable(site.Host); ok && et1 != "" {
+					ck = cloneCookie(ck, "."+et1)
+				}
+			}
 		}
 		u := &url.URL{Scheme: site.Scheme, Host: host, Path: "/"}
 		c.jar.SetCookies(u, []*http.Cookie{ck})
@@ -145,6 +199,13 @@ func (c *Client) LoadCookies(ctx context.Context, cookies []*http.Cookie) error 
 	}
 	c.persistCookies(ctx)
 	return nil
+}
+
+// cloneCookie copies ck with an explicit Domain attribute.
+func cloneCookie(ck *http.Cookie, domain string) *http.Cookie {
+	out := *ck
+	out.Domain = domain
+	return &out
 }
 
 // Cookies snapshots everything the client currently holds, across hosts
