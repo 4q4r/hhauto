@@ -11,6 +11,7 @@ package autoclone
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // ImproveAnyResume runs the improve flow for one arbitrary resume hash
@@ -21,10 +22,17 @@ import (
 // hash happens to be a tracked clone; for base resumes it is only
 // returned to the caller.
 func (im *Improver) ImproveAnyResume(ctx context.Context, accountID, hash string) (*DiffArtifact, error) {
+	// T44: every pipeline step logs — the standalone command used to sit
+	// silent for the whole multi-minute per-field AI plan (GLM reasoning
+	// at max runs ~1-2min per field), which read as a dead process.
+	im.opt.Log.Info("autoclone: improve any-resume start",
+		"account", accountID, "hash", hash, "dry_run", im.opt.DryRun,
+		"fields", strings.Join(im.opt.Cfg.Fields, ","))
 	live, err := im.opt.API.ResumeContent(ctx, hash)
 	if err != nil {
 		return nil, fmt.Errorf("autoclone: live content: %w", err)
 	}
+	im.opt.Log.Info("autoclone: improve live content read", "hash", hash)
 
 	artifact := &DiffArtifact{
 		Schema:     artifactSchemaV1,
@@ -36,6 +44,8 @@ func (im *Improver) ImproveAnyResume(ctx context.Context, accountID, hash string
 	mutated := live.Clone()
 	pendings := im.planFields(ctx, accountID, hash, live, mutated, artifact)
 	if im.opt.DryRun || len(pendings) == 0 {
+		im.opt.Log.Info("autoclone: improve any-resume done (no apply)",
+			"hash", hash, "dry_run", im.opt.DryRun, "planned_fields", len(artifact.Fields), "pending", len(pendings))
 		im.persistIfTracked(ctx, hash, artifact)
 		return artifact, nil
 	}
@@ -48,6 +58,8 @@ func (im *Improver) ImproveAnyResume(ctx context.Context, accountID, hash string
 		im.applyPending(ctx, hash, live, mutated, pendings, artifact)
 	}
 	artifact.Applied = artifactHasStatus(artifact, StatusImproved)
+	im.opt.Log.Info("autoclone: improve any-resume done",
+		"hash", hash, "planned_fields", len(artifact.Fields), "pending", len(pendings), "applied", artifact.Applied)
 	im.persistIfTracked(ctx, hash, artifact)
 	return artifact, nil
 }

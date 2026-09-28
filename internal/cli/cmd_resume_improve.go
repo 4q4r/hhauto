@@ -111,6 +111,18 @@ func runResumeImprove(ctx context.Context, rt *Runtime, o out, req improveReques
 	}
 	improve.Enabled = true // the command IS the enable signal (one-shot intent)
 
+	// T44: the plan is announced immediately (stdout, unless --json) and
+	// in the log — the per-field AI plan takes minutes at GLM reasoning
+	// max, and a fully silent stretch read as a dead process.
+	plan := fmt.Sprintf("resume improve: hash=%s account=%s clone=%v fields=[%s] dry-run=%v",
+		req.Hash, accountID, isClone, strings.Join(improve.Fields, ","), req.DryRun)
+	rt.Log.Info("resume improve: start",
+		"hash", req.Hash, "account", accountID, "clone", isClone,
+		"fields", improve.Fields, "dry_run", req.DryRun)
+	if !flags.json {
+		o.println(plan)
+	}
+
 	improver, err := buildImproveForCommand(rt, improve, accountID, req.DryRun)
 	if err != nil {
 		return exitErr("%v", err)
