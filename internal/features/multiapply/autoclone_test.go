@@ -2,7 +2,6 @@ package multiapply
 
 import (
 	"context"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -83,7 +82,8 @@ func TestAutoCloneExhaustionClonesAndReapplies(t *testing.T) {
 		t.Fatalf("clone calls = %d, want 1", h.cloneNext)
 	}
 
-	// Lineage recorded locally (hh exposes no parentResumeId).
+	// Lineage recorded locally; hh mirrors it via parentResumeId on native
+	// clones (the shard fixture carries it too).
 	clone, err := h.db.ResumeClonesGet(ctx, "clone1")
 	if err != nil || clone == nil {
 		t.Fatalf("ResumeClonesGet(clone1) = %v, %v; want row", clone, err)
@@ -491,10 +491,11 @@ func TestDeriveCloneRun(t *testing.T) {
 	}
 }
 
-// T27: hh rejects the builder update (the live 2026-09-25 behavior), so the
-// clone stays an empty shell. The run must park for review with the
-// incomplete-clone semantics — never spawn a clone pass on the shell.
-func TestAutoCloneMaterializeFailureParksForReview(t *testing.T) {
+// T45: hh answers clone_resumes 200 while the cloned resume still reads
+// back as an empty not_finished draft. The verify gate must fail the clone
+// typed (incomplete), park for review with the incomplete-clone semantics —
+// never spawn a clone pass on the unusable duplicate.
+func TestAutoCloneIncompleteCloneParksForReview(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t, func(c *config.Config) {
 		c.Features.AutoClone = config.AutoClone{
@@ -504,7 +505,7 @@ func TestAutoCloneMaterializeFailureParksForReview(t *testing.T) {
 		}
 	})
 	twoVacancies(h)
-	h.updateFail = func(int) (int, string) { return http.StatusBadRequest, "" }
+	h.cloneNativeIncomplete = true
 	f := buildCloneFeature(t, h, nil)
 
 	if err := f.RunProfile(ctx, "run1"); err != nil {

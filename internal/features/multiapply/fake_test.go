@@ -64,6 +64,10 @@ type applyEnv struct {
 	cloneAuto     bool                                     // auto-append created clones to resumeShard (default true)
 	cloneSawToken bool                                     // at least one clone POST carried X-XSRFToken
 	cloneFail     func(call int) (status int, body string) // scripted clone failure
+	// cloneNativeIncomplete simulates hh answering 200 {} while the cloned
+	// resume still reads back as an empty not_finished draft: the native
+	// verify gate must catch the divergence (T45).
+	cloneNativeIncomplete bool
 
 	// T29 resume-management counters (clone_original_action probes).
 	hidePosts    int
@@ -115,13 +119,21 @@ func newApplyEnv(t *testing.T) *applyEnv {
 		e.mu.Unlock()
 		_, _ = io.WriteString(w, `{"resumes":[`+strings.Join(items, ",")+`]}`)
 	})
-	mux.HandleFunc("POST /applicant/resumes/clone", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /profile/shards/resume/clone_resumes", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		if !strings.Contains(string(body), `"resumeId"`) {
-			t.Errorf("clone request body %q carries no resumeId", body)
+		var req struct {
+			ResumeHash    string `json:"resumeHash"`
+			CreationProps []struct {
+				Title   string   `json:"title"`
+				RoleIDs []string `json:"roleIds"`
+			} `json:"resumesCreationProperties"`
+		}
+		_ = json.Unmarshal(body, &req)
+		if req.ResumeHash == "" || len(req.CreationProps) == 0 || req.CreationProps[0].Title == "" {
+			t.Errorf("clone request body %q misses the SPA shape (resumeHash+resumesCreationProperties)", body)
 		}
 		// hh rejects a tokenless mutation with a 403 xsrf signature; the
-		// client must refresh once and retry with X-XSRFToken.
+		// client must refresh once and retry with X-Xsrftoken.
 		if r.Header.Get("X-XSRFToken") == "" {
 			http.Error(w, `{"error":"xsrf token required"}`, http.StatusForbidden)
 			return
@@ -145,18 +157,24 @@ func newApplyEnv(t *testing.T) *applyEnv {
 		if status == "" {
 			status = "published"
 		}
-		// T27: a freshly cloned shell always starts not_finished in the
-		// builder state; the materialization update (below) completes it.
+		// T45 native contract (live 2026-09-25): ONE call copies the whole
+		// content server-side — the clone reads back titled, published and
+		// searchable, and hh stamps parentResumeId in the mine shard.
 		if e.builderStates == nil {
 			e.builderStates = map[string]string{}
 		}
-		e.builderStates[hash] = builderStateFixture(hash, "not_finished", "", false)
+		if e.cloneNativeIncomplete {
+			e.builderStates[hash] = builderStateFixture(hash, "not_finished", "", false)
+		} else {
+			e.builderStates[hash] = builderStateFixture(hash, "published", "DevOps-инженер Test (копия)", true)
+		}
 		if e.cloneAuto {
 			e.resumeShard = append(e.resumeShard, fmt.Sprintf(
-				`{"_attributes":{"hash":%q,"status":%q,"isSearchable":true,"updated":1758700000000}}`, hash, status))
+				`{"_attributes":{"hash":%q,"id":"28800000%d","status":%q,"isSearchable":true,"created":%d,"parentResumeId":"285632195","updated":1758700000000}}`,
+				hash, call, status, 1758700000000+int64(call)))
 		}
 		e.mu.Unlock()
-		_, _ = io.WriteString(w, fmt.Sprintf(`{"url":"/profile/resume/?resume=%s"}`, hash))
+		_, _ = io.WriteString(w, `{}`)
 	})
 	mux.HandleFunc("GET /profile/shards/resume/get_by_hash", func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: "tok_test", Path: "/"})
@@ -654,7 +672,7 @@ func builderStateFixture(hash, status, title string, complete bool) string {
 	    {"screenType":"STATIC","screenId":"common","title":"Основное","fieldsOptions":{},"screenContent":[],"messages":[]}
 	  ],
 	  "resume": {
-	    "_attributes": {"hash":` + mustJSONFake(hash) + `,"status":` + mustJSONFake(status) + `,"isSearchable":` + searchable + `,"hasErrors":` + hasErrors + `},
+	    "_attributes": {"hash":` + mustJSONFake(hash) + `,"id":"285632195","status":` + mustJSONFake(status) + `,"isSearchable":` + searchable + `,"hasErrors":` + hasErrors + `},
 	    "title": ` + titleField + `,
 	    "professionalRole": [{"string":160}],
 	    "keySkills": [{"string":"Linux"},{"string":"Docker"}],

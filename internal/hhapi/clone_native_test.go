@@ -3,7 +3,6 @@ package hhapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -15,13 +14,28 @@ import (
 
 // cloneParentFixture extends the T27 builderStateFixture with the fields
 // the native clone needs: the numeric resume id, and the title conditions
-// (not_in carries the titles hh already has on the account).
+// (not_in carries the titles hh already has on the account). The parent's
+// professionalRole rides as the live conditional format [{"string":160}].
 func cloneParentFixture(hash, id, title string, notIn []string) string {
+	return cloneParentFixtureRole(hash, id, title, `[{"string":160}]`, notIn)
+}
+
+// cloneParentFixtureRoleless drops the professionalRole field entirely: the
+// clone must ride the ["160"] default (T45).
+func cloneParentFixtureRoleless(hash, id, title string, notIn []string) string {
+	return cloneParentFixtureRole(hash, id, title, "", notIn)
+}
+
+func cloneParentFixtureRole(hash, id, title, roleField string, notIn []string) string {
 	titleField := "[]"
 	if title != "" {
 		titleField = `[{"string":` + mustJSON(title) + `}]`
 	}
 	notInJSON, _ := json.Marshal(notIn)
+	roleLine := ""
+	if roleField != "" {
+		roleLine = `"professionalRole": ` + roleField + `,`
+	}
 	return `{
 	  "nextIncompleteScreenId": null,
 	  "screens": [
@@ -30,7 +44,7 @@ func cloneParentFixture(hash, id, title string, notIn []string) string {
 	  "resume": {
 	    "_attributes": {"hash":` + mustJSON(hash) + `,"id":` + mustJSON(id) + `,"status":"modified","isSearchable":true},
 	    "title": ` + titleField + `,
-	    "professionalRole": [{"string":160}],
+	    ` + roleLine + `
 	    "keySkills": [{"string":"Linux"},{"string":"Docker"}],
 	    "_conditions": {
 	      "title": {"status":"ok","weight":2,"mincount":1,"maxcount":1,"parts":[{"string":{"required":true,"type":"string","minlength":2,"maxlength":100,"not_in":` + string(notInJSON) + `}}]},
@@ -71,11 +85,21 @@ func (env *testEnv) serveNativeCloneSurface(t *testing.T, parent string, duplica
 		*cloneBodies = append(*cloneBodies, body)
 		// The SPA-exact header set that unlocks the app surface (live
 		// 2026-09-25: missing pieces get a bare empty 400).
-		if r.Header.Get("X-hhtmSource") == "" || r.Header.Get("X-Requested-With") == "" || r.Header.Get("X-Xsrftoken") == "" {
+		if r.Header.Get("X-hhtmSource") != "resume_professional_role" || r.Header.Get("X-Requested-With") == "" || r.Header.Get("X-Xsrftoken") == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		// X-hhtmFrom must be PRESENT and empty (the interceptor sends the
+		// key with an empty value; Header.Get cannot tell absence apart).
+		if _, ok := r.Header[http.CanonicalHeaderKey("X-hhtmFrom")]; !ok {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		if r.Header.Get("Accept") != "application/json" || r.Header.Get("Content-Type") != "application/json" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if r.Header.Get("Sec-Fetch-Site") != "same-site" || r.Header.Get("Origin") == "" {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -205,55 +229,40 @@ func TestCloneResumeNativeDuplicateBumps(t *testing.T) {
 	}
 }
 
-// A definitive native rejection (no entity created — live legacy envelope
-// {"@code":"403","$":...}) falls back to the T27 shell+update pipeline,
-// whose typed materialization error remains the terminal result.
-func TestCloneResumeNativeRejectFallsBackToShell(t *testing.T) {
+// A parent without a professionalRole field: the clone must ride the
+// ["160"] default (T45) — hh still demands a role dictionary id.
+func TestCloneResumeNativeDefaultRoleIDs(t *testing.T) {
 	env := newTestEnv(t)
-	env.cloneBuilderState = builderStateFixture("cl0neh4sh", "not_finished", "", false)
-	rejected := false
-	env.serve(env.mux1, "1", "POST", "/profile/shards/resume/clone_resumes", func(w http.ResponseWriter, _ *http.Request) {
-		rejected = true
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write([]byte(`{"@code":"403","$":"Employer mismatch for 0"}`))
-	})
-	env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(cloneShardFixture("285632195", "", 0)))
-	})
-	env.serve(env.mux1, "1", "POST", "/applicant/resumes/clone", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"url":"/profile/resume/?resume=cl0neh4sh"}`))
-	})
-	env.serve(env.mux1, "1", "GET", "/profile/shards/resume/get_by_hash", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		if r.URL.Query().Get("resumeHash") == "p4rent" {
-			// The parent fixture carries the numeric id + title conditions
-			// the native path needs; the rejection comes from the POST.
-			_, _ = w.Write([]byte(cloneParentFixture("p4rent", "285632195", "DevOps-инженер Test", []string{"Другое резюме"})))
-			return
-		}
-		_, _ = w.Write([]byte(env.cloneBuilderState))
-	})
-	env.serve(env.mux1, "1", "POST", "/profile/shards/resume/update", func(w http.ResponseWriter, _ *http.Request) {
-		// Live hh behavior 2026-09-25: the builder update is gated for
-		// off-browser clients — bare 400, no body.
-		w.WriteHeader(http.StatusBadRequest)
-	})
-	c := env.client()
+	parent := cloneParentFixtureRoleless("p4rent", "285632195", "DevOps-инженер Test", []string{"Другое резюме"})
+	bodies := env.serveNativeCloneSurface(t, parent, new(bool))
+	c := nativeEndpoints(env)
 	c.setXSRFForTests("tok_test")
 
 	hash, err := c.CloneResume(context.Background(), "p4rent")
-	if err == nil {
-		t.Fatalf("CloneResume must fail when both paths fail, got hash %q", hash)
+	if err != nil {
+		t.Fatalf("CloneResume: %v", err)
 	}
-	if !rejected {
-		t.Fatal("native clone_resumes was never tried")
+	if hash != "n4t1v3cl0ne" {
+		t.Fatalf("hash = %q, want n4t1v3cl0ne", hash)
 	}
-	if env.hits("1:POST /applicant/resumes/clone") == 0 {
-		t.Fatal("fallback shell clone never ran")
+	if len(*bodies) == 0 || !strings.Contains((*bodies)[0], `"roleIds":["160"]`) {
+		t.Fatalf("clone body must carry the default roleIds, got %v", *bodies)
 	}
-	var cerr *CloneError
-	if !errors.As(err, &cerr) || cerr.Stage != StageMaterialize {
-		t.Fatalf("terminal error = %v, want CloneError stage materialize", err)
+}
+
+// The parent's own role rides verbatim: professionalRole [{"string":160}]
+// becomes "roleIds":["160"] in the SPA serialization (strings, not numbers).
+func TestCloneResumeNativeRoleIDsFromParent(t *testing.T) {
+	env := newTestEnv(t)
+	bodies := env.serveNativeCloneSurface(t, cloneParentFixture("p4rent", "285632195", "DevOps-инженер Test", []string{"Другое резюме"}), new(bool))
+	c := nativeEndpoints(env)
+	c.setXSRFForTests("tok_test")
+
+	if _, err := c.CloneResume(context.Background(), "p4rent"); err != nil {
+		t.Fatalf("CloneResume: %v", err)
+	}
+	if len(*bodies) == 0 || !strings.Contains((*bodies)[0], `"roleIds":["160"]`) {
+		t.Fatalf("parent professionalRole must map to string roleIds, got %v", *bodies)
 	}
 }
 
