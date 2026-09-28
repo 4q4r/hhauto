@@ -46,7 +46,7 @@ func serveManageSurface(env *testEnv) (bodies *[]string, routes *[]string) {
 
 func manageClient(env *testEnv) *Client {
 	env.t.Helper()
-	c, err := NewClient(env.account(), env.endpoints(), nil, nil)
+	c, err := NewClient(env.account(), env.endpoints(), nil, nil, WithBrowserTLSSpec(captureSpec(env.t)))
 	if err != nil {
 		env.t.Fatalf("NewClient: %v", err)
 	}

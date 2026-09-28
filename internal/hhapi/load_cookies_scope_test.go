@@ -15,7 +15,7 @@ import (
 )
 
 func TestLoadCookiesScopesHeaderLineCookiesToRegistrableParent(t *testing.T) {
-	c, err := NewClient(config.Account{DisplayName: "acc1", UserAgent: "ua/1"}, config.APIEndpoints{Site: "https://hh.ru"}, nil, nil)
+	c, err := NewClient(config.Account{DisplayName: "acc1", UserAgent: "ua/1"}, config.APIEndpoints{Site: "https://hh.ru"}, nil, nil, WithBrowserTLSSpec(captureSpec(t)))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

@@ -23,6 +23,7 @@ import (
 	"hhauto/internal/engine"
 	"hhauto/internal/features/featurekit"
 	"hhauto/internal/store"
+	"hhauto/internal/testutil/tlsfix"
 )
 
 // testClock implements engine.Clock over real time with an injectable
@@ -177,6 +178,7 @@ model_profile = "fast"
 	if err := os.WriteFile(cfgPath, []byte(cfg.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	tlsfix.Seed(t, dir, "e2e-ua/1.0")
 
 	// Deployment seams (same contract the CLI smoke tests use): the
 	// encrypted-file cookie backend and the AI provider key.

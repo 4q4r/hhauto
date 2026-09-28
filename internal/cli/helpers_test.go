@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"hhauto/internal/testutil/tlsfix"
 )
 
 const settingsPage = `<!doctype html><html><body><template id="HH-Lux-InitialState" data-name="HH-Lux-InitialState">{"xsrfToken":"test-xsrf","session":{"userId":4242,"email":"tester@example.org","fullName":"Тест Тестов"}}</template></body></html>`
@@ -100,9 +102,16 @@ days = ["mon", "tue", "wed", "thu", "fri"]
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	seedTLSSpec(t, dir)
 	t.Setenv("HHAUTO_COOKIES_BACKEND", "encrypted-file")
 	t.Setenv("HHAUTO_VAULT_PASS", "test-vault-passphrase")
 	return path
+}
+
+// seedTLSSpec seeds a valid captured TLS spec so the engine's strict-parity
+// build (T50) finds it instead of launching a real capture browser.
+func seedTLSSpec(t *testing.T, dataDir string) {
+	tlsfix.Seed(t, dataDir, "hhauto-test-agent/1.0")
 }
 
 var testSite string // set by newFakeHHConfig

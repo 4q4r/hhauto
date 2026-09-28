@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -35,6 +36,7 @@ import (
 
 	"github.com/chromedp/chromedp"
 
+	"hhauto/internal/config"
 	"hhauto/internal/tlsfp"
 )
 
@@ -43,10 +45,52 @@ import (
 // tunnel opens, so the budget mostly covers browser startup.
 const probeTimeout = 90 * time.Second
 
+// uaProbeTimeout bounds the navigator.userAgent read that opens the
+// browser session; browser startup is the only slow part.
+const uaProbeTimeout = 45 * time.Second
+
+// ProbeHost extracts the hostname of the configured site URL — the
+// default capture host for the TLS spec.
+func ProbeHost(site string) string {
+	u, err := url.Parse(site)
+	if err != nil || u.Host == "" {
+		return strings.TrimPrefix(strings.TrimPrefix(site, "https://"), "http://")
+	}
+	return u.Hostname()
+}
+
+// CaptureTLSSpec is the shared capture used by both the tls-probe command
+// and the engine's automatic capture (T50): it probes the cloakbrowser
+// configured in [browser] (auto_download included) for its ClientHello
+// and persists the spec atomically at the default cache path. An empty
+// host means the hostname of the configured site URL. The returned spec
+// carries the browser's own User-Agent.
+func CaptureTLSSpec(ctx context.Context, cfg *config.Config, host string, log *slog.Logger) (*tlsfp.Spec, error) {
+	if cfg == nil {
+		return nil, errors.New("browser: tls capture: nil config")
+	}
+	if host == "" {
+		host = ProbeHost(cfg.API.Endpoints.Site)
+	}
+	provider := NewFromConfig(cfg.Browser, log)
+	spec, err := ProbeTLSSpec(ctx, provider, host, log)
+	if err != nil {
+		return nil, err
+	}
+	path := tlsfp.DefaultPath(cfg.General.DataDir)
+	if err := spec.Save(path); err != nil {
+		return nil, fmt.Errorf("browser: tls capture: save: %w", err)
+	}
+	return spec, nil
+}
+
 // ProbeTLSSpec launches the cloakbrowser chromium through a local
 // CONNECT tap, captures its ClientHello against host and returns the
-// parsed, replay-verified spec. The browser is torn down as soon as the
-// hello is captured; the target page never needs to finish loading.
+// parsed, replay-verified spec. The browser's navigator.userAgent is
+// read in the same session and stamped into the spec (T50: the capture
+// is the single source of truth for the UA too). The browser is torn
+// down as soon as the hello is captured; the target page never needs to
+// finish loading.
 func ProbeTLSSpec(ctx context.Context, p *CloakProvider, host string, log *slog.Logger) (*tlsfp.Spec, error) {
 	if host == "" {
 		return nil, errors.New("browser: tls probe: empty host")
@@ -88,6 +132,21 @@ func ProbeTLSSpec(ctx context.Context, p *CloakProvider, host string, log *slog.
 		cancelBrowser()
 		cancelAlloc()
 	}()
+
+	// The UA is read from the browser's own about:blank session before
+	// any navigation — deterministic, and the same value the browser
+	// puts into its User-Agent request header. A capture without a UA
+	// is incomplete (the spec is the UA source of truth) and fails.
+	uaCtx, cancelUA := context.WithTimeout(browserCtx, uaProbeTimeout)
+	defer cancelUA()
+	var ua string
+	if uerr := chromedp.Run(uaCtx, chromedp.Evaluate(`navigator.userAgent`, &ua)); uerr != nil {
+		return nil, fmt.Errorf("browser: tls probe: read browser User-Agent: %w", uerr)
+	}
+	if strings.TrimSpace(ua) == "" {
+		return nil, errors.New("browser: tls probe: browser reported an empty User-Agent")
+	}
+
 	go func() {
 		// Navigation errors are irrelevant to the capture — the hello
 		// arrives as soon as the tunnel opens, long before any
@@ -105,6 +164,7 @@ func ProbeTLSSpec(ctx context.Context, p *CloakProvider, host string, log *slog.
 			BrowserPath: chromePath,
 			BrowserVer:  ver,
 			Host:        host,
+			UserAgent:   ua,
 		}
 		spec, err := tlsfp.ParseClientHello(raw, meta)
 		if err != nil {
@@ -114,7 +174,7 @@ func ProbeTLSSpec(ctx context.Context, p *CloakProvider, host string, log *slog.
 			return nil, fmt.Errorf("browser: tls probe: %w", err)
 		}
 		log.Info("browser: captured the cloakbrowser ClientHello",
-			"host", host, "browser_version", ver,
+			"host", host, "browser_version", ver, "user_agent", ua,
 			"extensions", len(spec.Extensions), "ja3_md5", spec.JA3MD5)
 		return spec, nil
 	case <-time.After(probeTimeout):

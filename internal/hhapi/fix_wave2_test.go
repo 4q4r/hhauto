@@ -133,7 +133,7 @@ func Test429RetryAfterBeyondCapStopsRetrying(t *testing.T) {
 
 func TestNewClientRejectsUserAgentHeaderOverride(t *testing.T) {
 	base := config.Account{UserAgent: chromeWinUA, RPS: 1}
-	if _, err := NewClient(base, config.APIEndpoints{}, nil, nil); err != nil {
+	if _, err := NewClient(base, config.APIEndpoints{}, nil, nil, WithBrowserTLSSpec(captureSpec(t))); err != nil {
 		t.Fatalf("baseline NewClient: %v", err)
 	}
 	for _, key := range []string{"User-Agent", "user-agent", "USER-AGENT"} {

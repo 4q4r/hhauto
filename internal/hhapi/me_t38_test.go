@@ -31,7 +31,7 @@ func TestMeParsesApplicantSettingsShapeT38(t *testing.T) {
 	eps := epsCfg()
 	eps.Site = srv.URL
 	eps.Override = map[string]string{epSettings: srv.URL + "/applicant/settings"}
-	c, err := NewClient(config.Account{DisplayName: "acc1", UserAgent: "ua/1"}, eps, nil, nil)
+	c, err := NewClient(config.Account{DisplayName: "acc1", UserAgent: "ua/1"}, eps, nil, nil, WithBrowserTLSSpec(captureSpec(t)))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
