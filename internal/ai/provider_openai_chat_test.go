@@ -322,6 +322,65 @@ func TestOpenAIChatExhaustedRetriesReturnsAPIError(t *testing.T) {
 	}
 }
 
+func TestTimeoutDurationZeroMeansNoTimeout(t *testing.T) {
+	if got := timeoutDuration(0); got != 0 {
+		t.Errorf("timeoutDuration(0) = %v, want 0 (wait indefinitely)", got)
+	}
+	if got := timeoutDuration(30); got != 30*time.Second {
+		t.Errorf("timeoutDuration(30) = %v, want 30s", got)
+	}
+}
+
+// TestOpenAIChatNoTimeoutWaitsForSlowServer pins the timeout_seconds = 0
+// contract: no deadline — the request waits as long as the provider needs.
+func TestOpenAIChatNoTimeoutWaitsForSlowServer(t *testing.T) {
+	f := newFakeServer(t, func(_ int, _ *http.Request, _ []byte) (int, map[string]string, string) {
+		time.Sleep(5 * time.Second)
+		return http.StatusOK, nil, testValidChatReply
+	})
+	cfg := testProviderCfg(f.srv.URL)
+	cfg.TimeoutS = 0 // 0 = wait indefinitely
+	t.Setenv("HHAUTO_TEST_AI_KEY", "k-test")
+	p, err := NewOpenAIChatProvider("primary", cfg)
+	if err != nil {
+		t.Fatalf("NewOpenAIChatProvider: %v", err)
+	}
+	bound, err := NewBoundProvider(p, "gpt-test-model")
+	if err != nil {
+		t.Fatalf("NewBoundProvider: %v", err)
+	}
+	resp, err := bound.Complete(context.Background(), chatSchemaRequest())
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if resp.Content != `{"ok":true}` {
+		t.Errorf("content = %q", resp.Content)
+	}
+}
+
+// TestOpenAIChatPositiveTimeoutStillFires pins the preserved timeout_seconds
+// > 0 behavior: the per-request deadline still bounds the call.
+func TestOpenAIChatPositiveTimeoutStillFires(t *testing.T) {
+	f := newFakeServer(t, func(_ int, _ *http.Request, _ []byte) (int, map[string]string, string) {
+		time.Sleep(2 * time.Second)
+		return http.StatusOK, nil, testValidChatReply
+	})
+	cfg := testProviderCfg(f.srv.URL)
+	cfg.TimeoutS = 1
+	t.Setenv("HHAUTO_TEST_AI_KEY", "k-test")
+	p, err := NewOpenAIChatProvider("primary", cfg, WithSleep((&sleepRecorder{}).fn))
+	if err != nil {
+		t.Fatalf("NewOpenAIChatProvider: %v", err)
+	}
+	bound, err := NewBoundProvider(p, "gpt-test-model")
+	if err != nil {
+		t.Fatalf("NewBoundProvider: %v", err)
+	}
+	if _, err := bound.Complete(context.Background(), chatSchemaRequest()); err == nil {
+		t.Fatal("expected deadline error for timeout_seconds=1 against a 2s server")
+	}
+}
+
 func TestOpenAIChatMissingAPIKeyFails(t *testing.T) {
 	p, err := NewOpenAIChatProvider("x", config.AIProvider{BaseURL: "http://127.0.0.1:1", APIKeyEnv: "HHAUTO_UNSET_KEY_ENV"})
 	if err != nil {

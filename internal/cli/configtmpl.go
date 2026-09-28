@@ -78,7 +78,7 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # dialect = "openai-chat"               # openai-chat | openai-responses | anthropic-messages
 # base_url = "https://api.openai.com/v1"
 # api_key_env = "HHAUTO_AI_KEY"
-# timeout_seconds = 120
+# timeout_seconds = 0                  # 0 = wait indefinitely (default)
 # [ai.models.scorer]
 # provider = "fast"
 # model = "gpt-4o-mini"

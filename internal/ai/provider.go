@@ -31,7 +31,6 @@ const EffortNone = "none"
 
 // Default request limits.
 const (
-	defaultProviderTimeout    = 120 * time.Second
 	defaultAnthropicMaxTokens = 2048 // Messages API requires max_tokens
 	retryAttempts             = 4    // initial try + 3 retries
 	maxResponseBytes          = 8 << 20
@@ -195,9 +194,11 @@ func newBaseProvider(id string, cfg config.AIProvider, dialect string, deps prov
 	}, nil
 }
 
+// timeoutDuration maps timeout_seconds onto a request deadline; 0 (the
+// default) means no deadline — wait as long as generation takes.
 func timeoutDuration(sec int) time.Duration {
 	if sec <= 0 {
-		return defaultProviderTimeout
+		return 0
 	}
 	return time.Duration(sec) * time.Second
 }
@@ -261,7 +262,13 @@ func (b *baseProvider) backoff(attempt int, lastErr error) time.Duration {
 
 // once performs exactly one HTTP round trip and converts failures to APIError.
 func (b *baseProvider) once(ctx context.Context, model, url string, headers map[string]string, payload []byte) ([]byte, error) {
-	perAttempt, cancel := context.WithTimeout(ctx, b.timeout)
+	// timeout 0 = wait indefinitely: detach from any caller deadline instead
+	// of bounding the request.
+	perAttempt := context.WithoutCancel(ctx)
+	cancel := func() {}
+	if b.timeout > 0 {
+		perAttempt, cancel = context.WithTimeout(ctx, b.timeout)
+	}
 	defer cancel()
 	req, err := http.NewRequestWithContext(perAttempt, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
