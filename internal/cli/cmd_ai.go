@@ -589,14 +589,20 @@ func probeWritable(dir string) error {
 	return os.Remove(name)
 }
 
-// resolveCookieStore builds the cookie store with the deployment backend
-// resolution (HHAUTO_COOKIES_BACKEND override, auto otherwise) and the
-// data-dir blob path. The single seam for every command.
+// resolveCookieStore builds the cookie store. T48: [storage].cookie_store
+// = "plain" selects the unencrypted 0600 file store; "" (default) keeps
+// the deployment resolution (HHAUTO_COOKIES_BACKEND override, auto
+// otherwise) with the same data-dir blob path. The single seam for every
+// command.
 func resolveCookieStore(cfg *config.Config) (cookies.Store, error) {
-	return cookies.New(cookies.StorageConfig{
-		Backend: os.Getenv("HHAUTO_COOKIES_BACKEND"),
-		Path:    filepath.Join(cfg.General.DataDir, "cookies"),
-	})
+	storage := cookies.StorageConfig{
+		Path: filepath.Join(cfg.General.DataDir, "cookies"),
+	}
+	if cfg.Storage.CookieStore == "plain" {
+		return cookies.NewPlainFile(storage)
+	}
+	storage.Backend = os.Getenv("HHAUTO_COOKIES_BACKEND")
+	return cookies.New(storage)
 }
 
 func openCookieStore(cfg *config.Config) (cookies.Store, error) {
@@ -803,9 +809,12 @@ func captchaBalance(ctx context.Context, p config.CaptchaProvider) (float64, err
 // probeAIProvider does a light models-list call: openai dialects GET
 // /models, anthropic GET /v1/models with the version header.
 func probeAIProvider(ctx context.Context, p config.AIProvider) (string, string) {
-	key := os.Getenv(p.APIKeyEnv)
+	key := p.APIKey // T48: config-file key wins over the environment
 	if key == "" {
-		return "FAIL", "api_key_env " + p.APIKeyEnv + " не задан"
+		key = os.Getenv(p.APIKeyEnv)
+	}
+	if key == "" {
+		return "FAIL", "api_key/api_key_env не задан"
 	}
 	base := strings.TrimRight(p.BaseURL, "/")
 	var url string

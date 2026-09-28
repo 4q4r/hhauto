@@ -21,6 +21,7 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 [storage]
 # path = "{data_dir}/hhauto.db"         # SQLite database (WAL)
 # busy_timeout_ms = 5000
+# cookie_store = "vault"                # T48: "vault" | "plain" (plain = 0600 file, no HHAUTO_VAULT_PASS)
 
 [log]
 # level = "info"                        # debug | info | warn | error
@@ -78,6 +79,7 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # dialect = "openai-chat"               # openai-chat | openai-responses | anthropic-messages
 # base_url = "https://api.openai.com/v1"
 # api_key_env = "HHAUTO_AI_KEY"
+# api_key = ""                          # T48: literal key in this file (wins over api_key_env)
 # timeout_seconds = 0                  # 0 = wait indefinitely (default)
 # [ai.models.scorer]
 # provider = "fast"

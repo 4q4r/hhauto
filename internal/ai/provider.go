@@ -172,6 +172,9 @@ type baseProvider struct {
 	dialect   string
 	baseURL   string
 	apiKeyEnv string
+	// apiKeyCfg (T48) is the literal key from [ai.providers.*].api_key;
+	// when set it wins over the environment variable.
+	apiKeyCfg string
 	timeout   time.Duration
 	deps      providerDeps
 }
@@ -189,6 +192,7 @@ func newBaseProvider(id string, cfg config.AIProvider, dialect string, deps prov
 		dialect:   dialect,
 		baseURL:   strings.TrimRight(cfg.BaseURL, "/"),
 		apiKeyEnv: cfg.APIKeyEnv,
+		apiKeyCfg: cfg.APIKey,
 		timeout:   timeoutDuration(cfg.TimeoutS),
 		deps:      deps,
 	}, nil
@@ -203,11 +207,14 @@ func timeoutDuration(sec int) time.Duration {
 	return time.Duration(sec) * time.Second
 }
 
-// apiKey resolves the credential from the environment at call time; the
-// value never reaches logs or errors.
+// apiKey resolves the credential: the config-file key first (T48), then
+// the environment variable; the value never reaches logs or errors.
 func (b *baseProvider) apiKey() (string, error) {
+	if b.apiKeyCfg != "" {
+		return b.apiKeyCfg, nil
+	}
 	if b.apiKeyEnv == "" {
-		return "", fmt.Errorf("ai: %s: no api_key_env configured", b.id)
+		return "", fmt.Errorf("ai: %s: no api_key or api_key_env configured", b.id)
 	}
 	key := os.Getenv(b.apiKeyEnv)
 	if key == "" {

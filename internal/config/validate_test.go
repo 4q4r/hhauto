@@ -95,7 +95,7 @@ func TestValidateAcceptsValidSearchFields(t *testing.T) {
 
 func TestValidateAcceptsValidAIChain(t *testing.T) {
 	c := validConfig()
-	c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat"}}
+	c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat", APIKey: "k"}}
 	c.AI.Models = map[string]AIModel{
 		"m":  {Provider: "gpt"},
 		"m2": {Provider: "gpt", FallbackModelRef: "m"},
@@ -119,7 +119,7 @@ func TestValidateAcceptsValidWebhooks(t *testing.T) {
 
 func TestValidateAcceptsReasoningEffortEnumAndZeroTemperature(t *testing.T) {
 	c := validConfig()
-	c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat"}}
+	c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat", APIKey: "k"}}
 	for i, effort := range []string{"", "none", "minimal", "low", "medium", "high", "xhigh", "max"} {
 		c.AI.Models = map[string]AIModel{
 			fmt.Sprintf("m%d", i): {Provider: "gpt", ReasoningEffort: effort, Temperature: 0},
@@ -256,7 +256,7 @@ func TestValidateErrors(t *testing.T) {
 		{
 			name: "ai task references unknown model",
 			mutate: func(c *Config) {
-				c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat"}}
+				c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat", APIKey: "k"}}
 				c.AI.Models = map[string]AIModel{"m": {Provider: "gpt"}}
 				c.AI.Tasks = map[string]AITask{"t": {ModelProfile: "ghost"}}
 			},
@@ -272,7 +272,7 @@ func TestValidateErrors(t *testing.T) {
 		{
 			name: "ai model references unknown provider",
 			mutate: func(c *Config) {
-				c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat"}}
+				c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat", APIKey: "k"}}
 				c.AI.Models = map[string]AIModel{"m": {Provider: "ghost"}}
 			},
 			wantErr: "provider",
@@ -287,7 +287,7 @@ func TestValidateErrors(t *testing.T) {
 		{
 			name: "ai model fallback references unknown model",
 			mutate: func(c *Config) {
-				c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat"}}
+				c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat", APIKey: "k"}}
 				c.AI.Models = map[string]AIModel{"m": {Provider: "gpt", FallbackModelRef: "ghost"}}
 			},
 			wantErr: "fallback",
@@ -295,7 +295,7 @@ func TestValidateErrors(t *testing.T) {
 		{
 			name: "ai model reasoning_effort invalid",
 			mutate: func(c *Config) {
-				c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat"}}
+				c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat", APIKey: "k"}}
 				c.AI.Models = map[string]AIModel{"m": {Provider: "gpt", ReasoningEffort: "extreme"}}
 			},
 			wantErr: "reasoning_effort",
@@ -303,7 +303,7 @@ func TestValidateErrors(t *testing.T) {
 		{
 			name: "negative ai model temperature",
 			mutate: func(c *Config) {
-				c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat"}}
+				c.AI.Providers = map[string]AIProvider{"gpt": {Dialect: "openai-chat", APIKey: "k"}}
 				c.AI.Models = map[string]AIModel{"m": {Provider: "gpt", Temperature: -0.1}}
 			},
 			wantErr: "temperature",

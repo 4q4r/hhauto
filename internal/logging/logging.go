@@ -154,11 +154,12 @@ func openLogFile(path string) (*os.File, error) {
 
 // New builds the application logger from the [log] config section.
 //
-// Text format goes to stderr; JSON goes to the configured file (created with
-// 0600, parent directories included). Redaction is always enabled: requesting
-// redact_secrets=false logs a WARN and changes nothing. By contract New has
-// no error return, so degraded setups (unknown level, unwritable file) warn
-// on the default logger and fall back safely.
+// Text format is the console logger: human-readable colored lines on stderr
+// (consoleHandler — no time/level/msg keys). JSON goes to the configured
+// file (created with 0600, parent directories included). Redaction is
+// always enabled: requesting redact_secrets=false logs a WARN and changes
+// nothing. By contract New has no error return, so degraded setups (unknown
+// level, unwritable file) warn on the default logger and fall back safely.
 func New(cfg config.Log) (*slog.Logger, func() error) {
 	if !cfg.RedactSecrets {
 		slog.Default().Warn("log.redact_secrets=false requested; credential redaction remains enabled and cannot be disabled")
@@ -181,7 +182,7 @@ func New(cfg config.Log) (*slog.Logger, func() error) {
 			closeFn = f.Close
 		}
 	} else {
-		handler = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+		handler = NewConsoleHandler(os.Stderr, level)
 	}
 
 	return slog.New(&redactHandler{next: handler}), closeFn

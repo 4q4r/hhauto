@@ -96,6 +96,7 @@
 # dialect = "openai-chat"               # openai-chat | openai-responses | anthropic-messages
 # base_url = "https://api.openai.com/v1"
 # api_key_env = "HHAUTO_AI_KEY"
+# api_key = ""                          # T48: ключ прямо в конфиге (приоритет над api_key_env; оба пустых у используемого провайдера — ошибка старта)
 # timeout_seconds = 0                  # 0 = wait indefinitely (default)
 # [ai.models.scorer]
 # provider = "fast"
@@ -318,7 +319,10 @@
 
 ### `[storage]`
 Один SQLite-файл (WAL, busy timeout). Бэкап — `hhauto backup` (VACUUM INTO,
-7 ротируемых копий).
+7 ротируемых копий). `cookie_store = "vault" | "plain"` (T48, дефолт `"vault"`):
+`vault` — шифрованный стор (ключ в `HHAUTO_VAULT_PASS` или промпт), `plain` —
+те же пути блобов без шифрования, файл 0600, passphrase не требуется;
+переключение между режимами — переимпорт (`account remove` + `account add`).
 
 ### `[log]`
 `format = "text"` пишет в stderr, `"json"` — в файл (файл обязателен для json).
