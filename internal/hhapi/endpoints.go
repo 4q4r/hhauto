@@ -26,14 +26,13 @@ const (
 	epSend           = "send"            // POST chatik /chatik/api/send
 	epChatLeave      = "chat_leave"      // POST chatik /chatik/api/participant_action
 	epCounts         = "counts"          // GET  /shards/vacancy/counts (JSON {"counts":N}) — RULING R15
-	epResumeClone    = "resume_clone"    // POST /applicant/resumes/clone (T26; live-verified 2026-09-25)
-	// T27 full-clone surface (resume-profile builder; live reads verified,
-	// update gated by hh for off-browser clients as of 2026-09-25 — see
-	// internal/hhapi/clone.go). Overridable via config like every endpoint.
+	// T27 builder surface (resume-profile; live reads verified). Overridable
+	// via config like every endpoint.
 	epResumeGetByHash = "resume_get_by_hash" // GET  /profile/shards/resume/get_by_hash?resumeHash=
 	epResumeUpdate    = "resume_update"      // POST /profile/shards/resume/update
 	// T28 native full clone (live-verified 2026-09-25 — one call creates a
-	// complete searchable duplicate). The default lives on the
+	// complete searchable duplicate; T45 removed the old shell-clone
+	// endpoint, this is the only cloning path). The default lives on the
 	// resume-profile-front service host and is used verbatim (never
 	// regional-host pinned); overridable via config like every endpoint.
 	epResumeCloneResumes = "resume_clone_resumes" // POST /profile/shards/resume/clone_resumes

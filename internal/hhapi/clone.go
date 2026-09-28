@@ -11,19 +11,10 @@ import (
 	"strings"
 )
 
-// T26/T27 resume cloning (live-verified 2026-09-25):
+// Resume cloning — native-only since T45 (2026-09-28):
 //
-//   - POST /applicant/resumes/clone, XHR headers + X-Xsrftoken, JSON body
-//     {"resumeId":"<id>"} → 200 {"url":"/profile/resume/?resume=<NEW_HASH>"};
-//     the new resume hash is parsed from that url.
-//   - That call only creates a SHELL: the /shards/applicant/resumes entry has
-//     status="not_finished", no title (percent 0) and hh sets no parent —
-//     lineage is tracked locally (internal/store). The owner-visible
-//     behaviour is "требует дозаполнить данные, даже титула нет".
-//
-// T28 NATIVE FULL CLONE (live-verified 2026-09-25, owner session): hh's
-// own "похожее резюме" flow is ONE call to the resume-profile-front
-// service:
+// hh's own "похожее резюме" flow is ONE call to the resume-profile-front
+// service (T28, live-verified 2026-09-25, owner session):
 //
 //	POST https://resume-profile-front.hh.ru/profile/shards/resume/clone_resumes
 //	{"resumeHash":"<hash>","resumesCreationProperties":[{"title":"<new unique
@@ -46,25 +37,18 @@ import (
 // the body; the new resume is found through the resumes shard
 // (_attributes.parentResumeId == parent numeric id). The clone arrives
 // COMPLETE in one call: hh copies the whole parent content server-side,
-// sets parentResumeId itself, status "new", isSearchable true. hh enforces
-// unique resume titles (BUSINESS DUPLICATE), so the clone rides a fresh
-// title derived from the parent's (hh's own modal clones under a NEW
-// position name; a byte-identical title is impossible).
+// sets parentResumeId itself, status "new"/"modified", isSearchable true.
+// hh enforces unique resume titles (BUSINESS DUPLICATE), so the clone
+// rides a fresh title derived from the parent's ("(копия)", then
+// "(копия 2)".."(копия 3)", retried at most maxCloneAttempts times).
 //
-// Fallback: on a DEFINITIVE native rejection (hh answered; no entity was
-// created) the T27 shell-clone + builder-update pipeline still runs. On a
-// transport-level failure the native call is ambiguous (the clone may
-// exist) — no fallback, the AmbiguousError propagates so callers resolve
-// by reading.
-//
-// T27 FALLBACK SURFACE (kept for definitive native rejections): shell
-// clone (above) then the resume-profile builder — GET get_by_hash (builder
-// state) and POST update (per-screen save; chunk 6069 thunk P, hM split in
-// module 64673: personal fields + experience ride `profile`, content stays
-// on `resume`; values use the conditional format [{"string":v}]). LIVE
-// STATUS: the update endpoint rejects every off-browser shape with a bare
-// 400 (2026-09-25), so the fallback terminates in ErrCloneMaterialize
-// unless hh reopens it.
+// T45 REMOVAL: the old POST /applicant/resumes/clone path (T26 shell + T27
+// builder materialization fallback) is gone. Live verdict on that endpoint
+// (T46, 2026-09-28): it creates an empty not_finished draft (no title, no
+// content, isSearchable=false) and never publishes on its own. There is no
+// fallback anymore: a definitive native rejection is terminal
+// (ErrCloneNative), and a transport-level failure stays an AmbiguousError
+// (the clone may exist — resolve by reading, never by repeating).
 
 // ErrCloneNative marks a failed native clone_resumes attempt where hh gave
 // a definitive answer and no entity was created.
@@ -77,6 +61,11 @@ const StageNative = "native"
 // cloneResumesURL is the resume-profile-front service endpoint (never
 // pinned to a regional host; see endpointSet.resolveExternal).
 const cloneResumesURL = "https://resume-profile-front.hh.ru/profile/shards/resume/clone_resumes"
+
+// defaultCloneRoleID is the professionalRole fallback for parents that
+// carry no role field (T45): the SPA's dictionary ids are strings and hh
+// re-maps the sent id server-side.
+const defaultCloneRoleID = "160"
 
 // resumeUpdateURL is the builder save endpoint: the same service and
 // header discipline as clone_resumes (T28: every editor POST rides the
@@ -105,22 +94,21 @@ const (
 // masquerades as a limit.
 var ErrResumeLimit = errors.New("hhapi: resume limit reached")
 
-// ErrCloneMaterialize marks a failed clone materialization: the builder
-// update endpoint rejected the content transfer (T27).
+// ErrCloneMaterialize marks a failed builder-update mutation (the T29
+// content-editor surface — see resume_content.go; since T45 the clone flow
+// no longer materializes anything itself).
 var ErrCloneMaterialize = errors.New("hhapi: clone materialization failed")
 
 // ErrCloneIncomplete marks the verify-gate failure: the clone still reads
 // back without a title or as not_finished, so it is not a usable duplicate.
 var ErrCloneIncomplete = errors.New("hhapi: clone is not a complete published resume")
 
-// Clone stages for CloneError.
-const (
-	StageMaterialize = "materialize"
-	StageVerify      = "verify"
-)
+// StageVerify is the CloneError stage for a clone that was discovered but
+// does not read back as a complete published resume.
+const StageVerify = "verify"
 
-// CloneError carries the failed full-clone stage and the shell hash (empty
-// when the shell itself never materialized a hash to report).
+// CloneError carries the failed full-clone stage and the clone hash (empty
+// when the failure happened before any clone hash was discovered).
 type CloneError struct {
 	Stage string
 	Hash  string
@@ -135,11 +123,6 @@ func (e *CloneError) Unwrap() error { return e.Err }
 
 // resumeLimitMarkers: candidate hh resume-quota rejection markers (RU + EN).
 var resumeLimitMarkers = []string{"limit", "лимит", "превышен", "максимум"}
-
-// maxBuilderScreens bounds the materialization walk: the editor serves a
-// handful of static screens per resume; a server looping us past this bound
-// is a contract violation, not progress.
-const maxBuilderScreens = 16
 
 // personalBuilderFields is the editor's hM split table (module 64673 of the
 // deployed resume_profile_front bundle): these resume-state keys plus
@@ -166,27 +149,38 @@ type ResumeCloner interface {
 	CloneResume(ctx context.Context, resumeID string) (newHash string, err error)
 }
 
-// CloneResume runs the native full clone (T28, live-verified): one
-// clone_resumes call — hh copies the whole parent content server-side,
-// parents the clone (parentResumeId) and publishes it searchable; the new
-// hash is discovered from the resumes shard and verified by read-back. On
-// a definitive native rejection (no entity created) it falls back to the
-// T27 pipeline (shell clone + builder materialization + verify). The hash
-// is returned only when the verify gate passes.
+// CloneResume runs the native full clone (T28 live contract; T45 made it
+// the only path): one clone_resumes call — hh copies the whole parent
+// content server-side, parents the clone (parentResumeId) and publishes it
+// searchable; the new hash is discovered from the resumes shard and
+// verified by read-back. The shell endpoint (POST /applicant/resumes/clone)
+// is never touched: it only ever produced an unpublished not_finished draft
+// (T46 live verdict). A resume-quota rejection is re-tagged ErrResumeLimit
+// so callers keep parking the clone loop; transport losses stay ambiguous.
+// The hash is returned only when the verify gate passes.
 func (c *Client) CloneResume(ctx context.Context, resumeID string) (string, error) {
-	newHash, nerr := c.cloneResumeNative(ctx, resumeID)
-	if nerr == nil {
+	newHash, err := c.cloneResumeNative(ctx, resumeID)
+	if err == nil {
 		return newHash, nil
 	}
-	var amb *AmbiguousError
-	if errors.As(nerr, &amb) || !isDefinitiveCloneReject(nerr) {
-		// The native call may or may not have landed: creating another
-		// clone through the fallback could duplicate the resume. Resolve
-		// by reading, never by repeating.
-		return "", nerr
+	if isResumeLimitResponse(err) {
+		var se *StatusError
+		if errors.As(err, &se) {
+			return "", &StatusError{
+				Kind:        ErrResumeLimit,
+				StatusCode:  se.StatusCode,
+				URL:         se.URL,
+				BodySnippet: se.BodySnippet,
+				RetryAfter:  se.RetryAfter,
+				Chain:       se.Chain,
+			}
+		}
+		return "", &StatusError{Kind: ErrResumeLimit, URL: c.resolveCloneResumesURL()}
 	}
-	c.log.Debug("hhapi: native clone rejected definitively, falling back to shell+update", "err", nerr)
-	return c.cloneResumeShellFlow(ctx, resumeID)
+	// Definitive rejections carry ErrCloneNative and terminate here; an
+	// AmbiguousError propagates as-is — repeating the call could duplicate
+	// the resume, so callers resolve by reading.
+	return "", err
 }
 
 // cloneResumesRequest is the exact SPA body (chunk 6069 module 11154):
@@ -330,8 +324,12 @@ func (c *Client) cloneResumeNative(ctx context.Context, parentHash string) (stri
 		return "", fmt.Errorf("%w: parent has no numeric id", ErrCloneNative)
 	}
 	roleIDs := conditionInts(parent.Resume["professionalRole"])
-	if roleIDs == nil {
-		roleIDs = []string{}
+	if len(roleIDs) == 0 {
+		// The parent carries no professionalRole: hh still demands a role
+		// dictionary id, so the DevOps default rides (hh maps it into its
+		// special dictionary server-side — applications key off the copied
+		// content, not this field).
+		roleIDs = []string{defaultCloneRoleID}
 	}
 	taken := cloneTitleTaken(parent)
 
@@ -475,67 +473,6 @@ func (c *Client) discoverNativeClone(ctx context.Context, parentID string) (stri
 		return "", errors.New("no shard entry carries the parent lineage")
 	}
 	return best, nil
-}
-
-// isDefinitiveCloneReject reports whether the native error proves hh
-// answered WITHOUT creating an entity (so the shell fallback is safe).
-func isDefinitiveCloneReject(err error) bool {
-	return errors.Is(err, ErrCloneNative) || errors.Is(err, errCloneTitleDuplicate)
-}
-
-// cloneResumeShellFlow is the T27 pipeline (fallback): shell clone,
-// content materialization through the builder update endpoint, verify
-// read-back. The hash is returned only when the verify gate passes.
-func (c *Client) cloneResumeShellFlow(ctx context.Context, resumeID string) (string, error) {
-	// (а) shell clone (T26 live contract).
-	resp, err := c.doMutation(ctx, func() requestSpec {
-		body, _ := json.Marshal(struct {
-			ResumeID string `json:"resumeId"`
-		}{ResumeID: resumeID})
-		h := c.xhrHeaders(c.withPinnedHost(c.eps.site + "/applicant/resumes"))
-		h.Set("Content-Type", "application/json")
-		return requestSpec{
-			kind:      kindMutation,
-			operation: "clone_resume",
-			method:    http.MethodPost,
-			url:       c.endpointURL(epResumeClone, c.eps.siteDefault("/applicant/resumes/clone")),
-			header:    h,
-			body:      body,
-		}
-	})
-	if err != nil {
-		if isResumeLimitResponse(err) {
-			return "", &StatusError{Kind: ErrResumeLimit, URL: c.endpointURL(epResumeClone, c.eps.siteDefault("/applicant/resumes/clone"))}
-		}
-		return "", err
-	}
-	// JSON captcha verdicts ride a 200 (same as TouchResume).
-	if bodyHasAny(string(resp.body), captchaMarkers) {
-		return "", &StatusError{Kind: ErrCaptcha, StatusCode: resp.status, URL: resp.finalURL, BodySnippet: snippet(resp.body), Chain: resp.chain}
-	}
-	newHash, perr := parseCloneHash(resp.body)
-	if perr != nil {
-		return "", &StatusError{Kind: ErrUpstream, StatusCode: resp.status, URL: resp.finalURL, BodySnippet: snippet(resp.body), Chain: resp.chain}
-	}
-
-	// (б)+(в) materialize the shell from the parent content.
-	if err := c.materializeClone(ctx, resumeID, newHash); err != nil {
-		return "", &CloneError{Stage: StageMaterialize, Hash: newHash, Err: err}
-	}
-
-	// (г) verify read-back: only a titled, finished clone is a duplicate.
-	state, err := c.fetchBuilderState(ctx, newHash)
-	if err != nil {
-		return "", &CloneError{Stage: StageVerify, Hash: newHash, Err: err}
-	}
-	if state.Title() == "" || state.Status() == "" || state.Status() == "not_finished" {
-		return "", &CloneError{
-			Stage: StageVerify,
-			Hash:  newHash,
-			Err:   fmt.Errorf("%w: title=%q status=%q", ErrCloneIncomplete, state.Title(), state.Status()),
-		}
-	}
-	return newHash, nil
 }
 
 // builderState is the parsed /profile/shards/resume/get_by_hash payload.
@@ -725,61 +662,6 @@ type resumeUpdateResp struct {
 	} `json:"error"`
 }
 
-// materializeClone transfers the parent resume content onto the shell via
-// the builder update endpoint, walking the editor screens until the builder
-// reports no incomplete screen left (completion is hh's publish: visibility
-// is never touched from our side).
-func (c *Client) materializeClone(ctx context.Context, parentHash, cloneHash string) error {
-	parent, err := c.fetchBuilderState(ctx, parentHash)
-	if err != nil {
-		return fmt.Errorf("parent builder state: %w", err)
-	}
-	clone, err := c.fetchBuilderState(ctx, cloneHash)
-	if err != nil {
-		return fmt.Errorf("clone builder state: %w", err)
-	}
-	resumeSide, profileFields := splitBuilderResume(parent)
-	additional := parent.Additional
-	if len(additional) == 0 {
-		additional = json.RawMessage(`{}`)
-	}
-	payload := resumeScreenUpdate{
-		ResumeHash:      cloneHash,
-		Resume:          resumeSide,
-		Profile:         profileFields,
-		QuestionMap:     map[string]string{},
-		Additional:      additional,
-		UserSkillLevels: json.RawMessage(`{}`),
-		UserPrint:       json.RawMessage(`{}`),
-	}
-	// Walk the clone's screens; the SPA re-sends the accumulated form per
-	// screen, so the same split rides every call until hh reports completion.
-	screens := clone.Screens
-	if len(screens) == 0 {
-		screens = []string{"professional_role"}
-	}
-	next := clone.NextIncomplete
-	for i := 0; i < maxBuilderScreens; i++ {
-		screen := ""
-		if next != nil && *next != "" {
-			screen = *next
-		} else if i < len(screens) {
-			screen = screens[i]
-		} else {
-			break
-		}
-		payload.CurrentScreenID = screen
-		done, err := c.postResumeScreen(ctx, &payload)
-		if err != nil {
-			return err
-		}
-		if done {
-			return nil
-		}
-	}
-	return errors.New("builder still reports incomplete screens after the screen walk")
-}
-
 // isResumeLimitResponse re-tags the transport's 400/422/403 classification as
 // ErrResumeLimit when the body carries a limit marker. The StatusError body
 // snippet is the masked fragment the pipeline kept — enough for the marker
@@ -793,29 +675,4 @@ func isResumeLimitResponse(err error) bool {
 		return false
 	}
 	return bodyHasAny(se.BodySnippet, resumeLimitMarkers)
-}
-
-// parseCloneHash extracts the new resume hash from the live envelope:
-// {"url":"/profile/resume/?resume=<hash>"} (absolute urls accepted). Any
-// deviation is an error — callers must never proceed without the hash.
-func parseCloneHash(body []byte) (string, error) {
-	var payload struct {
-		URL string `json:"url"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return "", fmt.Errorf("hhapi: clone_resume: decode envelope: %w", err)
-	}
-	raw := strings.TrimSpace(payload.URL)
-	if raw == "" {
-		return "", errors.New("hhapi: clone_resume: envelope has no url")
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "", fmt.Errorf("hhapi: clone_resume: parse url: %w", err)
-	}
-	hash := u.Query().Get("resume")
-	if hash == "" {
-		return "", errors.New("hhapi: clone_resume: url carries no resume hash")
-	}
-	return hash, nil
 }
