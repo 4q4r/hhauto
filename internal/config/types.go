@@ -157,7 +157,10 @@ type AIProvider struct {
 	Dialect   string `toml:"dialect"` // openai-chat | openai-responses | anthropic-messages
 	BaseURL   string `toml:"base_url"`
 	APIKeyEnv string `toml:"api_key_env"`
-	TimeoutS  int    `toml:"timeout_seconds"`
+	// TimeoutS bounds one provider HTTP request in seconds; 0 (the default)
+	// means no timeout — wait as long as generation takes. Negative values
+	// are rejected by validation.
+	TimeoutS int `toml:"timeout_seconds"`
 }
 
 // AIModel binds a model profile (params) to a provider.
