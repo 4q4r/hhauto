@@ -269,7 +269,8 @@ func newImprover(t *testing.T, cfg config.AutoCloneImprove, ed hhapi.ResumeConte
 	im, err := New(Options{
 		API: ed, Runner: run, DB: db, Review: rev, Registry: reg,
 		Cfg: cfg, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Now: func() time.Time { return time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC) },
+		Now:            func() time.Time { return time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC) },
+		InterCallPause: time.Millisecond, // T41: tests must not sleep the 2s production pause
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

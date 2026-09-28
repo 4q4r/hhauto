@@ -71,6 +71,11 @@ type DiffArtifact struct {
 // artifactSchemaV1 pins the diff artifact shape consumers parse.
 const artifactSchemaV1 = "hhauto.improve-diff/v1"
 
+// defaultFieldCallPause spaces consecutive per-field AI calls: back-to-back
+// provider requests trip the Z.AI HTTP 429 rate limit and mark every field
+// error (T41: the owner asked for strictly sequential, spaced requests).
+const defaultFieldCallPause = 2 * time.Second
+
 // Options wires the improver.
 type Options struct {
 	API      hhapi.ResumeContentEditor // content read/update surface
@@ -95,6 +100,10 @@ type Options struct {
 	// v5 or the [ai.tasks] TOML override) the per-field prompt composes
 	// on top of (the RunWithSystem contract); empty = field prompt only.
 	BasePrompt string
+	// InterCallPause is the pause between consecutive per-field AI calls
+	// (rate-limit spacing); zero = defaultFieldCallPause (2s). Tests
+	// shrink it to keep the suite fast.
+	InterCallPause time.Duration
 }
 
 // pending is one planned mutation awaiting the apply step.
@@ -133,6 +142,9 @@ func New(o Options) (*Improver, error) {
 	}
 	if o.Log == nil {
 		o.Log = slog.Default()
+	}
+	if o.InterCallPause <= 0 {
+		o.InterCallPause = defaultFieldCallPause
 	}
 	return &Improver{opt: o}, nil
 }
@@ -250,6 +262,7 @@ func (im *Improver) requireCloneLineage(ctx context.Context, accountID, parentHa
 func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 	live, mutated *hhapi.ResumeContent, artifact *DiffArtifact) []pending {
 	candidateCtx := im.candidateContext(ctx, accountID)
+	called := false // the previous target made its AI call
 	var pendings []pending
 	for _, id := range im.opt.Cfg.Fields {
 		spec, ok := Spec(id)
@@ -264,6 +277,12 @@ func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 				artifact.Fields = append(artifact.Fields, diff)
 				continue
 			}
+			if called {
+				// T41: strictly sequential field calls — the 2s pause
+				// keeps consecutive provider requests off the 429 wall.
+				time.Sleep(im.opt.InterCallPause)
+			}
+			called = true
 			proposed, status, reason, reviewID := im.propose(ctx, accountID, cloneHash, spec, tg, live, candidateCtx)
 			diff.Status, diff.Reason, diff.ReviewID = status, reason, reviewID
 			if proposed != nil {
