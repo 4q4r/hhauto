@@ -22,6 +22,31 @@ import (
 	"hhauto/internal/store"
 )
 
+// providerKeysFailFast (T48) checks every provider a configured model
+// references: a config-file api_key is exempt from the environment
+// requirement; a provider with neither key source, or whose api_key_env
+// is unset, is a startup error — a half-configured AI feature must not
+// start and later degrade into silent needs_human storms.
+func providerKeysFailFast(cfg *config.Config) error {
+	for modelID, m := range cfg.AI.Models {
+		p, ok := cfg.AI.Providers[m.Provider]
+		if !ok {
+			continue // ai.New reports the reference error below, in order
+		}
+		switch {
+		case p.APIKey != "":
+			// config-file key wins; no environment variable required.
+		case p.APIKeyEnv == "":
+			return fmt.Errorf("ai: models[%q] uses provider %q with neither api_key nor api_key_env (AI features are enabled: set one or remove ai.tasks)",
+				modelID, m.Provider)
+		case os.Getenv(p.APIKeyEnv) == "":
+			return fmt.Errorf("ai: models[%q] uses provider %q whose api_key_env %s is not set (AI features are enabled: set the variable or remove ai.tasks)",
+				modelID, m.Provider, p.APIKeyEnv)
+		}
+	}
+	return nil
+}
+
 func buildAI(cfg *config.Config, db *store.DB, log *slog.Logger, forceImproveTask bool) (ai.Runner, error) {
 	injectImproveTask(cfg, forceImproveTask)
 	if len(cfg.AI.Tasks) == 0 {
@@ -50,16 +75,8 @@ func buildAI(cfg *config.Config, db *store.DB, log *slog.Logger, forceImproveTas
 		providers[id] = prov
 	}
 
-	// Env-key fail-fast for every provider a configured model references.
-	for modelID, m := range cfg.AI.Models {
-		p, ok := cfg.AI.Providers[m.Provider]
-		if !ok {
-			continue // ai.New reports the reference error below, in order
-		}
-		if p.APIKeyEnv != "" && os.Getenv(p.APIKeyEnv) == "" {
-			return nil, fmt.Errorf("ai: models[%q] uses provider %q whose api_key_env %s is not set (AI features are enabled: set the variable or remove ai.tasks)",
-				modelID, m.Provider, p.APIKeyEnv)
-		}
+	if err := providerKeysFailFast(cfg); err != nil {
+		return nil, err
 	}
 
 	var ledger ai.LedgerStore

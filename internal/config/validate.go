@@ -225,6 +225,14 @@ func validateGlobals(c *Config) error {
 	if c.Features.ChatOps.QABaseEnabled {
 		return fmt.Errorf("features.chatops.qa_base=true: не реализовано в v1 (зарезервировано)")
 	}
+	// T48: cookie_store is a closed vocabulary — "" and "vault" keep the
+	// passphrase-protected resolution, "plain" selects the unencrypted
+	// 0600 file store; anything else is a typo that must fail loudly.
+	switch c.Storage.CookieStore {
+	case "", "vault", "plain":
+	default:
+		return fmt.Errorf("storage.cookie_store %q: must be \"vault\" or \"plain\"", c.Storage.CookieStore)
+	}
 	return checkNegatives(map[string]float64{
 		"storage.busy_timeout_ms":    float64(c.Storage.BusyTimeoutMS),
 		"ai.daily_budget_tokens":     float64(c.AI.DailyBudgetTokens),
@@ -318,8 +326,14 @@ func validateAI(c *Config) error {
 		if m.Provider == "" {
 			return fmt.Errorf("ai.models[%q].provider: required", id)
 		}
-		if _, ok := c.AI.Providers[m.Provider]; !ok {
+		p, ok := c.AI.Providers[m.Provider]
+		if !ok {
 			return fmt.Errorf("ai.models[%q].provider %q: unknown ai provider", id, m.Provider)
+		}
+		// T48: a used provider needs a key from the config file or the
+		// environment — otherwise the run would fail on the first AI call.
+		if p.APIKey == "" && p.APIKeyEnv == "" {
+			return fmt.Errorf("ai.providers[%q]: api_key or api_key_env is required (ai.models[%q] uses this provider)", m.Provider, id)
 		}
 		switch m.ReasoningEffort {
 		case "", "none", "minimal", "low", "medium", "high", "xhigh", "max":

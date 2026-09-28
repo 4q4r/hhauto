@@ -36,6 +36,13 @@ type General struct {
 type Storage struct {
 	Path          string `toml:"path"`
 	BusyTimeoutMS int    `toml:"busy_timeout_ms"`
+	// CookieStore (T48) selects the session-cookie backend: "" or "vault"
+	// (default) keeps the passphrase-protected resolution (keyring when
+	// available, otherwise the Argon2id + XChaCha20-Poly1305 file vault,
+	// which reads HHAUTO_VAULT_PASS or prompts); "plain" writes the same
+	// per-account blob path as an unencrypted 0600 JSON file and never
+	// touches HHAUTO_VAULT_PASS. Any other value is a validation error.
+	CookieStore string `toml:"cookie_store"`
 }
 
 // Log configures the slog logger (level, format, optional file).
@@ -166,6 +173,11 @@ type AIProvider struct {
 	Dialect   string `toml:"dialect"` // openai-chat | openai-responses | anthropic-messages
 	BaseURL   string `toml:"base_url"`
 	APIKeyEnv string `toml:"api_key_env"`
+	// APIKey (T48) carries the literal API key in the config file, for
+	// owners who do not want environment variables. Optional: when set it
+	// wins over api_key_env; when both are empty a provider used by a
+	// configured model is a startup error. The value is never logged.
+	APIKey string `toml:"api_key"`
 	// TimeoutS bounds one provider HTTP request in seconds; 0 (the default)
 	// means no timeout — wait as long as generation takes. Negative values
 	// are rejected by validation.

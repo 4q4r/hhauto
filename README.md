@@ -170,7 +170,7 @@ TOML, по умолчанию `~/.config/hhauto/hhauto.toml` (переопред
 | Секция | Назначение |
 |---|---|
 | `[general]` | `data_dir`, IANA-часовой пояс, глобальный `dry_run` |
-| `[storage]` | путь SQLite, `busy_timeout_ms` |
+| `[storage]` | путь SQLite, `busy_timeout_ms`, `cookie_store` = `vault`\|`plain` (T48) |
 | `[log]` | уровень/формат/файл; `redact_secrets` — `false` запрещена валидатором |
 | `[api]` + `[api.endpoints.override]` | режим `web`; переопределение любого эндпоинта (страховка от дрейфа неофициального API) |
 | `[captcha.<id>]` | провайдер: `protocol`, `base_url`, `key_env`, таймауты |
@@ -236,6 +236,7 @@ on_budget_exceed = "needs_human_only"
 dialect = "openai-chat"
 base_url = "https://api.z.ai/api/paas/v4"
 api_key_env = "HHAUTO_GLM_KEY"
+# api_key = "..."                      # T48: ключ прямо в конфиге (приоритет над api_key_env)
 
 # OpenRouter (сотни моделей одним ключом)
 [ai.providers.openrouter]
