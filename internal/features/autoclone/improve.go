@@ -153,6 +153,9 @@ func New(o Options) (*Improver, error) {
 // failures (AI error, needs_human, validation) degrade to skipped fields
 // recorded in the artifact; only invariant/read failures return an error.
 func (im *Improver) ImproveClone(ctx context.Context, accountID, parentHash, cloneHash string) (*DiffArtifact, error) {
+	im.opt.Log.Info("autoclone: improve clone start",
+		"account", accountID, "parent", parentHash, "hash", cloneHash, "dry_run", im.opt.DryRun,
+		"fields", strings.Join(im.opt.Cfg.Fields, ","))
 	if err := im.requireCloneLineage(ctx, accountID, parentHash, cloneHash); err != nil {
 		return nil, err
 	}
@@ -160,6 +163,7 @@ func (im *Improver) ImproveClone(ctx context.Context, accountID, parentHash, clo
 	if err != nil {
 		return nil, fmt.Errorf("autoclone: live content: %w", err)
 	}
+	im.opt.Log.Info("autoclone: improve live content read", "hash", cloneHash)
 
 	artifact := &DiffArtifact{
 		Schema:     artifactSchemaV1,
@@ -171,6 +175,8 @@ func (im *Improver) ImproveClone(ctx context.Context, accountID, parentHash, clo
 	mutated := live.Clone()
 	pendings := im.planFields(ctx, accountID, cloneHash, live, mutated, artifact)
 	if im.opt.DryRun || len(pendings) == 0 {
+		im.opt.Log.Info("autoclone: improve clone done (no apply)",
+			"hash", cloneHash, "dry_run", im.opt.DryRun, "planned_fields", len(artifact.Fields), "pending", len(pendings))
 		im.persist(ctx, cloneHash, artifact)
 		return artifact, nil
 	}
@@ -183,6 +189,8 @@ func (im *Improver) ImproveClone(ctx context.Context, accountID, parentHash, clo
 		im.applyPending(ctx, cloneHash, live, mutated, pendings, artifact)
 	}
 	artifact.Applied = artifactHasStatus(artifact, StatusImproved)
+	im.opt.Log.Info("autoclone: improve clone done",
+		"hash", cloneHash, "planned_fields", len(artifact.Fields), "pending", len(pendings), "applied", artifact.Applied)
 	im.persist(ctx, cloneHash, artifact)
 	return artifact, nil
 }
@@ -264,9 +272,12 @@ func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 	candidateCtx := im.candidateContext(ctx, accountID)
 	called := false // the previous target made its AI call
 	var pendings []pending
+	im.opt.Log.Info("autoclone: improve plan start",
+		"account", accountID, "hash", cloneHash, "configured_fields", len(im.opt.Cfg.Fields))
 	for _, id := range im.opt.Cfg.Fields {
 		spec, ok := Spec(id)
 		if !ok || im.opt.Registry.Prompt(id) == "" {
+			im.opt.Log.Info("autoclone: improve field not promptable; skipping", "field", id)
 			continue // not promptable — nothing to plan
 		}
 		for _, tg := range expandTargets(spec, live) {
@@ -275,6 +286,8 @@ func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 				diff.Status = StatusSkipped
 				diff.Reason = "empty current value: nothing to ground the improvement on"
 				artifact.Fields = append(artifact.Fields, diff)
+				im.opt.Log.Info("autoclone: improve field skipped (empty current value)",
+					"field", id, "locator", tg.locator)
 				continue
 			}
 			if called {
@@ -283,11 +296,17 @@ func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 				time.Sleep(im.opt.InterCallPause)
 			}
 			called = true
+			started := time.Now()
+			im.opt.Log.Info("autoclone: improve field asking AI",
+				"field", id, "locator", tg.locator, "label", spec.Label)
 			proposed, status, reason, reviewID := im.propose(ctx, accountID, cloneHash, spec, tg, live, candidateCtx)
 			diff.Status, diff.Reason, diff.ReviewID = status, reason, reviewID
 			if proposed != nil {
 				diff.After = displayValue(spec, proposed)
 			}
+			im.opt.Log.Info("autoclone: improve field verdict",
+				"field", id, "locator", tg.locator, "status", status,
+				"reason", reason, "elapsed", time.Since(started).Round(time.Second).String())
 			if status == StatusImproved {
 				if werr := writeValue(spec, mutated, tg.item, proposed); werr != nil {
 					diff.Status, diff.Reason = StatusError, werr.Error()
@@ -299,6 +318,9 @@ func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 			artifact.Fields = append(artifact.Fields, diff)
 		}
 	}
+	im.opt.Log.Info("autoclone: improve plan complete",
+		"account", accountID, "hash", cloneHash,
+		"planned_fields", len(artifact.Fields), "pending_apply", len(pendings))
 	return pendings
 }
 
