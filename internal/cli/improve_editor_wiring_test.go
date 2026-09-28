@@ -93,13 +93,13 @@ func TestBuildImproveEditorWiring(t *testing.T) {
 	apiFor := func(string) (contentEditorAPI, error) { return &stubContentEditor{}, nil }
 
 	// No cookie store + editor enabled → fail fast at wiring.
-	if _, err := buildImprove(cfg, stub, db, apiFor, nil, testLoggerT29()); err == nil {
+	if _, err := buildImprove(cfg, stub, db, apiFor, nil, testLoggerT29(), nil); err == nil {
 		t.Fatal("editor.enabled without a cookie store must fail at wiring")
 	}
 
 	// Fully wired: construction succeeds (Chrome absence degrades at
 	// apply time, not at startup).
-	imp, err := buildImprove(cfg, stub, db, apiFor, stubCookieStoreT30{}, testLoggerT29())
+	imp, err := buildImprove(cfg, stub, db, apiFor, stubCookieStoreT30{}, testLoggerT29(), nil)
 	if err != nil {
 		t.Fatalf("buildImprove: %v", err)
 	}

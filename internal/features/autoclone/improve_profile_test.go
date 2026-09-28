@@ -141,6 +141,25 @@ func TestImproveCandidateContextPlaceholderWithoutProfile(t *testing.T) {
 	}
 }
 
+// The wired base prompt (resume_improve v5, resolved by the CLI from
+// [ai.tasks]) composes with the per-field prompt: base first, the field
+// instructions after — the RunWithSystem contract.
+func TestImproveComposesBasePromptWithFieldPrompt(t *testing.T) {
+	run := newCapturingRunner(t, "title", "DevOps-инженер SRE")
+	im := newImprover(t, baseImproveCfg(), newFakeEditor(t), run, testStore(t), nil)
+	im.opt.BasePrompt = "BASE v5: ranking-optimization module contract."
+	if _, err := im.ImproveAnyResume(context.Background(), "acc1", "b4se123"); err != nil {
+		t.Fatalf("ImproveAnyResume: %v", err)
+	}
+	sys := run.systems["title"]
+	if !strings.HasPrefix(sys, "BASE v5: ranking-optimization module contract.") {
+		t.Errorf("system must start with the base prompt: %q", sys)
+	}
+	if !strings.Contains(sys, "Ты улучшаешь заголовок") {
+		t.Errorf("system must carry the per-field prompt after the base: %q", sys)
+	}
+}
+
 // A profile load failure degrades to an empty context: the run completes,
 // the field still improves on the live resume facts.
 func TestImproveCandidateContextLoadFailureDegrades(t *testing.T) {

@@ -332,7 +332,7 @@ func (rt *Runtime) buildFeatures() error {
 		Pacer: rt.Pacer, Log: rt.Log, Queue: rt.Queue,
 	})
 	feats.Add(lift)
-	improver, err := buildImprove(cfg, rt.AI, rt.DB, rt.contentEditorFor, rt.Cookies, rt.Log)
+	improver, err := buildImprove(cfg, rt.AI, rt.DB, rt.contentEditorFor, rt.Cookies, rt.Log, rt.profileFor)
 	if err != nil {
 		return err
 	}

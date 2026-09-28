@@ -269,6 +269,19 @@ func TestNormalizeImproveTypes(t *testing.T) {
 // T39: the re-ask prompt must carry the CONCRETE schema errors (which
 // fields are wrong), so the model can repair its output on the next
 // attempt instead of guessing. With the tolerant type contract the
+// The candidate context (profile.md text plus stored owner Q&A rules)
+// rides the trusted block under its own section header.
+func TestImproveInputTrustedBlocksCandidateContext(t *testing.T) {
+	in := ImproveInput{CandidateContext: "Целевая вилка: 250000–300000 RUR"}
+	b := in.TrustedBlocks()
+	if !strings.Contains(b, "## CANDIDATE CONTEXT (trusted)") {
+		t.Errorf("trusted block lacks the candidate context section: %q", b)
+	}
+	if !strings.Contains(b, "250000–300000") {
+		t.Errorf("trusted block lacks the context body: %q", b)
+	}
+}
+
 // remaining failure mode is the first-attempt GLM shape: required keys
 // missing entirely (extra keys and string-typed values are accepted and
 // normalized downstream).

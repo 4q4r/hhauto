@@ -19,6 +19,7 @@ import (
 	"hhauto/internal/ai"
 	"hhauto/internal/config"
 	"hhauto/internal/hhapi"
+	"hhauto/internal/profile"
 	"hhauto/internal/review"
 	"hhauto/internal/store"
 )
@@ -86,6 +87,14 @@ type Options struct {
 	DryRun bool
 	Now    func() time.Time
 	Log    *slog.Logger
+	// ProfileFor loads the trusted candidate context (profile.md text
+	// plus stored owner Q&A rules); nil or a load failure degrades to an
+	// empty context — the improve run itself never fails on it.
+	ProfileFor func(ctx context.Context, accountID string) (profile.Profile, error)
+	// BasePrompt is the resume_improve task's base system prompt (builtin
+	// v5 or the [ai.tasks] TOML override) the per-field prompt composes
+	// on top of (the RunWithSystem contract); empty = field prompt only.
+	BasePrompt string
 }
 
 // pending is one planned mutation awaiting the apply step.
@@ -240,6 +249,7 @@ func (im *Improver) requireCloneLineage(ctx context.Context, accountID, parentHa
 // mutations awaiting the apply step.
 func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 	live, mutated *hhapi.ResumeContent, artifact *DiffArtifact) []pending {
+	candidateCtx := im.candidateContext(ctx, accountID)
 	var pendings []pending
 	for _, id := range im.opt.Cfg.Fields {
 		spec, ok := Spec(id)
@@ -254,7 +264,7 @@ func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 				artifact.Fields = append(artifact.Fields, diff)
 				continue
 			}
-			proposed, status, reason, reviewID := im.propose(ctx, accountID, cloneHash, spec, tg, live)
+			proposed, status, reason, reviewID := im.propose(ctx, accountID, cloneHash, spec, tg, live, candidateCtx)
 			diff.Status, diff.Reason, diff.ReviewID = status, reason, reviewID
 			if proposed != nil {
 				diff.After = displayValue(spec, proposed)
@@ -368,15 +378,51 @@ func (im *Improver) settleRetryOutcome(artifact *DiffArtifact, retry []pending, 
 	}
 }
 
+// candidateContext loads the trusted candidate context once per run and
+// renders the profile sections (profile text plus stored owner Q&A; the
+// resume digest stays out — the live resume facts already ride per
+// field). Absence degrades to "" — never a failed run.
+func (im *Improver) candidateContext(ctx context.Context, accountID string) string {
+	if im.opt.ProfileFor == nil {
+		return ""
+	}
+	p, err := im.opt.ProfileFor(ctx, accountID)
+	if err != nil {
+		im.opt.Log.Warn("autoclone: profile load failed; improving without candidate context",
+			"account", accountID, "err", err)
+		return ""
+	}
+	return profile.RenderForPrompt(p, profile.SectionProfile, profile.SectionFacts)
+}
+
+// fieldPrompt resolves the field's system prompt with the candidate
+// context substituted into {{candidate_context}} (an absent profile
+// substitutes an explicit note — never a dangling template marker) and
+// composes it on top of the base prompt (base first, field instructions
+// after — the RunWithSystem contract).
+func (im *Improver) fieldPrompt(fieldID, candidateCtx string) string {
+	subst := strings.TrimSpace(candidateCtx)
+	if subst == "" {
+		subst = "(профиль не предоставлен)"
+	}
+	field := strings.ReplaceAll(im.opt.Registry.Prompt(fieldID), "{{candidate_context}}", subst)
+	if base := strings.TrimSpace(im.opt.BasePrompt); base != "" {
+		return base + "\n\n" + field
+	}
+	return field
+}
+
 // propose asks the AI for one field target's new value and returns the
 // validated payload value (nil when nothing may apply).
-func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, spec FieldSpec, tg target, live *hhapi.ResumeContent) (value json.RawMessage, status, reason string, reviewID int64) {
+func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, spec FieldSpec,
+	tg target, live *hhapi.ResumeContent, candidateCtx string) (value json.RawMessage, status, reason string, reviewID int64) {
 	verdict, _, err := im.opt.Runner.RunWithSystem(ctx, accountID, "resume", cloneHash, "",
-		ai.TaskResumeImprove, im.opt.Registry.Prompt(spec.ID), ai.ImproveInput{
-			Field:        spec.ID,
-			FieldLabel:   spec.Label,
-			CurrentValue: tg.current,
-			TrustedFacts: factsFor(spec, live, tg.item),
+		ai.TaskResumeImprove, im.fieldPrompt(spec.ID, candidateCtx), ai.ImproveInput{
+			Field:            spec.ID,
+			FieldLabel:       spec.Label,
+			CurrentValue:     tg.current,
+			TrustedFacts:     factsFor(spec, live, tg.item),
+			CandidateContext: candidateCtx,
 		})
 	if err != nil {
 		return nil, StatusError, err.Error(), 0

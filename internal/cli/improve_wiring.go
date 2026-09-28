@@ -20,12 +20,15 @@ import (
 	"net/http"
 
 	"hhauto/internal/ai"
+	"hhauto/internal/aiprompts"
+
 	// Aliased: the wiring below declares a local `browser` variable.
 	sysbrowser "hhauto/internal/browser"
 	"hhauto/internal/config"
 	"hhauto/internal/cookies"
 	"hhauto/internal/features/autoclone"
 	"hhauto/internal/hhapi"
+	"hhauto/internal/profile"
 	"hhauto/internal/store"
 )
 
@@ -143,15 +146,31 @@ func buildEditorRunner(cfg *config.Config, db *store.DB, ckStore cookies.Store,
 	})
 }
 
+// improveBasePrompt resolves the resume_improve task's base system prompt
+// (builtin v5 or the [ai.tasks.resume_improve] TOML override) through the
+// same registry the AI runner uses — the per-field prompts compose on top
+// of it (the RunWithSystem contract).
+func improveBasePrompt(cfg *config.Config) (string, error) {
+	reg, err := ai.NewPromptRegistry(cfg.AI.Tasks, aiprompts.FS)
+	if err != nil {
+		return "", err
+	}
+	body, _, err := reg.SystemPrompt(ai.TaskResumeImprove)
+	return body, err
+}
+
 // buildImprove constructs the clone improver from the improve config.
 // Returns (nil, nil) when improve is disabled. Dry-run rides the general
 // config flag: the diff is computed and logged, nothing is applied.
 // apiFor resolves the per-account content surface; ckStore feeds the
-// browser editor runner (required when editor.enabled).
+// browser editor runner (required when editor.enabled); profileFor loads
+// the trusted candidate context (nil or a failure degrades to an empty
+// context).
 func buildImprove(cfg *config.Config, runner ai.Runner, db interface {
 	ResumeClonesGet(ctx context.Context, cloneHash string) (*store.ResumeClone, error)
 	ResumeClonesSetImproveDiff(ctx context.Context, cloneHash, diffJSON string) error
-}, apiFor func(accountID string) (contentEditorAPI, error), ckStore cookies.Store, log *slog.Logger) (*autoclone.Improver, error) {
+}, apiFor func(accountID string) (contentEditorAPI, error), ckStore cookies.Store, log *slog.Logger,
+	profileFor func(ctx context.Context, accountID string) (profile.Profile, error)) (*autoclone.Improver, error) {
 	improve := cfg.Features.AutoClone.Improve
 	if !improve.Enabled {
 		return nil, nil
@@ -173,15 +192,21 @@ func buildImprove(cfg *config.Config, runner ai.Runner, db interface {
 	if err != nil {
 		return nil, err
 	}
+	base, err := improveBasePrompt(cfg)
+	if err != nil {
+		return nil, err
+	}
 	return autoclone.New(autoclone.Options{
-		API:      editor,
-		Editor:   browser,
-		Runner:   fpr,
-		DB:       storeDB,
-		Registry: registry,
-		Cfg:      improve,
-		DryRun:   cfg.General.DryRun,
-		Log:      log,
+		API:        editor,
+		Editor:     browser,
+		Runner:     fpr,
+		DB:         storeDB,
+		Registry:   registry,
+		Cfg:        improve,
+		DryRun:     cfg.General.DryRun,
+		Log:        log,
+		ProfileFor: profileFor,
+		BasePrompt: base,
 	})
 }
 
@@ -208,14 +233,20 @@ func buildImproveForCommand(rt *Runtime, improve config.AutoCloneImprove, accoun
 	if err != nil {
 		return nil, err
 	}
+	base, err := improveBasePrompt(rt.Cfg)
+	if err != nil {
+		return nil, err
+	}
 	return autoclone.New(autoclone.Options{
-		API:      editor,
-		Editor:   browser,
-		Runner:   fpr,
-		DB:       rt.DB,
-		Registry: registry,
-		Cfg:      improve,
-		DryRun:   dryRun || rt.Cfg.General.DryRun,
-		Log:      rt.Log,
+		API:        editor,
+		Editor:     browser,
+		Runner:     fpr,
+		DB:         rt.DB,
+		Registry:   registry,
+		Cfg:        improve,
+		DryRun:     dryRun || rt.Cfg.General.DryRun,
+		Log:        rt.Log,
+		ProfileFor: rt.profileFor,
+		BasePrompt: base,
 	})
 }
