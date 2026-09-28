@@ -223,7 +223,7 @@ func printImproveDiff(o out, artifact *autoclone.DiffArtifact, _ bool) error {
 		reason := f.Reason
 		rows = append(rows, []string{
 			f.Field, f.Status,
-			clip(string(f.Before), 48), clip(string(f.After), 48), clip(reason, 60),
+			clip(string(f.Before), 500), clip(string(f.After), 500), clip(reason, 200),
 		})
 	}
 	o.printTable([]string{"FIELD", "STATUS", "БЫЛО", "СТАЛО", "ПРИЧИНА"}, rows)
