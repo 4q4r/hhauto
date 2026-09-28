@@ -42,6 +42,10 @@ type ImproveInput struct {
 	// dates from (resume/profile fragments, owner rules such as a target
 	// salary range written in exact numbers).
 	TrustedFacts []string `json:"-"`
+	// CandidateContext is the rendered trusted candidate context
+	// (profile.md text plus stored owner Q&A rules) grounding the
+	// improvement; it rides the trusted block, never the user block.
+	CandidateContext string `json:"-"`
 	// TargetRoles are the professional roles the resume targets (grounding
 	// vocabulary for title/key-skills enrichment).
 	TargetRoles []string `json:"target_roles,omitempty"`
@@ -83,6 +87,11 @@ func (in ImproveInput) TrustedBlocks() string {
 			b.WriteString(f)
 			b.WriteString("\n")
 		}
+	}
+	if in.CandidateContext != "" {
+		b.WriteString("\n## CANDIDATE CONTEXT (trusted)\n")
+		b.WriteString(in.CandidateContext)
+		b.WriteString("\n")
 	}
 	return strings.TrimSpace(b.String())
 }

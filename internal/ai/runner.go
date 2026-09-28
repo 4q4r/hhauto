@@ -559,6 +559,12 @@ func (r *runner) reaskLoop(ctx context.Context, provider Provider, req Request) 
 		if extracted, ok := ExtractJSON(resp.Content); ok {
 			resp.Content = string(extracted)
 		}
+		// T41 output repair: canonicalize the observed GLM type drift
+		// (string numbers/booleans, null arrays, wrapped scalars)
+		// schema-driven BEFORE validation, so one provider call succeeds
+		// instead of burning re-asks. Unrepairable output passes through
+		// unchanged and the re-ask loop stays the guard.
+		resp.Content = string(RepairOutput(json.RawMessage(resp.Content), string(req.Task)+".json"))
 		lastErr = r.validator.validate(req.Task, json.RawMessage(resp.Content))
 		if lastErr == nil {
 			return resp, false, usage, nil
