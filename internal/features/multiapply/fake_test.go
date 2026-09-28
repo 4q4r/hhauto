@@ -23,6 +23,7 @@ import (
 	"hhauto/internal/queue"
 	"hhauto/internal/scheduler"
 	"hhauto/internal/store"
+	"hhauto/internal/testutil/tlsfix"
 	"hhauto/internal/webhook"
 )
 
@@ -374,6 +375,7 @@ func newApplyEnv(t *testing.T) *applyEnv {
 			},
 		},
 		nil, nil,
+		hhapi.WithBrowserTLSSpec(tlsfix.Spec(t, "test-ua/1.0")),
 	)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

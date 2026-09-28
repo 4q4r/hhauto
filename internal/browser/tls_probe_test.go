@@ -75,6 +75,22 @@ func TestConnectTargetRejectsNonTLS(t *testing.T) {
 	}
 }
 
+// T50: the default capture host is the hostname of the configured site URL.
+func TestProbeHostFromSiteURL(t *testing.T) {
+	for site, want := range map[string]string{
+		"https://hh.ru/":              "hh.ru",
+		"https://hh.ru/search":        "hh.ru",
+		"hh.ru":                       "hh.ru",
+		"http://taganrog.hh.ru:443/x": "taganrog.hh.ru",
+		"":                            "",
+		"://broken":                   "://broken",
+	} {
+		if got := ProbeHost(site); got != want {
+			t.Fatalf("ProbeHost(%q) = %q, want %q", site, got, want)
+		}
+	}
+}
+
 func TestRelayAndSniffCapturesAndRelays(t *testing.T) {
 	upAddr := fakeUpstream(t)
 	upPort := upAddr[strings.LastIndexByte(upAddr, ':')+1:]

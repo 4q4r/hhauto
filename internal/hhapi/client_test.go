@@ -154,7 +154,7 @@ func (env *testEnv) account() config.Account {
 
 func (env *testEnv) client() *Client {
 	env.t.Helper()
-	c, err := NewClient(env.account(), env.endpoints(), nil, nil)
+	c, err := NewClient(env.account(), env.endpoints(), nil, nil, WithBrowserTLSSpec(captureSpec(env.t)))
 	if err != nil {
 		env.t.Fatalf("NewClient: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestBootstrapEndpointOverride(t *testing.T) {
 		http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: "tok_override", Path: "/"})
 		_, _ = w.Write([]byte(`{"resumes":[]}`))
 	})
-	c, err := NewClient(env.account(), eps, nil, nil)
+	c, err := NewClient(env.account(), eps, nil, nil, WithBrowserTLSSpec(captureSpec(t)))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -1094,7 +1094,7 @@ func TestCookiePersistenceRoundTrip(t *testing.T) {
 	}
 
 	// Fresh client restores the session from the persisted snapshot.
-	c2, err := NewClient(env.account(), env.endpoints(), nil, nil)
+	c2, err := NewClient(env.account(), env.endpoints(), nil, nil, WithBrowserTLSSpec(captureSpec(t)))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

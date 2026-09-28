@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/md5"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -18,6 +19,7 @@ var goldenMeta = CaptureMeta{
 	BrowserPath: "/home/u/.cloakbrowser/chromium-151.0.7922.108.6/chrome",
 	BrowserVer:  "151.0.7922.108.6",
 	Host:        "hh.ru",
+	UserAgent:   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
 }
 
 // goldenBuilder assembles a wire-accurate Chrome-151-shaped ClientHello
@@ -336,6 +338,35 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 	}
 }
 
+// T50: the captured spec is the single source of truth for the User-Agent
+// too — JA3 and UA must describe the same browser.
+func TestCaptureStampsUserAgent(t *testing.T) {
+	s := goldenSpec(t)
+	if s.UserAgent != goldenMeta.UserAgent {
+		t.Fatalf("UserAgent = %q, want %q", s.UserAgent, goldenMeta.UserAgent)
+	}
+	path := t.TempDir() + "/browser/tls_spec.json"
+	if err := s.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.UserAgent != goldenMeta.UserAgent {
+		t.Fatalf("UserAgent after roundtrip = %q, want %q", got.UserAgent, goldenMeta.UserAgent)
+	}
+	// A spec without a User-Agent cannot be the source of truth.
+	noUA := *s
+	noUA.UserAgent = ""
+	if err := noUA.Save(path); err != nil {
+		t.Fatalf("Save noUA: %v", err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatalf("spec without User-Agent must fail Load")
+	}
+}
+
 func TestLoadRejectsSchemaDrift(t *testing.T) {
 	s := goldenSpec(t)
 	path := t.TempDir() + "/spec.json"
@@ -343,7 +374,7 @@ func TestLoadRejectsSchemaDrift(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	broken := strings.Replace(string(mustRead(t, path)),
-		`"schema_version": 1`, `"schema_version": 999`, 1)
+		fmt.Sprintf(`"schema_version": %d`, SchemaVersion), `"schema_version": 999`, 1)
 	if broken == string(mustRead(t, path)) {
 		t.Fatalf("schema string not patched")
 	}

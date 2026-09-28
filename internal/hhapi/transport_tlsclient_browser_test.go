@@ -166,7 +166,9 @@ func TestTLSClientTransportReplaysBrowserHello(t *testing.T) {
 	}
 }
 
-func TestTLSClientTransportFallsBackOnBrokenSpec(t *testing.T) {
+// T50 strict parity: a broken capture cannot fall back to a preset
+// profile — the transport must fail the account build instead.
+func TestTLSClientTransportFailsOnBrokenSpec(t *testing.T) {
 	spec := captureSpec(t)
 	broken := *spec
 	broken.RawClientHelloHex = "zznot-hex"
@@ -174,13 +176,19 @@ func TestTLSClientTransportFallsBackOnBrokenSpec(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cookiejar: %v", err)
 	}
-	// A spec that cannot build must fall back to the preset profile
-	// loudly (WARN) instead of failing the account build.
-	tp, err := newTLSTransport(jar, "Chrome/151", "", &broken, slog.New(slog.DiscardHandler))
-	if err != nil {
-		t.Fatalf("fallback transport: %v", err)
+	if _, err := newTLSTransport(jar, "Chrome/151", "", &broken, slog.New(slog.DiscardHandler)); err == nil {
+		t.Fatal("a spec that cannot build must fail the transport, not fall back")
 	}
-	if tp == nil {
-		t.Fatalf("nil transport")
+}
+
+// T50 strict parity: the tls-client transport without a captured spec is
+// a wiring error — the approximate preset path no longer exists.
+func TestTLSClientTransportRequiresSpec(t *testing.T) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("cookiejar: %v", err)
+	}
+	if _, err := newTLSTransport(jar, "Chrome/151", "", nil, slog.New(slog.DiscardHandler)); err == nil {
+		t.Fatal("nil spec must fail the tls-client transport")
 	}
 }

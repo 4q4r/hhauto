@@ -134,7 +134,7 @@ func contentEndpoints(env *testEnv) (c *Client) {
 		eps.Override = map[string]string{}
 	}
 	eps.Override["resume_update"] = env.srv1.URL + "/profile/shards/resume/update"
-	c, err := NewClient(env.account(), eps, nil, nil)
+	c, err := NewClient(env.account(), eps, nil, nil, WithBrowserTLSSpec(captureSpec(env.t)))
 	if err != nil {
 		env.t.Fatalf("NewClient: %v", err)
 	}

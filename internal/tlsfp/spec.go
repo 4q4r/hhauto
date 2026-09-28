@@ -53,7 +53,9 @@ import (
 )
 
 // SchemaVersion guards the cached JSON against silent format drift.
-const SchemaVersion = 1
+// v2 (T50) adds user_agent: the capture is the single source of truth for
+// the UA as well, so v1 caches fail Load and are recaptured automatically.
+const SchemaVersion = 2
 
 // ExtInfo is one ClientHello extension as seen on the wire.
 type ExtInfo struct {
@@ -68,6 +70,7 @@ type CaptureMeta struct {
 	BrowserPath string
 	BrowserVer  string
 	Host        string // SNI host the hello was captured for
+	UserAgent   string // navigator.userAgent of the capturing browser
 }
 
 // Spec is the captured browser ClientHello, both structurally parsed
@@ -86,6 +89,11 @@ type Spec struct {
 	// ClientHelloSpec.FromRaw and is therefore the replay ground truth;
 	// every other field in this struct is derived from it.
 	RawClientHelloHex string `json:"raw_client_hello_hex"`
+
+	// UserAgent is the navigator.userAgent of the capturing browser,
+	// captured in the same session as the hello: the spec is the single
+	// source of truth for the UA too (T50).
+	UserAgent string `json:"user_agent"`
 
 	RecordVersion     uint16    `json:"record_version"` // TLS record layer version
 	HandshakeVer      uint16    `json:"handshake_ver"`  // legacy hello version (0x0303)
@@ -152,16 +160,32 @@ func (s *Spec) ClientHelloID() tls.ClientHelloID {
 }
 
 // Save persists the spec as JSON at path (typically DefaultPath(dataDir)).
+// The write is atomic (temp file in the same directory + rename): the
+// engine recaptures at startup, so an interrupted write must never leave
+// a truncated spec behind.
 func (s *Spec) Save(path string) error {
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return fmt.Errorf("tlsfp: encode spec: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("tlsfp: create spec dir: %w", err)
 	}
-	if err := os.WriteFile(path, b, 0o600); err != nil {
+	tmp, err := os.CreateTemp(dir, ".tls_spec-*.json")
+	if err != nil {
+		return fmt.Errorf("tlsfp: create temp spec: %w", err)
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op after a successful rename
+	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
 		return fmt.Errorf("tlsfp: write spec: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("tlsfp: write spec: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("tlsfp: replace spec: %w", err)
 	}
 	return nil
 }
@@ -182,6 +206,9 @@ func Load(path string) (*Spec, error) {
 	}
 	if s.RawClientHelloHex == "" {
 		return nil, errors.New("tlsfp: spec has no raw client hello")
+	}
+	if s.UserAgent == "" {
+		return nil, errors.New("tlsfp: spec has no user_agent (re-run the tls-probe capture)")
 	}
 	if _, err := s.RawClientHello(); err != nil {
 		return nil, fmt.Errorf("tlsfp: spec raw hello: %w", err)
@@ -443,6 +470,7 @@ func ParseClientHello(raw []byte, meta CaptureMeta) (*Spec, error) {
 		BrowserPath:       meta.BrowserPath,
 		BrowserVer:        meta.BrowserVer,
 		Host:              meta.Host,
+		UserAgent:         meta.UserAgent,
 		RawClientHelloHex: hex.EncodeToString(raw),
 	}
 	if len(raw) < 6 || raw[0] != 0x16 {

@@ -36,7 +36,9 @@ func newTLSClientTwin(t *testing.T, main, mirror string, ua string, opts ...Clie
 	t.Helper()
 	eps := config.APIEndpoints{Site: main, Chatik: main, SearchPage: main + "/search/vacancy"}
 	cfg := config.Account{UserAgent: ua, RPS: 500}
-	opts = append([]ClientOption{WithTransport(config.TransportTLSClient)}, opts...)
+	// T50: production tls-client transports always carry the captured
+	// browser hello — the tests ride the same path.
+	opts = append([]ClientOption{WithTransport(config.TransportTLSClient), WithBrowserTLSSpec(captureSpec(t))}, opts...)
 	c, err := NewClient(cfg, eps, nil, nil, opts...)
 	if err != nil {
 		t.Fatalf("NewClient(tls-client): %v", err)
@@ -46,26 +48,25 @@ func newTLSClientTwin(t *testing.T, main, mirror string, ua string, opts ...Clie
 }
 
 func TestProfileForUAPicksClosestAvailable(t *testing.T) {
+	// T50: the profile tables feed only the HTTP/2 settings base of the
+	// captured-hello transport (browserClientProfile) — the closest
+	// lower-or-equal major, no approximation WARN anymore.
 	tests := []struct {
-		name      string
-		ua        string
-		wantName  string
-		wantExact bool
+		name     string
+		ua       string
+		wantName string
 	}{
-		{"chrome exact", tlsTestChrome152UA, "chrome_152", true},
-		{"chrome 138 has no profile, nearest lower wins", tlsTestChrome138UA, "chrome_133", false},
-		{"firefox exact", tlsTestFirefox135UA, "firefox_135", true},
-		{"firefox 155 has no profile, newest wins with warn", tlsTestFirefox155UA, "firefox_148", false},
-		{"unknown UA falls back to library default", "curl/8.5.0", "chrome_150", false},
+		{"chrome exact", tlsTestChrome152UA, "chrome_152"},
+		{"chrome 138 has no profile, nearest lower wins", tlsTestChrome138UA, "chrome_133"},
+		{"firefox exact", tlsTestFirefox135UA, "firefox_135"},
+		{"firefox 155 has no profile, newest wins", tlsTestFirefox155UA, "firefox_148"},
+		{"unknown UA falls back to library default", "curl/8.5.0", "chrome_150"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := profileForUA(tt.ua)
 			if got.name != tt.wantName {
 				t.Fatalf("profileForUA(%q).name = %q, want %q", tt.ua, got.name, tt.wantName)
-			}
-			if got.exact != tt.wantExact {
-				t.Fatalf("profileForUA(%q).exact = %v, want %v", tt.ua, got.exact, tt.wantExact)
 			}
 		})
 	}

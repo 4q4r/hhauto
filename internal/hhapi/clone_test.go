@@ -188,7 +188,7 @@ func TestCloneResumeEndpointOverride(t *testing.T) {
 	})
 	cfg := env.endpoints()
 	cfg.Override["resume_clone_resumes"] = env.srv1.URL + "/custom/clone_resumes"
-	c, err := NewClient(env.account(), cfg, nil, nil)
+	c, err := NewClient(env.account(), cfg, nil, nil, WithBrowserTLSSpec(captureSpec(t)))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

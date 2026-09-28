@@ -22,6 +22,7 @@ import (
 	"hhauto/internal/queue"
 	"hhauto/internal/scheduler"
 	"hhauto/internal/store"
+	"hhauto/internal/testutil/tlsfix"
 )
 
 // --- stateful fake hh server ---
@@ -100,6 +101,7 @@ func newHHFake(t *testing.T, _ *store.DB, resumes ...fakeResume) *hhFake {
 		config.Account{DisplayName: "acc1", UserAgent: "test-ua/1.0", RPS: 50},
 		config.APIEndpoints{Site: f.srv.URL, Chatik: f.srv.URL, SearchPage: f.srv.URL + "/search/vacancy"},
 		nil, nil,
+		hhapi.WithBrowserTLSSpec(tlsfix.Spec(t, "test-ua/1.0")),
 	)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

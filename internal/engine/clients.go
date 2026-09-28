@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 
+	"hhauto/internal/browser"
 	"hhauto/internal/config"
 	"hhauto/internal/cookies"
 	"hhauto/internal/hhapi"
@@ -26,31 +27,53 @@ func (p cookiePersister) Save(ctx context.Context, accountID string, c []*http.C
 	return p.store.Save(ctx, accountID, c)
 }
 
+// captureTLSSpec is the automatic capture seam (overridden in tests):
+// the same capture the tls-probe command runs, from the [browser] config.
+var captureTLSSpec = func(ctx context.Context, cfg *config.Config, log *slog.Logger) (*tlsfp.Spec, error) {
+	return browser.CaptureTLSSpec(ctx, cfg, "", log)
+}
+
+// loadBrowserSpec returns the captured browser TLS spec — strictly (T50):
+// an absent or unusable capture is recaptured automatically through the
+// same capture the tls-probe command runs, so the engine only ever works
+// with a 1:1 spec. A failed capture fails the build loudly; the preset
+// (approximated) profile path no longer exists.
+func loadBrowserSpec(ctx context.Context, cfg *config.Config, log *slog.Logger) (*tlsfp.Spec, error) {
+	path := tlsfp.DefaultPath(cfg.General.DataDir)
+	spec, err := tlsfp.Load(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			log.Info("engine: no captured browser TLS spec; capturing it automatically", "path", path)
+		} else {
+			log.Info("engine: captured browser TLS spec unusable; capturing a fresh one", "error", err, "path", path)
+		}
+		spec, err = captureTLSSpec(ctx, cfg, log)
+		if err != nil {
+			return nil, fmt.Errorf("engine: automatic TLS capture failed (install a Chrome/Chromium binary or enable browser.auto_download; hhauto tls-probe reruns the same capture): %w", err)
+		}
+	}
+	log.Info("engine: replaying the captured browser ClientHello for hh connections",
+		"browser_version", spec.BrowserVer, "captured_host", spec.Host, "ja3_md5", spec.JA3MD5)
+	return spec, nil
+}
+
+// resolveUserAgent returns the effective account User-Agent (T50): the
+// captured browser UA wins — the spec is the single source of truth and
+// JA3 plus UA must describe the same browser. A difference is routine
+// (INFO), not a mismatch to warn about: with a 1:1 spec the captured UA
+// is by definition the right one.
+func resolveUserAgent(acct config.Account, spec *tlsfp.Spec) (string, bool) {
+	if spec == nil || spec.UserAgent == "" || spec.UserAgent == acct.UserAgent {
+		return acct.UserAgent, false
+	}
+	return spec.UserAgent, true
+}
+
 // accountTransport resolves the transport wiring for one account:
 // fail-closed proxy resolution straight from the same proxy table the
 // registry was built from (an unknown ref is an error, never a direct
 // fallback). The tls-client transport consumes the proxy as a URL
 // (tls-client SetProxy), the legacy http transport as a raw dialer.
-// loadBrowserSpec picks up the captured browser hello for the 1:1 TLS
-// replay. Absent capture and stale/unparseable cache are WARN-level
-// fallbacks to the preset profile; only a present, schema-current spec
-// reaches the transport.
-func loadBrowserSpec(cfg *config.Config, log *slog.Logger) *tlsfp.Spec {
-	path := tlsfp.DefaultPath(cfg.General.DataDir)
-	spec, err := tlsfp.Load(path)
-	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			log.Warn("engine: captured browser TLS spec unusable; using the preset profile (run hhauto tls-probe)", "error", err, "path", path)
-		} else {
-			log.Warn("engine: no captured browser TLS spec; TLS fingerprint approximates the browser (run hhauto tls-probe)", "path", path)
-		}
-		return nil
-	}
-	log.Info("engine: replaying the captured browser ClientHello for hh connections",
-		"browser_version", spec.BrowserVer, "captured_host", spec.Host, "ja3_md5", spec.JA3MD5)
-	return spec
-}
-
 func accountTransport(cfg *config.Config, reg proxy.Registry, acct config.Account, mode, id string) (proxy.Dialer, []hhapi.ClientOption, error) {
 	opts := []hhapi.ClientOption{hhapi.WithTransport(mode)}
 	if acct.ProxyRef == "" {
@@ -86,21 +109,26 @@ func accountTransport(cfg *config.Config, reg proxy.Registry, acct config.Accoun
 // Unknown proxy references and missing user agents fail the whole build:
 // a half-configured account must not run.
 //
-// TLS layer (T37 v3): when a captured browser hello exists under
-// data_dir (hhauto tls-probe), every client replays it 1:1 instead of
-// approximating the browser with a shipped preset. A missing or
-// unusable capture degrades to the preset path with a WARN — it must
-// never fail the accounts build.
+// TLS layer (T50, strict parity): the captured browser hello is
+// mandatory — a missing or unusable capture is recaptured automatically
+// (the same capture the tls-probe command runs) and a failed capture
+// fails the build. Every account runs the captured spec 1:1 and sends
+// the captured browser User-Agent; there is no preset-profile fallback.
 func BuildAPIClients(ctx context.Context, cfg *config.Config, reg proxy.Registry, ckStore cookies.Store, log *slog.Logger) (map[string]hhapi.HHAPI, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("engine: nil config")
 	}
 	if log == nil {
-		// CLI one-shots (account check, ai status) build clients without
-		// a logger; the WARN/INFO paths below must not panic on it.
-		log = slog.New(slog.DiscardHandler)
+		// CLI one-shots (account check, ai status, onboarding) build
+		// clients without a logger. T50: the capture/replay decisions
+		// must stay visible, so nil means the default stderr logger —
+		// not a discard handler.
+		log = slog.Default()
 	}
-	browserSpec := loadBrowserSpec(cfg, log)
+	browserSpec, err := loadBrowserSpec(ctx, cfg, log)
+	if err != nil {
+		return nil, err
+	}
 	ids := make([]string, 0, len(cfg.Accounts))
 	for id := range cfg.Accounts {
 		ids = append(ids, id)
@@ -114,6 +142,11 @@ func BuildAPIClients(ctx context.Context, cfg *config.Config, reg proxy.Registry
 	}
 	for _, id := range ids {
 		acct := cfg.Accounts[id]
+		if ua, overridden := resolveUserAgent(acct, browserSpec); overridden {
+			log.Info("engine: using the captured browser User-Agent",
+				"account", id, "configured", acct.UserAgent, "captured", ua)
+			acct.UserAgent = ua
+		}
 		dialer, opts, err := accountTransport(cfg, reg, acct, mode, id)
 		if err != nil {
 			return nil, err
