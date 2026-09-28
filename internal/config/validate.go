@@ -351,6 +351,7 @@ func validateAI(c *Config) error {
 // enrolled task, and only the classification-only tasks may be enrolled;
 // the confidence threshold must lie in (0,1]. A disabled section stays
 // valid with defaults (endpoint and threshold are filled by applyDefaults).
+// T46: jev_only_tasks additionally passes validateJevOnlyTasks.
 func validateJev(c *Config) error {
 	j := c.AI.Jev
 	// An empty endpoint is only acceptable while the prefilter is
@@ -370,6 +371,13 @@ func validateJev(c *Config) error {
 			return fmt.Errorf("ai.jev.tasks: %q is not a jev-compatible task (allowed: message_classification, link_detection, contact_extraction)", t)
 		}
 	}
+	// T46: jev_only_tasks must name jev-compatible tasks and only enrolled
+	// ones — an unenrolled entry would be a silent no-op the day the
+	// prefilter is enabled, and a typo would silently keep the LLM
+	// fallback the owner meant to switch off.
+	if err := validateJevOnlyTasks(j); err != nil {
+		return err
+	}
 	if !j.Enabled {
 		return nil
 	}
@@ -381,6 +389,27 @@ func validateJev(c *Config) error {
 	}
 	if j.ConfidenceThreshold <= 0 || j.ConfidenceThreshold > 1 {
 		return fmt.Errorf("ai.jev.confidence_threshold %v: must be in (0,1]", j.ConfidenceThreshold)
+	}
+	return nil
+}
+
+// validateJevOnlyTasks checks [ai.jev].jev_only_tasks (T46): allowed values
+// mirror ai.jev.tasks and every entry must be enrolled there.
+func validateJevOnlyTasks(j AIJev) error {
+	if len(j.JevOnlyTasks) == 0 {
+		return nil
+	}
+	enrolled := make(map[string]bool, len(j.Tasks))
+	for _, t := range j.Tasks {
+		enrolled[t] = true
+	}
+	for _, t := range j.JevOnlyTasks {
+		switch {
+		case t != "message_classification" && t != "link_detection" && t != "contact_extraction":
+			return fmt.Errorf("ai.jev.jev_only_tasks: %q is not a jev-compatible task (allowed: message_classification, link_detection, contact_extraction)", t)
+		case !enrolled[t]:
+			return fmt.Errorf("ai.jev.jev_only_tasks: %q is not enrolled in ai.jev.tasks", t)
+		}
 	}
 	return nil
 }

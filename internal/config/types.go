@@ -150,6 +150,15 @@ type AIJev struct {
 	// classification-only tasks: message_classification,
 	// link_detection, contact_extraction.
 	Tasks []string `toml:"tasks"`
+	// JevOnlyTasks (T46) lists enrolled tasks where the Jev verdict is
+	// FINAL: when the prefilter cannot decide (low confidence, input
+	// outside its competence), is unavailable or returns a schema-invalid
+	// verdict, the run routes to human review instead of escalating to the
+	// LLM. Allowed values mirror Tasks and every entry must also be
+	// enrolled in Tasks. An empty list (the default, never auto-filled)
+	// keeps the T33 full-AI behavior: undecided outcomes escalate to the
+	// LLM.
+	JevOnlyTasks []string `toml:"jev_only_tasks"`
 }
 
 // AIProvider is one LLM API endpoint (one of the three dialects).

@@ -131,6 +131,16 @@
                                         # Вердикты Jev проходят ту же строгую schema-валидацию,
                                         # детерминированные post-checks и пишутся в ledger с
                                         # Model="jev", Source="jev" (LLM-решения: Source="llm").
+# jev_only_tasks = ["message_classification", "link_detection", "contact_extraction"]
+                                        # T46: задачи, где вердикт Jev ФИНАЛЬНЫЙ — без эскалации на LLM.
+                                        # Если Jev не решил (низкая confidence, задача вне его
+                                        # компетенции, эндпоинт недоступен, schema-invalid ответ),
+                                        # прогон завершается needs_human-вердиктом на проверку
+                                        # человеку (needs_human_reason="jev_undecided" или
+                                        # "schema_invalid"), LLM не вызывается. Значения должны
+                                        # совпадать с разрешёнными и быть зачислены в tasks.
+                                        # Пусто (по умолчанию, не автозаполняется) = режим full AI:
+                                        # нерешённые исходы эскалируют на LLM, как в T33.
 
 [features]
 # resume_visibility = false
