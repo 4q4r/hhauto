@@ -43,6 +43,22 @@ const (
 // competence (not a failure — no warning, no error counter).
 var errJevUndecided = errors.New("jev: task input is outside jev competence")
 
+// jevCompatibleTasks is the classification-only task set the prefilter can
+// serve (T33); shared by solver enrollment and the T46 Jev-only routing
+// gate in runner.go.
+var jevCompatibleTasks = map[TaskName]struct{}{
+	TaskClassification: {},
+	TaskLinkDetection:  {},
+	TaskContactExtract: {},
+}
+
+// isJevCompatible reports whether the task can be served by the Jev
+// prefilter.
+func isJevCompatible(t TaskName) bool {
+	_, ok := jevCompatibleTasks[t]
+	return ok
+}
+
 // Classification option sets. MUST stay in lockstep with the enums in
 // internal/ai/schemas/message_classification.json, link_detection.json and
 // contact_extraction.json.
@@ -86,12 +102,11 @@ func NewJevSolver(client *JevClient, threshold float64, tasks []TaskName, log *s
 		log:       log,
 	}
 	for _, t := range tasks {
-		switch t {
-		case TaskClassification, TaskLinkDetection, TaskContactExtract:
+		if isJevCompatible(t) {
 			s.tasks[t] = struct{}{}
-		default:
-			return nil, fmt.Errorf("jev: task %q is not jev-compatible", t)
+			continue
 		}
+		return nil, fmt.Errorf("jev: task %q is not jev-compatible", t)
 	}
 	return s, nil
 }

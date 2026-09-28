@@ -36,6 +36,7 @@ const (
 	reasonGrayBand        = "gray_band"
 	reasonNumberNotInSrc  = "number_not_in_sources"
 	reasonForbiddenTopic  = "forbidden_topic_no_fact"
+	reasonJevUndecided    = "jev_undecided" // T46: jev-only task the prefilter could not decide
 )
 
 // LedgerStore is the minimal audit-trail contract; Wave 3 adapts it to the
@@ -107,7 +108,11 @@ type runner struct {
 	budget    *budgetGuard
 	budgetCfg BudgetConfig
 	jev       *JevSolver // optional prefilter; nil = full-AI mode (T33)
-	now       func() time.Time
+	// jevOnly (T46) lists tasks where the Jev verdict is FINAL: undecided
+	// or failed prefilter outcomes synthesize a needs_human review verdict
+	// instead of escalating to the LLM. nil/empty = full-AI escalation.
+	jevOnly map[TaskName]struct{}
+	now     func() time.Time
 }
 
 // jev constants for prefilter-sourced decisions: Model marks the System-One
@@ -124,6 +129,26 @@ const (
 func WithJev(s *JevSolver) RunnerOption {
 	return func(r *runner) error {
 		r.jev = s
+		return nil
+	}
+}
+
+// WithJevOnly marks tasks where the Jev prefilter verdict is FINAL (T46):
+// when the prefilter cannot decide (low confidence, input outside its
+// competence), is unavailable or returns a schema-invalid verdict, the run
+// ends as a synthetic needs_human review verdict instead of escalating to
+// the LLM — classification tasks never fall back to the LLM in this mode.
+// Only jev-compatible tasks are allowed (fail fast); an empty list keeps
+// the T33 full-AI escalation for every task.
+func WithJevOnly(tasks []TaskName) RunnerOption {
+	return func(r *runner) error {
+		r.jevOnly = make(map[TaskName]struct{}, len(tasks))
+		for _, t := range tasks {
+			if !isJevCompatible(t) {
+				return fmt.Errorf("ai: jev_only task %q is not jev-compatible", t)
+			}
+			r.jevOnly[t] = struct{}{}
+		}
 		return nil
 	}
 }
@@ -388,20 +413,37 @@ func (r *runner) run(ctx context.Context, accountID, entityType, entityID, runID
 // unavailable or invalid); done=true is terminal — including a record
 // failure, where the verdict is returned alongside the error (audit gap
 // visible, never silent) exactly like the main pipeline.
+//
+// T46: for jev_only tasks every escalation outcome is terminal too — the
+// run synthesizes a needs_human review verdict (reason jev_undecided or
+// schema_invalid) instead of escalating; the LLM pipeline is never reached.
 func (r *runner) jevRun(ctx context.Context, task TaskName, accountID, entityType, entityID, runID string, inputJSON []byte) (json.RawMessage, Decision, bool, error) {
 	start := r.now()
+	_, only := r.jevOnly[task] // T46: Jev is the final verdict for this task
 	verdict, conf, err := r.jev.Solve(ctx, task, json.RawMessage(inputJSON))
 	if err != nil {
+		if only {
+			r.log.Warn("ai: jev prefilter failed; jev-only task routes to review", "task", string(task), "err", err)
+			return r.jevOnlyUndecided(task, accountID, entityType, entityID, runID, inputJSON, start, reasonJevUndecided)
+		}
 		r.log.Warn("ai: jev prefilter failed; escalating to llm", "task", string(task), "err", err)
 		return nil, Decision{}, false, nil
 	}
 	if verdict == nil {
+		if only {
+			r.log.Info("ai: jev undecided; jev-only task routes to review", "task", string(task), "confidence", conf)
+			return r.jevOnlyUndecided(task, accountID, entityType, entityID, runID, inputJSON, start, reasonJevUndecided)
+		}
 		r.log.Debug("ai: jev undecided; escalating to llm", "task", string(task), "confidence", conf)
 		return nil, Decision{}, false, nil
 	}
 	// Defense in depth: a Jev verdict must pass the same strict schema
 	// validation as an LLM verdict; a failure escalates instead of trusting.
 	if err := r.validator.validate(task, verdict); err != nil {
+		if only {
+			r.log.Warn("ai: jev verdict failed schema validation; jev-only task routes to review", "task", string(task), "err", err)
+			return r.jevOnlyUndecided(task, accountID, entityType, entityID, runID, inputJSON, start, reasonSchemaInvalid)
+		}
 		r.log.Warn("ai: jev verdict failed schema validation; escalating to llm", "task", string(task), "err", err)
 		return nil, Decision{}, false, nil
 	}
@@ -431,6 +473,37 @@ func (r *runner) jevRun(ctx context.Context, task TaskName, accountID, entityTyp
 	dec.NeedsHuman = commonBool(verdict, "needs_human")
 	dec.Injection = dec.Injection || commonBool(verdict, "injection_suspected")
 
+	if err := r.record(&dec, verdict); err != nil {
+		return verdict, dec, true, err
+	}
+	return verdict, dec, true, nil
+}
+
+// jevOnlyUndecided is the T46 terminal review path for a jev_only task: the
+// prefilter did not produce a schema-valid verdict, so the run ends as a
+// synthetic needs_human verdict — the same shape as the budget-exhausted
+// path, recorded with Source=jev (the Jev stage owns the outcome), and the
+// LLM pipeline is never reached.
+func (r *runner) jevOnlyUndecided(task TaskName, accountID, entityType, entityID, runID string, inputJSON []byte, start time.Time, reason string) (json.RawMessage, Decision, bool, error) {
+	flagged, _ := r.guard.Inspect(string(inputJSON))
+	verdict := syntheticVerdict(reason, flagged)
+	dec := Decision{
+		ID:          ulid.Make().String(),
+		CreatedAt:   r.now().UTC(),
+		AccountID:   accountID,
+		Task:        task,
+		EntityType:  entityType,
+		EntityID:    entityID,
+		RunID:       runID,
+		Model:       jevModelName,
+		Source:      SourceJev,
+		PromptVer:   jevPromptVer,
+		InputDigest: inputDigest(inputJSON),
+		Injection:   flagged,
+		NeedsHuman:  true,
+		Outcome:     "pending",
+		LatencyMS:   r.now().Sub(start).Milliseconds(),
+	}
 	if err := r.record(&dec, verdict); err != nil {
 		return verdict, dec, true, err
 	}

@@ -93,6 +93,15 @@ func buildAI(cfg *config.Config, db *store.DB, log *slog.Logger, forceImproveTas
 			return nil, fmt.Errorf("ai: jev: %w", err)
 		}
 		opts = append(opts, ai.WithJev(solver))
+		// T46: jev_only_tasks — tasks where Jev is the final verdict (no
+		// LLM escalation). An empty list keeps the T33 escalation behavior.
+		if len(cfg.AI.Jev.JevOnlyTasks) > 0 {
+			only := make([]ai.TaskName, 0, len(cfg.AI.Jev.JevOnlyTasks))
+			for _, t := range cfg.AI.Jev.JevOnlyTasks {
+				only = append(only, ai.TaskName(t))
+			}
+			opts = append(opts, ai.WithJevOnly(only))
+		}
 	}
 	runner, err := ai.New(
 		providers,
