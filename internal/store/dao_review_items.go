@@ -64,8 +64,9 @@ func (db *DB) ReviewItemsResolve(ctx context.Context, id int64, resolution strin
 	return nil
 }
 
-// reviewByID is an in-package lookup used by tests.
-func (db *DB) reviewByID(ctx context.Context, id int64) (*ReviewItem, error) {
+// ReviewItemsGet returns one item by id regardless of status (the resolve
+// flow checks the status before acting), or nil when the id is unknown.
+func (db *DB) ReviewItemsGet(ctx context.Context, id int64) (*ReviewItem, error) {
 	rs := db.conn.QueryRowContext(ctx, `
 		SELECT id, account_id, kind, reason, payload, status, resolution, created_at, resolved_at
 		FROM review_items WHERE id = ?`, id)
@@ -74,7 +75,7 @@ func (db *DB) reviewByID(ctx context.Context, id int64) (*ReviewItem, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("store: reviewByID: %w", err)
+		return nil, fmt.Errorf("store: ReviewItemsGet: %w", err)
 	}
 	return r, nil
 }

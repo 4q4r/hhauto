@@ -226,7 +226,7 @@ func (im *Improver) applyPendingViaEditor(ctx context.Context, accountID, cloneH
 		}
 		im.parkReview(ctx, accountID, ReviewKindImproveNeedsHuman,
 			"improve plan parked: the browser editor is unavailable, apply manually ("+err.Error()+")",
-			cloneHash, "", json.RawMessage(reviewPlannedValues(plan)))
+			reviewPayload(cloneHash, "", json.RawMessage(reviewPlannedValues(plan))))
 		return nil
 	}
 	failed := make(map[string]string, len(res.Failed))
@@ -473,8 +473,12 @@ func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, sp
 		return nil, StatusError, "decode verdict failed", 0
 	}
 	if out.NeedsHuman {
+		// The AI proposal rides the parked item (best effort): it is the
+		// "стало" the human decides on, and the value a later resolve
+		// apply re-validates against the live resume (T54).
+		proposal, _ := slotValue(spec, verdict)
 		id := im.parkReview(ctx, accountID, ReviewKindImproveNeedsHuman,
-			"improve verdict needs human: "+out.Reason, cloneHash, spec.ID, tg.current)
+			"improve verdict needs human: "+out.Reason, needReviewPayload(cloneHash, spec, tg, proposal))
 		return nil, StatusNeedsHuman, out.Reason, id
 	}
 	if out.Unchanged {
@@ -495,7 +499,7 @@ func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, sp
 	for _, f := range im.opt.Cfg.AlwaysAsk {
 		if f == spec.ID {
 			id := im.parkReview(ctx, accountID, ReviewKindImproveAlwaysAsk,
-				"improved "+spec.Label+" waits for owner approval", cloneHash, spec.ID, validated)
+				"improved "+spec.Label+" waits for owner approval", reviewPayload(cloneHash, spec.ID, validated))
 			return validated, StatusAlwaysAsk, "", id
 		}
 	}
@@ -505,13 +509,13 @@ func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, sp
 // parkReview records one review item (best effort: a broken reviewer must
 // not flip the field's status — the artifact already says needs_human /
 // always_ask).
-func (im *Improver) parkReview(ctx context.Context, accountID, kind, reason, cloneHash, field string, value json.RawMessage) int64 {
+func (im *Improver) parkReview(ctx context.Context, accountID, kind, reason, payload string) int64 {
 	if im.opt.Review == nil {
 		return 0
 	}
-	id, err := im.opt.Review.Add(ctx, accountID, kind, reason, reviewPayload(cloneHash, field, value))
+	id, err := im.opt.Review.Add(ctx, accountID, kind, reason, payload)
 	if err != nil {
-		im.opt.Log.Warn("autoclone: review parking failed", "field", field, "err", err)
+		im.opt.Log.Warn("autoclone: review parking failed", "err", err)
 		return 0
 	}
 	return id
@@ -547,6 +551,22 @@ func decodeImproveVerdict(verdict json.RawMessage) (improveVerdictShape, bool) {
 
 func reviewPayload(cloneHash, field string, value json.RawMessage) string {
 	b, _ := json.Marshal(map[string]any{"clone": cloneHash, "field": field, "proposed": value})
+	return string(b)
+}
+
+// needReviewPayload is the needs_human parking payload (T54): the full
+// resolution input — resume hash, field, locator, item index, было
+// (current) and стало (the AI proposal, nil when the verdict carried no
+// value slot).
+func needReviewPayload(cloneHash string, spec FieldSpec, tg target, proposal any) string {
+	b, _ := json.Marshal(map[string]any{
+		"clone":   cloneHash,
+		"field":   spec.ID,
+		"locator": tg.locator,
+		"item":    tg.item,
+		"before":  tg.current,
+		"after":   proposal,
+	})
 	return string(b)
 }
 

@@ -237,14 +237,16 @@ func testStore(t *testing.T) *store.DB {
 }
 
 type fakeReviewer struct {
-	mu    sync.Mutex
-	kinds []string
+	mu       sync.Mutex
+	kinds    []string
+	payloads []string
 }
 
-func (r *fakeReviewer) Add(_ context.Context, _, kind, _, _ string) (int64, error) {
+func (r *fakeReviewer) Add(_ context.Context, _, kind, _, payload string) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.kinds = append(r.kinds, kind)
+	r.payloads = append(r.payloads, payload)
 	return int64(len(r.kinds)), nil
 }
 

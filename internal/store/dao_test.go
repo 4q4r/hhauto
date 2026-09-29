@@ -635,11 +635,21 @@ func TestReviewItems(t *testing.T) {
 		t.Fatalf("open after resolve must be empty, got %+v", open)
 	}
 
-	resolved, err := db.reviewByID(ctx, id)
+	// T54: the by-id lookup is public (the CLI resolve flow checks the
+	// item's status before applying) and sees closed items too.
+	missing, err := db.ReviewItemsGet(ctx, 404)
 	if err != nil {
-		t.Fatalf("reviewByID: %v", err)
+		t.Fatalf("ReviewItemsGet miss: %v", err)
 	}
-	if resolved.Status != "resolved" || resolved.Resolution == nil || *resolved.Resolution != "fixed prompt" || resolved.ResolvedAt == nil {
+	if missing != nil {
+		t.Fatalf("missing item = %+v, want nil", missing)
+	}
+
+	resolved, err := db.ReviewItemsGet(ctx, id)
+	if err != nil {
+		t.Fatalf("ReviewItemsGet: %v", err)
+	}
+	if resolved == nil || resolved.Status != "resolved" || resolved.Resolution == nil || *resolved.Resolution != "fixed prompt" || resolved.ResolvedAt == nil {
 		t.Fatalf("resolved item mismatch: %+v", resolved)
 	}
 }

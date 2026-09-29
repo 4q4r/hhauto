@@ -20,6 +20,7 @@ import (
 
 	"hhauto/internal/browser"
 	"hhauto/internal/config"
+	"hhauto/internal/features/autoclone"
 	"hhauto/internal/features/emplrating"
 	"hhauto/internal/features/featurekit"
 	"hhauto/internal/features/relevance"
@@ -1141,12 +1142,16 @@ func newReviewListCmd() *cobra.Command {
 			}
 			table := make([][]string, 0, len(rows))
 			for _, r := range rows {
+				resume, field := "", ""
+				if np := parseNeedPayload(r.Payload); np != nil {
+					resume, field = np.Clone, np.Field
+				}
 				table = append(table, []string{
 					strconv.FormatInt(r.ID, 10), r.AccountID, r.Kind,
-					clip(r.Reason, 60), r.CreatedAt.Format("01-02 15:04"),
+					resume, field, clip(r.Reason, 60), r.CreatedAt.Format("01-02 15:04"),
 				})
 			}
-			o.printTable([]string{"ID", "ACCOUNT", "KIND", "REASON", "CREATED"}, table)
+			o.printTable([]string{"ID", "ACCOUNT", "KIND", "RESUME", "FIELD", "REASON", "CREATED"}, table)
 			if len(rows) == 0 {
 				o.println("Открытых ревью нет.")
 			}
@@ -1187,6 +1192,11 @@ func newReviewShowCmd() *cobra.Command {
 			o := outFor(cmd)
 			o.printf("ID: %d  аккаунт: %s  вид: %s  статус: %s\n", found.ID, found.AccountID, found.Kind, found.Status)
 			o.println("Причина:", found.Reason)
+			if np := parseNeedPayload(found.Payload); np != nil {
+				o.printf("Резюме: %s  поле: %s  locator: %s\n", np.Clone, np.Field, np.Locator)
+				o.println("Было:", clip(string(np.Before), 2000))
+				o.println("Стало (AI):", clip(string(np.After), 2000))
+			}
 			buf := &strings.Builder{}
 			if err := indentJSON(found.Payload, buf); err == nil {
 				o.println("Payload:")
@@ -1203,17 +1213,26 @@ func newReviewShowCmd() *cobra.Command {
 
 func newReviewResolveCmd() *cobra.Command {
 	var (
-		account string
-		note    string
+		account  string
+		note     string
+		decision string
+		value    string
+		dryRun   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "resolve ID",
-		Short: "Close a review item as resolved",
+		Short: "Close a review item; --decision apply|discard resolves a parked needs_human verdict",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
 				return exitErr("ID должен быть числом")
+			}
+			if decision != "" && decision != "apply" && decision != "discard" {
+				return exitErr("--decision должен быть apply или discard")
+			}
+			if value != "" && decision != "apply" {
+				return exitErr("--value допустим только с --decision apply")
 			}
 			opts := buildOpts()
 			opts.Account = account
@@ -1223,18 +1242,175 @@ func newReviewResolveCmd() *cobra.Command {
 				return exitErr("wiring: %v", err)
 			}
 			defer func() { _ = rt.Close() }() // command teardown
-			if note == "" {
-				note = "resolved via cli"
-			}
-			if err := review.New(rt.Webhooks, rt.Log).Resolve(ctx, rt.DB, id, note); err != nil {
-				return exitErr("%v", err)
-			}
-			outFor(cmd).printf("Ревью %d закрыто.\n", id)
-			return nil
+			dry := dryRun || rt.Cfg.General.DryRun
+			return runReviewResolve(ctx, rt, outFor(cmd), id, resolveRequest{
+				Decision: decision, Value: value, Note: note, DryRun: dry,
+			})
 		},
 	}
 	cmd.Flags().StringVar(&note, "note", "", "resolution note")
+	cmd.Flags().StringVar(&decision, "decision", "", "apply | discard — the human decision on a needs_human verdict")
+	cmd.Flags().StringVar(&value, "value", "", "apply this text instead of the AI proposal (with --decision apply)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "validate the value and report without applying")
 	return cmd
+}
+
+// resolveRequest is the parsed decision input of one review resolve.
+type resolveRequest struct {
+	Decision string
+	Value    string
+	Note     string
+	DryRun   bool
+}
+
+// runReviewResolve closes one review item. Without --decision it is the
+// plain close (the legacy behavior). apply/discard implement the T54
+// needs_human resolution: apply pushes the value — the human's --value
+// text or the parked AI proposal — through the improve layer's apply
+// surface, discard closes without touching the resume. An apply-layer
+// failure returns as-is: the item stays open for a corrected retry.
+func runReviewResolve(ctx context.Context, rt *Runtime, o out, id int64, req resolveRequest) error {
+	item, err := rt.DB.ReviewItemsGet(ctx, id)
+	if err != nil {
+		return exitErr("%v", err)
+	}
+	if item == nil {
+		return exitErr("ревью %d не найдено", id)
+	}
+	if item.Status != "open" {
+		return exitErr("ревью %d уже закрыто (статус %s) — повторное решение не требуется", id, item.Status)
+	}
+	switch req.Decision {
+	case "":
+		if req.Note == "" {
+			req.Note = "resolved via cli"
+		}
+		if err := review.New(rt.Webhooks, rt.Log).Resolve(ctx, rt.DB, id, req.Note); err != nil {
+			return exitErr("%v", err)
+		}
+		o.printf("Ревью %d закрыто.\n", id)
+	case "discard":
+		resolution := "human: discard"
+		if req.Note != "" {
+			resolution += " (" + req.Note + ")"
+		}
+		if err := review.New(rt.Webhooks, rt.Log).Resolve(ctx, rt.DB, id, resolution); err != nil {
+			return exitErr("%v", err)
+		}
+		if flags.json {
+			return o.printJSON(map[string]any{"id": id, "decision": "discard", "status": "resolved", "resolution": resolution})
+		}
+		o.printf("Ревью %d отклонено — AI-предложение не применялось.\n", id)
+	default: // apply
+		resolution, err := applyNeedResolution(ctx, rt, o, item, req)
+		if err != nil {
+			return err // the item stays open: nothing was applied
+		}
+		if resolution == "" {
+			return nil // dry-run: validated and reported, nothing closed
+		}
+		if err := review.New(rt.Webhooks, rt.Log).Resolve(ctx, rt.DB, id, resolution); err != nil {
+			return exitErr("%v", err)
+		}
+		if flags.json {
+			return o.printJSON(map[string]any{"id": id, "decision": "apply", "status": "resolved", "resolution": resolution})
+		}
+		o.printf("Решение применено — ревью %d закрыто (%s).\n", id, resolution)
+	}
+	return nil
+}
+
+// applyNeedResolution lands the human-approved value on the resume and
+// returns the audit resolution note ("" = dry-run: the value validated,
+// nothing was applied). The same multi-instance lock as the resume
+// improve command guards the apply against a concurrent improver.
+func applyNeedResolution(ctx context.Context, rt *Runtime, o out, item *store.ReviewItem, req resolveRequest) (string, error) {
+	np := parseNeedPayload(item.Payload)
+	if np == nil {
+		return "", exitErr("apply допустим только для needs_human-вердиктов improve (у ревью %d другой payload)", item.ID)
+	}
+	spec, ok := autoclone.Spec(np.Field)
+	if !ok {
+		return "", exitErr("неизвестное поле %q в ревью %d", np.Field, item.ID)
+	}
+	val, vsrc, err := resolveApplyValue(req.Value, np.After)
+	if err != nil {
+		return "", err
+	}
+	unlock, err := acquireTaskLock(rt.Cfg.General.DataDir, "resume_improve")
+	if err != nil {
+		return "", exitErr("%v", err)
+	}
+	defer unlock()
+	applier, err := buildNeedApplier(rt, item.AccountID)
+	if err != nil {
+		return "", exitErr("%v", err)
+	}
+	applier.DryRun = req.DryRun
+	if err := applier.ApplyValue(ctx, np.Clone, spec, np.Item, np.Locator, val); err != nil {
+		return "", exitErr("apply не прошёл, ревью осталось открытым: %v", err)
+	}
+	if req.DryRun {
+		o.printf("dry-run: значение для %s (%s) прошло валидацию, к применению не отправлялось; ревью %d осталось открытым.\n",
+			np.Field, vsrc, item.ID)
+		return "", nil
+	}
+	resolution := "human: apply (" + vsrc + ")"
+	if req.Note != "" {
+		resolution += " (" + req.Note + ")"
+	}
+	return resolution, nil
+}
+
+// resolveApplyValue picks the value an apply decision lands: the human's
+// --value text when given (parsed as JSON when it parses, a plain string
+// otherwise), else the parked AI proposal. vsrc feeds the audit note.
+func resolveApplyValue(flagValue string, after json.RawMessage) (v any, vsrc string, err error) {
+	if flagValue != "" {
+		if jerr := json.Unmarshal([]byte(flagValue), &v); jerr != nil {
+			v = flagValue
+		}
+		if list, ok := v.([]any); ok {
+			strs := make([]string, 0, len(list))
+			for _, it := range list {
+				s, isStr := it.(string)
+				if !isStr {
+					return nil, "", fmt.Errorf("--value: список должен содержать строки")
+				}
+				strs = append(strs, s)
+			}
+			v = strs
+		}
+		return v, "owner value", nil
+	}
+	if len(after) > 0 && string(after) != "null" {
+		if jerr := json.Unmarshal(after, &v); jerr != nil {
+			return nil, "", fmt.Errorf("AI-предложение в ревью не читается: %v", jerr)
+		}
+		return v, "ai proposal", nil
+	}
+	return nil, "", fmt.Errorf("в ревью нет AI-предложения — передайте свой текст в --value")
+}
+
+// needPayload is the parked needs_human verdict payload (autoclone T54):
+// the full было/стало of one field target.
+type needPayload struct {
+	Clone   string          `json:"clone"`
+	Field   string          `json:"field"`
+	Locator string          `json:"locator"`
+	Item    int             `json:"item"`
+	Before  json.RawMessage `json:"before"`
+	After   json.RawMessage `json:"after"`
+}
+
+// parseNeedPayload decodes an improve needs_human payload; nil for other
+// kinds or shapes.
+func parseNeedPayload(raw string) *needPayload {
+	var p needPayload
+	if json.Unmarshal([]byte(raw), &p) != nil || p.Clone == "" || p.Field == "" {
+		return nil
+	}
+	return &p
 }
 
 func newReviewIgnoreCmd() *cobra.Command {
