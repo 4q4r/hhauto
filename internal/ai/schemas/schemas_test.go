@@ -8,11 +8,13 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-// allNames lists the eight embedded task schemas; the set must match
-// ai.TaskName exactly.
+// allNames lists the embedded task schemas; the set must match ai.TaskName
+// exactly (resume_improve is per-field and intentionally absent — T29; the
+// setka pair rides the standard pipeline — T61).
 var allNames = []string{
 	"vacancy_scoring", "cover_letter", "chat_reply", "test_answer",
 	"warmup_ping", "message_classification", "contact_extraction", "link_detection",
+	"setka_classify", "setka_personalize",
 }
 
 // commonFields must be required by every task schema.

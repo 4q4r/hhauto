@@ -49,6 +49,7 @@ func providerKeysFailFast(cfg *config.Config) error {
 
 func buildAI(cfg *config.Config, db *store.DB, log *slog.Logger, forceImproveTask bool) (ai.Runner, error) {
 	injectImproveTask(cfg, forceImproveTask)
+	injectSetkaTasks(cfg)
 	if len(cfg.AI.Tasks) == 0 {
 		return nil, nil
 	}
@@ -178,4 +179,31 @@ func (b aiLedgerBridge) SumTokensDay(day string) (int, float64) {
 		return 0, 0
 	}
 	return tokens, usd
+}
+
+// injectSetkaTasks (T61) ensures the setka_classify / setka_personalize
+// tasks exist when [features.setka] is enabled: the model profiles are
+// declared once in the setka section (single source of truth); an explicit
+// [ai.tasks.*] entry wins. prompt_file overrides ride along like any task
+// file override (the PromptRegistry fails fast on an unreadable file).
+func injectSetkaTasks(cfg *config.Config) {
+	s := cfg.Features.Setka
+	if !s.Enabled {
+		return
+	}
+	if cfg.AI.Tasks == nil {
+		cfg.AI.Tasks = map[string]config.AITask{}
+	}
+	if _, ok := cfg.AI.Tasks[string(ai.TaskSetkaClassify)]; !ok && s.Classify.ModelProfile != "" {
+		cfg.AI.Tasks[string(ai.TaskSetkaClassify)] = config.AITask{
+			ModelProfile: s.Classify.ModelProfile,
+			PromptFile:   s.Classify.PromptFile,
+		}
+	}
+	if _, ok := cfg.AI.Tasks[string(ai.TaskSetkaPersonalize)]; !ok && s.Personalize.ModelProfile != "" {
+		cfg.AI.Tasks[string(ai.TaskSetkaPersonalize)] = config.AITask{
+			ModelProfile: s.Personalize.ModelProfile,
+			PromptFile:   s.Personalize.PromptFile,
+		}
+	}
 }

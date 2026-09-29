@@ -11,7 +11,7 @@ package schemas
 
 import "embed"
 
-// FS holds the eight task schemas (vacancy_scoring.json, ...).
+// FS holds the task schemas (vacancy_scoring.json, ...).
 //
 //go:embed *.json
 var FS embed.FS

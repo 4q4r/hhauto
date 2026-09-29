@@ -42,6 +42,7 @@ import (
 	"hhauto/internal/features/featurekit"
 	"hhauto/internal/features/kit11"
 	"hhauto/internal/features/multiapply"
+	setkafeat "hhauto/internal/features/setka"
 	"hhauto/internal/features/testsolve"
 	"hhauto/internal/features/warmup"
 	"hhauto/internal/hhapi"
@@ -51,6 +52,7 @@ import (
 	"hhauto/internal/queue"
 	"hhauto/internal/review"
 	"hhauto/internal/scheduler"
+	setkaclient "hhauto/internal/setka"
 	"hhauto/internal/store"
 	"hhauto/internal/webhook"
 )
@@ -370,9 +372,24 @@ func (rt *Runtime) buildFeatures() error {
 		Log: rt.Log, Dialer: dialerFor,
 	}
 	feats.Add(mail)
+	sk := &setkafeat.Feature{
+		Cfg: *cfg, DB: rt.DB, AI: rt.AI,
+		ClientFor: func(_ context.Context, _ string) (setkaclient.SetkaClient, error) {
+			return setkaclient.New(cfg.Features.Setka.Endpoints)
+		},
+		VacancyFor: func(ctx context.Context, accountID string, vacancyID int64) (*hhapi.Vacancy, error) {
+			api, err := rt.APIFor(accountID)
+			if err != nil {
+				return nil, err
+			}
+			return api.VacancyCard(ctx, vacancyID)
+		},
+		Notify: rt.Webhooks, Review: reviewer, Log: rt.Log,
+	}
+	feats.Add(sk)
 
 	rt.Feats = feats
-	rt.registerFeatureHandlers(lift, apply, chat, solver, cont, warm, mail)
+	rt.registerFeatureHandlers(lift, apply, chat, solver, cont, warm, mail, sk)
 	return nil
 }
 
@@ -383,7 +400,7 @@ func (rt *Runtime) buildFeatures() error {
 // accepted for the contract (features hold their own deps).
 func (rt *Runtime) registerFeatureHandlers(lift *autolift.Feature, apply *multiapply.Feature,
 	chat *chatops.Feature, solver *testsolve.Solver, cont *contacts.Feature,
-	warm *warmup.Feature, mail *emaildup.Feature) {
+	warm *warmup.Feature, mail *emaildup.Feature, sk *setkafeat.Feature) {
 	set := func(kind queue.TaskKind, fn engine.TaskHandler) {
 		rt.handlers[kind] = fn
 	}
@@ -422,6 +439,16 @@ func (rt *Runtime) registerFeatureHandlers(lift *autolift.Feature, apply *multia
 	if rt.Cfg.Features.EmailDupEnabled {
 		set(queue.KindSendEmail, func(ctx context.Context, _ *engine.TaskContext, task queue.Task) error {
 			return mail.HandleSendEmail(ctx, task)
+		})
+	}
+	if rt.Cfg.Features.Setka.Enabled {
+		set(queue.KindSetkaDM, func(ctx context.Context, _ *engine.TaskContext, task queue.Task) error {
+			switch task.Payload.(type) {
+			case setkafeat.ScanPayload:
+				return sk.HandleScan(ctx, task)
+			default:
+				return sk.HandleDM(ctx, task)
+			}
 		})
 	}
 }
@@ -496,6 +523,14 @@ func scheduleFactory(name string, rt *Runtime) engine.TaskFactory {
 				AccountID: accountID, Kind: queue.KindWarmupPing,
 				Priority: queue.PrioWarmup, DedupKey: "warmup-scan",
 				Payload: warmup.ScanPayload{AccountID: accountID},
+			}, nil
+		}
+	case name == "setka.scan":
+		return func(_ context.Context, accountID string) (queue.Task, error) {
+			return queue.Task{
+				AccountID: accountID, Kind: queue.KindSetkaDM,
+				Priority: queue.PrioSetka, DedupKey: "setka-scan",
+				Payload: setkafeat.ScanPayload{AccountID: accountID},
 			}, nil
 		}
 	case len(name) > 5 && name[:5] == "runs.":

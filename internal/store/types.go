@@ -201,6 +201,26 @@ type ReviewItem struct {
 	ResolvedAt *time.Time
 }
 
+// SetkaDM is one row of the setka_dms ledger (T61): the idempotency record,
+// the limit counters source and the approve-mode review binding.
+type SetkaDM struct {
+	ID                  int64 // assigned on insert
+	AccountID           string
+	ApplicationDedupKey string
+	VacancyID           int64
+	EmployerID          int64
+	PersonID            string
+	PersonName          string
+	Company             string
+	Mode                string // auto|approve
+	Status              string // queued_review|sent|skipped
+	Text                string
+	ReviewID            *int64
+	Reason              *string
+	CreatedAt           time.Time // filled on insert
+	SentAt              *time.Time
+}
+
 // EmployerRating is a cached employer rating snapshot for filtering.
 type EmployerRating struct {
 	EmployerID   int64

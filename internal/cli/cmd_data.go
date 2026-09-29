@@ -24,12 +24,15 @@ import (
 	"hhauto/internal/features/emplrating"
 	"hhauto/internal/features/featurekit"
 	"hhauto/internal/features/relevance"
+	setkafeat "hhauto/internal/features/setka"
 	"hhauto/internal/features/testsolve"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/profile"
 	"hhauto/internal/queue"
 	"hhauto/internal/review"
+	setkaclient "hhauto/internal/setka"
 	"hhauto/internal/store"
+	"hhauto/internal/webhook"
 )
 
 func newVacanciesCmd() *cobra.Command {
@@ -1291,6 +1294,12 @@ func runReviewResolve(ctx context.Context, rt *Runtime, o out, id int64, req res
 		o.printf("Ревью %d закрыто.\n", id)
 	case "discard":
 		resolution := "human: discard"
+		if item.Kind == setkafeat.ReviewKindSetkaDM {
+			if err := discardSetkaDM(ctx, rt, item); err != nil {
+				return err
+			}
+			resolution = "human: discard (setka dm)"
+		}
 		if req.Note != "" {
 			resolution += " (" + req.Note + ")"
 		}
@@ -1302,7 +1311,12 @@ func runReviewResolve(ctx context.Context, rt *Runtime, o out, id int64, req res
 		}
 		o.printf("Ревью %d отклонено — AI-предложение не применялось.\n", id)
 	default: // apply
-		resolution, err := applyNeedResolution(ctx, rt, o, item, req)
+		var resolution string
+		if item.Kind == setkafeat.ReviewKindSetkaDM {
+			resolution, err = applySetkaDMResolution(ctx, rt, o, item, req)
+		} else {
+			resolution, err = applyNeedResolution(ctx, rt, o, item, req)
+		}
 		if err != nil {
 			return err // the item stays open: nothing was applied
 		}
@@ -1358,6 +1372,53 @@ func applyNeedResolution(ctx context.Context, rt *Runtime, o out, item *store.Re
 	resolution := "human: apply (" + vsrc + ")"
 	if req.Note != "" {
 		resolution += " (" + req.Note + ")"
+	}
+	return resolution, nil
+}
+
+// discardSetkaDM executes the discard decision on a parked setka_dm item:
+// the ledger row flips to skipped, nothing is sent.
+func discardSetkaDM(ctx context.Context, rt *Runtime, item *store.ReviewItem) error {
+	p := setkafeat.ParseDMReviewPayload(item.Payload)
+	if p == nil {
+		return exitErr("у ревью %d неожиданный payload setka_dm", item.ID)
+	}
+	if err := setkafeat.DiscardApproved(ctx, rt.DB, p); err != nil {
+		return exitErr("%v", err)
+	}
+	return nil
+}
+
+// applySetkaDMResolution (T61) sends the parked Setka DM through the
+// configured client (approve mode). The transport endpoints come from
+// [features.setka.endpoints] — unset ones fail fast loudly and the item
+// stays open. Dry-run reports without sending.
+func applySetkaDMResolution(ctx context.Context, rt *Runtime, o out, item *store.ReviewItem, req resolveRequest) (string, error) {
+	p := setkafeat.ParseDMReviewPayload(item.Payload)
+	if p == nil {
+		return "", exitErr("apply допустим только для ревью setka_dm с корректным payload (ревью %d)", item.ID)
+	}
+	client, err := setkaclient.New(rt.Cfg.Features.Setka.Endpoints)
+	if err != nil {
+		return "", exitErr("%v", err)
+	}
+	resolution, err := setkafeat.SendApproved(ctx, client, rt.DB, req.DryRun, p)
+	if err != nil {
+		return "", exitErr("apply не прошёл, ревью осталось открытым: %v", err)
+	}
+	if req.DryRun {
+		o.printf("dry-run: ЛС для %s прошло проверки, к отправке не передавалось; ревью %d осталось открытым.\n",
+			p.PersonID, item.ID)
+		return "", nil
+	}
+	if rt.Webhooks != nil {
+		rt.Webhooks.Emit(webhook.Event{
+			Type: webhook.EvSetkaDMSent, AccountID: item.AccountID, Time: time.Now(),
+			Message: "ЛС в Сетке отправлено (подтверждено человеком)",
+			Payload: map[string]any{
+				"person_id": p.PersonID, "vacancy_id": p.VacancyID, "company": p.Company,
+			},
+		})
 	}
 	return resolution, nil
 }

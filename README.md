@@ -100,7 +100,7 @@
 flowchart LR
     U["Оператор"] --> CLI["cli<br/>cobra · --dry-run · --json"]
     CLI --> ENG["engine<br/>супервизоры аккаунтов:<br/>аккаунты параллельно,<br/>внутри аккаунта последовательно"]
-    ENG --> FEAT["features<br/>autolift · multiapply · chatops · testsolve<br/>interview · contacts · warmup · emaildup"]
+    ENG --> FEAT["features<br/>autolift · multiapply · chatops · testsolve<br/>interview · contacts · warmup · emaildup · setka"]
     FEAT --> API["hhapi<br/>веб-API hh.ru по кукам<br/>XSRF · retry/backoff · лимитеры<br/>прокси fail-closed"]
     FEAT --> AI["ai<br/>Runner: промпты · guard · кэш · бюджет"]
     FEAT --> STORE[("store<br/>SQLite WAL · expand-миграции")]
@@ -177,7 +177,7 @@ TOML, по умолчанию `~/.config/hhauto/hhauto.toml` (переопред
 | `[proxy.<id>]` | `socks5/http/https`, `pass_env`; аккаунты могут шарить прокси |
 | `[accounts.<id>]` | куки, UA, `proxy_ref`, rps, `daily_apply_cap` (200), `captcha_chain` |
 | `[ai]` | бюджеты, `[ai.providers]` (3 диалекта), `[ai.models]`, `[ai.tasks]`, `[ai.pricing]` |
-| `[features.*]` | тумблеры фич: `auto_lift`, `multiapply`, `chatops`, `testsolve`, `interview`, `contacts`, `emaildup`, `relevance`, `resume_visibility` |
+| `[features.*]` | тумблеры фич: `auto_lift`, `multiapply`, `chatops`, `testsolve`, `interview`, `contacts`, `emaildup`, `relevance`, `setka` (T61: авто-ЛС в Сетке после отклика, транспорт ждёт живую разведку), `resume_visibility` |
 | `[pacing]` | окно активности, режим `adaptive/uniform/burst`, ночные паузы |
 | `[webhook.<id>]` | `preset=raw/telegram/discord`, HMAC-секрет, события, retry |
 | `[runs.<id>]` | профили мультиотклика: запрос на языке запросов hh (AND/OR/NOT/кавычки/скобки, поля NAME:/COMPANY_NAME:/DESCRIPTION:/!ID:/!COMPANY_ID:), окна, полное покрытие нативных фильтров (роли, метро, форматы работы, метки, сортировка), ЧС/БС, рейтинг, письма |
@@ -269,9 +269,10 @@ model_profile = "scorer"
 cache_ttl_hours = 24
 ```
 
-Восемь задач со строгими JSON-схемами: `vacancy_scoring`, `cover_letter`,
+Задачи со строгими JSON-схемами: `vacancy_scoring`, `cover_letter`,
 `chat_reply`, `test_answer`, `warmup_ping`, `message_classification`,
-`contact_extraction`, `link_detection`. Анти-галлюцинация на контракте:
+`contact_extraction`, `link_detection`, `setka_classify`,
+`setka_personalize`. Анти-галлюцинация на контракте:
 `used_facts`/`missing_data`/`needs_human` — нет факта в резюме/profile.md,
 значит флаг человеку, а не выдумка. Недоверенные тексты (вакансии, чаты,
 тесты) идут только в user-блок со случайными ограничителями; инъекция даёт

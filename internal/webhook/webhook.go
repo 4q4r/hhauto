@@ -20,6 +20,7 @@ const (
 	EvAccountError     = "account_error"
 	EvTestSolved       = "test_solved"
 	EvContactCollected = "contact_collected"
+	EvSetkaDMSent      = "setka_dm_sent" // T61: a Setka DM went out
 )
 
 // Event is the unit of delivery.

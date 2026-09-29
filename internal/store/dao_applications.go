@@ -160,3 +160,31 @@ func (db *DB) ApplicationsGetByDedupKeyLive(ctx context.Context, dedupKey string
 	}
 	return a, nil
 }
+
+// ApplicationsAppliedDue lists the account's applied applications whose
+// applied_at falls in [from, to] (newest first) — the setka scan source
+// (T61): from bounds the lookback, to is now minus after_apply_delay.
+func (db *DB) ApplicationsAppliedDue(ctx context.Context, accountID string, from, to time.Time, limit int) ([]Application, error) {
+	rows, err := db.conn.QueryContext(ctx, `
+		SELECT id, account_id, run_id, hh_resume_id, vacancy_id, employer_id,
+		       dedup_key, status, letter, fail_reason, correlation_id, created_at, applied_at
+		FROM applications
+		WHERE account_id = ? AND status = 'applied'
+		  AND applied_at IS NOT NULL AND applied_at >= ? AND applied_at <= ?
+		ORDER BY applied_at DESC
+		LIMIT ?`, accountID, fmtTime(from), fmtTime(to), limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: ApplicationsAppliedDue: %w", err)
+	}
+	defer func() { _ = rows.Close() }() // rows fully iterated; close error is not actionable
+
+	out := make([]Application, 0)
+	for rows.Next() {
+		a, err := scanApplication(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: ApplicationsAppliedDue scan: %w", err)
+		}
+		out = append(out, *a)
+	}
+	return out, rows.Err()
+}

@@ -223,6 +223,106 @@ type Features struct {
 	Relevance        Relevance       `toml:"relevance"`
 	ResumeVisibility bool            `toml:"resume_visibility"`
 	WebsocketPush    bool            `toml:"websocket_push"`
+	Setka            Setka           `toml:"setka"`
+}
+
+// Setka mode vocabulary for [features.setka].mode (T61).
+const (
+	// SetkaModeAuto sends the personalized DM right away (limits, window
+	// and blacklists still gate).
+	SetkaModeAuto = "auto"
+	// SetkaModeApprove parks every DM in the review queue (kind=setka_dm);
+	// the human sends it through `hhauto review resolve <id> --decision apply`.
+	SetkaModeApprove = "approve"
+)
+
+// Setka borderline-policy vocabulary for [features.setka.classify].borderline.
+const (
+	// SetkaBorderlineApply treats an unsure classification as a fit.
+	SetkaBorderlineApply = "apply"
+	// SetkaBorderlineSkip treats an unsure classification as a miss.
+	SetkaBorderlineSkip = "skip"
+)
+
+// Setka configures the post-apply Setka DM feature (T61): after an apply,
+// the company's people are searched, target-filtered, AI-classified
+// (hiring-relevant or not) and the top candidates receive one personalized
+// DM with the apply context. Disabled by default; every behavioral knob
+// lives in this section.
+type Setka struct {
+	Enabled bool `toml:"enabled"`
+	// Mode: auto (send directly) | approve (park in review, human sends).
+	Mode string `toml:"mode"`
+	// AfterApplyDelay pauses this long after the apply before messaging.
+	AfterApplyDelay string `toml:"after_apply_delay"` // duration, default "30m"
+	// ActiveWindow bounds DM sending to "HH:MM-HH:MM" local time.
+	ActiveWindow string `toml:"active_window"` // default "12:00-18:00"
+	// Daily / per-company / per-person send caps.
+	MaxDMPerDay     int `toml:"max_dm_per_day"`     // default 5
+	MaxDMPerCompany int `toml:"max_dm_per_company"` // default 2
+	MaxDMPerPerson  int `toml:"max_dm_per_person"`  // default 1
+	// RequireCanMessage skips Setka "ghosts" (hh-imported profiles that
+	// cannot be written to) unless the client confirms writability.
+	RequireCanMessage *bool `toml:"require_can_message"` // default true
+	// NoLinks rejects any link in the outgoing text (shadow-ban trigger).
+	NoLinks *bool `toml:"no_links"` // default true
+	// Blacklists by person id and company name (substring, case-insensitive).
+	BlacklistPersons   []string `toml:"blacklist_persons"`
+	BlacklistCompanies []string `toml:"blacklist_companies"`
+	// Endpoints: the four Setka API URLs. Live contracts are NOT captured
+	// yet (research-setka.md §6) — there are NO defaults; all four must be
+	// set explicitly or enabling the feature is a startup error.
+	Endpoints SetkaEndpoints `toml:"endpoints"`
+	// Targets pre-filters the search results before classification.
+	Targets SetkaTargets `toml:"targets"`
+	// Classify configures the AI "is this person hiring-relevant" verdict.
+	Classify SetkaClassify `toml:"classify"`
+	// Personalize configures the AI DM drafting (full vacancy dump +
+	// person profile + apply context) and its offline template fallback.
+	Personalize SetkaPersonalize `toml:"personalize"`
+}
+
+// SetkaEndpoints carries the four Setka API URLs (T61). No defaults: the
+// wire contracts are uncaptured, so unset endpoints are a fail-fast.
+type SetkaEndpoints struct {
+	SearchPeople string `toml:"search_people"`
+	GetPerson    string `toml:"get_person"`
+	CanMessage   string `toml:"can_message"`
+	SendDM       string `toml:"send_dm"`
+}
+
+// SetkaTargets pre-filters Setka search results before classification.
+type SetkaTargets struct {
+	// StatusFilter: the person's Setka status must be one of these exact
+	// values (12-value vocabulary; "нанимаю" is the hiring marker). An
+	// empty list is filled with the default ["нанимаю"] by applyDefaults.
+	StatusFilter []string `toml:"status_filter"`
+	// HeadlineInclude: at least one substring must appear in the headline
+	// (case-insensitive). Empty list = no include filter.
+	HeadlineInclude []string `toml:"headline_include"`
+	// HeadlineExclude: any substring match drops the person.
+	HeadlineExclude []string `toml:"headline_exclude"`
+}
+
+// SetkaClassify configures the setka_classify AI task (T61).
+type SetkaClassify struct {
+	// ModelProfile is the [ai.models] profile the verdict runs on.
+	ModelProfile string `toml:"model_profile"`
+	// Borderline routes an unsure verdict: apply | skip.
+	Borderline string `toml:"borderline"` // default apply
+	// PromptFile overrides the builtin setka_classify prompt.
+	PromptFile string `toml:"prompt_file"`
+}
+
+// SetkaPersonalize configures the setka_personalize AI task (T61).
+type SetkaPersonalize struct {
+	// ModelProfile is the [ai.models] profile the DM draft runs on.
+	ModelProfile string `toml:"model_profile"`
+	// PromptFile overrides the builtin setka_personalize prompt.
+	PromptFile string `toml:"prompt_file"`
+	// TemplateFallback renders the DM when the AI is unavailable
+	// (text/template; {{.PersonName}}, {{.VacancyTitle}}, {{.CompanyName}}).
+	TemplateFallback string `toml:"template_fallback"`
 }
 
 // Cover-letter mode vocabulary for runs[].letter_mode (T26 owner decision #6).
