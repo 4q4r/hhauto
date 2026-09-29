@@ -38,6 +38,17 @@
       "type": ["number", "null"],
       "description": "improved numeric value (salary amount); null when unchanged or not a numeric field"
     },
+    "key_skill_levels": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "the key skill the level belongs to (an ADDED skill)" },
+          "level": { "type": "string", "enum": ["Продвинутый", "Средний", "Базовый"] }
+        }
+      },
+      "description": "T57: ownership levels for ADDED key skills; absent = every added skill defaults to Средний (backward compatible)"
+    },
     "used_facts": { "type": "array", "items": { "type": "string" } },
     "missing_data": {
       "type": ["array", "string", "null"],

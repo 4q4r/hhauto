@@ -105,6 +105,46 @@ func (l *lineageEditor) UpdateResumeContent(ctx context.Context, hash string, co
 	return ed.UpdateResumeContent(ctx, hash, content, screens)
 }
 
+// levelerFor resolves the T57 key-skill levels surface of the clone's
+// account client (the real hhapi client implements it; a substitute that
+// does not is a wiring bug reported loudly).
+func (l *lineageEditor) levelerFor(ctx context.Context, hash string) (interface {
+	UserSkills(ctx context.Context, resumeHash string) ([]hhapi.UserSkill, error)
+	SetKeySkillLevels(ctx context.Context, resumeHash string, sets []hhapi.KeySkillLevel) error
+}, error) {
+	ed, err := l.editorFor(ctx, hash)
+	if err != nil {
+		return nil, err
+	}
+	lvl, ok := ed.(interface {
+		UserSkills(ctx context.Context, resumeHash string) ([]hhapi.UserSkill, error)
+		SetKeySkillLevels(ctx context.Context, resumeHash string, sets []hhapi.KeySkillLevel) error
+	})
+	if !ok {
+		return nil, fmt.Errorf("cli: content editor does not implement the key-skill levels contract")
+	}
+	return lvl, nil
+}
+
+// UserSkills reads the clone's key skills with their hh levels (T57).
+func (l *lineageEditor) UserSkills(ctx context.Context, hash string) ([]hhapi.UserSkill, error) {
+	lvl, err := l.levelerFor(ctx, hash)
+	if err != nil {
+		return nil, err
+	}
+	return lvl.UserSkills(ctx, hash)
+}
+
+// SetKeySkillLevels PUTs the captured levels contract through the clone's
+// account (T57).
+func (l *lineageEditor) SetKeySkillLevels(ctx context.Context, hash string, sets []hhapi.KeySkillLevel) error {
+	lvl, err := l.levelerFor(ctx, hash)
+	if err != nil {
+		return err
+	}
+	return lvl.SetKeySkillLevels(ctx, hash, sets)
+}
+
 // editorCookieSource adapts the deployed cookie store onto the runner's
 // EditorCookieSource. Decryption stays inside the store implementation;
 // the session only ever reaches the runner's isolated browser profile.
