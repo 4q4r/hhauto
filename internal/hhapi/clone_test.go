@@ -123,8 +123,8 @@ func TestCloneResumeNativeRejectIsTerminal(t *testing.T) {
 	if env.hits("1:POST /applicant/resumes/clone") != 0 {
 		t.Fatal("the shell endpoint must never be touched")
 	}
-	if env.hits("1:POST /profile/shards/resume/update") != 0 {
-		t.Fatal("no builder update may ride a rejected native clone")
+	if env.hits("1:POST /applicant/resume/edit") != 0 {
+		t.Fatal("no edit POST may ride a rejected native clone")
 	}
 }
 

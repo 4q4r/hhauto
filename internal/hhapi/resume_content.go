@@ -1,48 +1,144 @@
 package hhapi
 
-// T29 resume content mutation (the cracked builder update path).
+// T51 resume content mutation — the save contract the REAL editor UI
+// speaks, captured live on 2026-09-29 (owner session, cloakbrowser on the
+// resume_partial_edit flow, clone 4f48f357…):
 //
-// The payload is the SPA-exact serialization of the editor's save thunk,
-// reverse-engineered from the deployed resume_profile_front bundle
-// (2026-09-25, chunk 6069 module 11154 thunk P, cleanForm module 867, hM
-// split module 64673, api layer module 88874):
+//	POST {site}/applicant/resume/edit?resume={hash}&hhtmSource=resume_partial_edit
+//	{"title":["…"]} | {"skills":["…"]} | {"keySkills":["a","…"]} |
+//	{"experience":[{…item objects, description changed…}]}
 //
-//	POST https://resume-profile-front.hh.ru/profile/shards/resume/update
-//	{"resumeHash":"…","currentScreenId":"…",
-//	 "resume":{…content fields, condition format…},
-//	 "profile":{…personal fields + experience…},
-//	 "questionToAnswerMap":{},"additionalProperties":{"anyJob":false},
-//	 "userSkillLevels":{},"userPrint":{}}
+// with the ordinary site XHR discipline (Accept/Content-Type JSON,
+// X-Requested-With, X-Xsrftoken, X-hhtmSource: resume_partial_edit,
+// X-hhtmFrom: ""). Live facts that shape the serializer:
 //
-// with the header set T28 proved mandatory (Accept/Content-Type JSON,
-// X-Requested-With, X-Xsrftoken, X-hhtm* — see cloneResumesHeaders).
-// The split follows hM (module 64673): the personal fields plus experience
-// ride the profile side, the content fields stay on resume; identity
-// metadata (_attributes/_conditions) never travels.
+//   - the former /profile/shards/resume/update BFF route is DEAD for
+//     off-browser clients (bare 400 for every payload variant, T29 probe)
+//     and is not used by the deployed editor at all — every UI save rides
+//     the site-host /applicant/resume/edit form endpoint;
+//   - values are FLAT arrays: builder-state conditional format
+//     ([{"string":"x"}] / [{"string":40}]) flattens to ["x"] / [40];
+//     empty stays [] (salary), experience item objects travel verbatim;
+//   - hh accepts a single-field body (title-only verified live, 200) —
+//     the UI posts per-segment field sets, a one-field save is the
+//     faithful minimal subset;
+//   - no fingerprint fields required off-browser (probe passed without);
+//   - success = 200 builder-state envelope; rejection = 200 +
+//     {"errors":[{field,code,…}]} ("title:REQUIRED" probed live).
 //
-// LIVE STATUS (2026-09-25 probe, -tags live29): hh still rejects the
-// update POST off-browser with a bare pre-app 400 for every body variant
-// (exact SPA reconstruction, wizard-correct screen ids from the live
-// state, live additionalProperties shape, minimal diffs, primed ddg
-// cookies, Chrome UA) — and the site-host route answers the 405 edge fake.
-// The same wall covers /profile/shards/** POSTs on hh.ru (delete probe:
-// 405 Allow:GET). Only the BFF clone_resumes POST passes (T28). The
-// contract here stays the decoded truth: when the route opens (or a
-// real-browser runner executes it), the code works unchanged; until then
-// callers see the typed errors and the feature degrades per field.
+// Live verification (2026-09-29, -tags live51): title-only no-op POST from
+// this client returned 200 and the read-back carried the same title.
+// Live probe: internal/hhapi/live_t51_edit_probe_test.go (never in the
+// default gate).
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
+	"time"
 )
 
-// additionalProps is the SPA's additionalProperties body for a plain
-// editor save: anyJob rides false unless the any-job toggle is on
-// (module 64673 jO: "boolean"==typeof e?e:r||!1).
-const additionalProps = `{"anyJob":false}`
+// resumeEditHhtmSource is the analytics context the deployed editor sends
+// on every resume_partial_edit save (query param AND X-hhtmSource header).
+const resumeEditHhtmSource = "resume_partial_edit"
+
+// Verify read-back pacing (var seams for tests): hh applies saves
+// asynchronously, so the verify gate polls the builder state until the
+// budget expires. Live pacing 2026-09-29: a single scalar edit was visible
+// +4s after the POST, but a full experience-array save (eight long
+// descriptions, hh re-forks the shared records) applied minutes later —
+// the store queue handles record forks slowly. 600s covers the observed
+// worst case; a successful verify exits on the first poll that matches.
+var (
+	verifyPollInterval = 10 * time.Second
+	verifyWaitBudget   = 600 * time.Second
+)
+
+// hhSharedRecordLists are the builder-state arrays whose items are shared
+// records across the account's resumes (experience, education). get_by_hash
+// lists the inherited parent-resume records too, while the editor saves
+// only THIS resume's own items (captured UI body 2026-09-29: items whose
+// "resumes" usage list carries the resume's hash) — and posting inherited
+// ids makes hh fork copies instead of updating (live: each improve run
+// grew the item count until this filter landed).
+var hhSharedRecordLists = []string{
+	"experience", "primaryEducation", "elementaryEducation",
+	"additionalEducation", "attestationEducation",
+}
+
+// hhVolatileKeys are builder-state fields hh updates on its own between
+// reads (photoUrls regenerate, lastChangeTimeDetails moves on every
+// server-side change — live 2026-09-29 diagnosis: they surfaced as
+// phantom diffs and broke verify without any client mutation). They are
+// not part of the UI save contract, so the split drops them.
+var hhVolatileKeys = []string{"photoUrls", "lastChangeTimeDetails"}
+
+// filterSharedRecords keeps only the shared-record items that belong to
+// selfHash and strips the server-only fields (the unstable "resumes"
+// usage metadata and "companyLogos" — neither rides the UI save body),
+// in place.
+func filterSharedRecords(side map[string]json.RawMessage, selfHash string) {
+	for _, key := range hhVolatileKeys {
+		delete(side, key)
+	}
+	for _, key := range hhSharedRecordLists {
+		raw, ok := side[key]
+		if !ok {
+			continue
+		}
+		var items []map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &items); err != nil {
+			continue
+		}
+		kept := make([]map[string]json.RawMessage, 0, len(items))
+		changed := false
+		for _, item := range items {
+			if !sharedRecordSelf(item, selfHash) {
+				changed = true // inherited (parent-resume) record: not this resume's content
+				continue
+			}
+			for _, meta := range []string{"resumes", "companyLogos"} {
+				if _, has := item[meta]; has {
+					delete(item, meta)
+					changed = true
+				}
+			}
+			kept = append(kept, item)
+		}
+		if !changed {
+			continue
+		}
+		if b, err := json.Marshal(kept); err == nil {
+			side[key] = b
+		}
+	}
+}
+
+// sharedRecordSelf reports whether one shared record belongs to selfHash:
+// its "resumes" usage list carries the hash (an absent or undecodable list
+// keeps the record — the content must not be lost on unknown shapes).
+func sharedRecordSelf(item map[string]json.RawMessage, selfHash string) bool {
+	raw, ok := item["resumes"]
+	if !ok {
+		return true
+	}
+	var list []struct {
+		Hash string `json:"hash"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil || len(list) == 0 {
+		return true
+	}
+	for _, r := range list {
+		if r.Hash == selfHash {
+			return true
+		}
+	}
+	return false
+}
 
 // ResumeContent is the mutable content split of one resume: Resume holds
 // the condition-format content fields (title, professionalRole, keySkills,
@@ -128,6 +224,8 @@ func (c *Client) ResumeContent(ctx context.Context, hash string) (*ResumeContent
 		return nil, err
 	}
 	resume, profile := splitBuilderResume(st)
+	filterSharedRecords(resume, hash)
+	filterSharedRecords(profile, hash)
 	conds := map[string]json.RawMessage{}
 	if raw, ok := st.Resume["_conditions"]; ok {
 		_ = json.Unmarshal(raw, &conds)
@@ -135,14 +233,16 @@ func (c *Client) ResumeContent(ctx context.Context, hash string) (*ResumeContent
 	return &ResumeContent{Resume: resume, Profile: profile, Screens: st.Screens, Conditions: conds}, nil
 }
 
-// UpdateResumeContent posts a modified content split through the builder
-// update endpoint (per screen in screens, one POST each) and verifies by
-// read-back that every changed key landed. Changed keys are computed
-// against the LIVE state first: an unchanged content posts nothing.
-// Validation rejections surface as *ResumeUpdateValidationError (the
-// feature retries with a fixed value or skips the field); a verify
-// mismatch is *ResumeContentVerifyError.
-func (c *Client) UpdateResumeContent(ctx context.Context, hash string, content *ResumeContent, screens []string) error {
+// UpdateResumeContent posts every changed field through the site edit
+// endpoint (one POST per field, the real UI save contract — see the file
+// doc) and verifies by read-back that every changed key landed. Changed
+// keys are computed against the LIVE state first: an unchanged content
+// posts nothing. Validation rejections surface as
+// *ResumeUpdateValidationError (the feature retries with a fixed value or
+// skips the field); a verify mismatch is *ResumeContentVerifyError. The
+// screens argument is part of the ResumeContentEditor contract only: the
+// edit endpoint addresses fields directly, no screen walk exists anymore.
+func (c *Client) UpdateResumeContent(ctx context.Context, hash string, content *ResumeContent, _ []string) error {
 	live, err := c.ResumeContent(ctx, hash)
 	if err != nil {
 		return fmt.Errorf("live content: %w", err)
@@ -151,64 +251,67 @@ func (c *Client) UpdateResumeContent(ctx context.Context, hash string, content *
 	if len(changed) == 0 {
 		return nil
 	}
-	if len(screens) == 0 {
-		if len(content.Screens) > 0 {
-			screens = content.Screens
-		} else {
-			screens = []string{"professional_role"}
-		}
-	}
-	payload := resumeScreenUpdate{
-		ResumeHash:      hash,
-		Resume:          content.Resume,
-		Profile:         content.Profile,
-		QuestionMap:     map[string]string{},
-		Additional:      json.RawMessage(additionalProps),
-		UserSkillLevels: json.RawMessage(`{}`),
-		UserPrint:       json.RawMessage(`{}`),
-	}
-	for _, screen := range screens {
-		payload.CurrentScreenID = screen
-		if _, verr := c.postResumeScreen(ctx, &payload); verr != nil {
+	sort.Strings(changed)
+	verifyStart := time.Now()
+	for _, key := range changed {
+		side, name := splitContentKey(key)
+		if verr := c.postResumeEdit(ctx, hash, name, sideOf(content, side)[name]); verr != nil {
 			return verr
 		}
 	}
-	// Verify read-back: every changed key must now equal the sent value.
-	verify, err := c.ResumeContent(ctx, hash)
-	if err != nil {
-		return fmt.Errorf("verify content: %w", err)
-	}
+	// Verify read-back: every changed key must read back equal to the
+	// sent value. hh applies saves asynchronously (a marker edit was
+	// invisible +2s and visible +4s after the POST — live 2026-09-29), so
+	// the read-back polls until the budget expires; only the keys still
+	// unreadable back then are reported missing.
 	var missing []string
-	for _, key := range changed {
-		side, name := splitContentKey(key)
-		if !rawEqual(sideOf(verify, side)[name], sideOf(content, side)[name]) {
-			missing = append(missing, key)
+	for {
+		verify, err := c.ResumeContent(ctx, hash)
+		if err != nil {
+			return fmt.Errorf("verify content: %w", err)
+		}
+		missing = nil
+		for _, key := range changed {
+			side, name := splitContentKey(key)
+			if !appliedEqual(sideOf(verify, side)[name], sideOf(content, side)[name]) {
+				missing = append(missing, key)
+			}
+		}
+		if len(missing) == 0 {
+			return nil
+		}
+		if time.Since(verifyStart) >= verifyWaitBudget {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("verify content: %w", ctx.Err())
+		case <-time.After(verifyPollInterval):
 		}
 	}
-	if len(missing) > 0 {
-		return &ResumeContentVerifyError{Keys: missing, Err: ErrCloneMaterialize}
-	}
-	return nil
+	return &ResumeContentVerifyError{Keys: missing, Err: ErrCloneMaterialize}
 }
 
-// postResumeScreen issues one builder update with the SPA-exact header set
-// and payload (see resume_content.go for the decoded contract). done
-// reports hh's nextIncompleteScreenId == null (complete). Validation
-// rejections surface as *ResumeUpdateValidationError; transport losses keep
-// the mutation-path semantics (never auto-retried).
-func (c *Client) postResumeScreen(ctx context.Context, payload *resumeScreenUpdate) (done bool, err error) {
-	body, merr := json.Marshal(payload)
-	if merr != nil {
-		return false, fmt.Errorf("encode update: %w", merr)
+// postResumeEdit issues one field save through the site edit endpoint with
+// the captured UI header set and the flat value serialization (see the
+// file doc). Validation rejections surface as *ResumeUpdateValidationError;
+// transport losses keep the mutation-path semantics (never auto-retried).
+func (c *Client) postResumeEdit(ctx context.Context, hash, name string, raw json.RawMessage) error {
+	body, err := json.Marshal(map[string]json.RawMessage{name: editFlatValue(raw)})
+	if err != nil {
+		return fmt.Errorf("%w: encode %s: %v", ErrCloneMaterialize, name, err)
 	}
 	resp, err := c.doMutation(ctx, func() requestSpec {
-		h := c.cloneResumesHeaders()
+		h := c.xhrHeaders(c.withPinnedHost(c.eps.site + "/applicant/resumes"))
+		h.Set("Accept", "application/json") // the captured save POST value (no */*)
 		h.Set("Content-Type", "application/json")
+		h.Set("X-hhtmSource", resumeEditHhtmSource)
+		h.Set("X-hhtmFrom", "")
 		return requestSpec{
 			kind:      kindMutation,
-			operation: "resume_builder_update",
+			operation: "resume_edit",
 			method:    http.MethodPost,
-			url:       c.resolveUpdateURL(),
+			url:       c.editURL(hash),
 			header:    h,
 			body:      body,
 		}
@@ -217,37 +320,229 @@ func (c *Client) postResumeScreen(ctx context.Context, payload *resumeScreenUpda
 		// Transport-level failure (non-2xx classification, session loss):
 		// keep the T27 semantics — the caller sees a materialize failure
 		// with the original StatusError in the chain.
-		return false, fmt.Errorf("%w: %v", ErrCloneMaterialize, err)
+		return fmt.Errorf("%w: %v", ErrCloneMaterialize, err)
 	}
 	if bodyHasAny(string(resp.body), captchaMarkers) {
-		return false, fmt.Errorf("%w: %v", ErrCloneMaterialize, &StatusError{Kind: ErrCaptcha, StatusCode: resp.status, URL: resp.finalURL, BodySnippet: snippet(resp.body), Chain: resp.chain})
+		return fmt.Errorf("%w: %v", ErrCloneMaterialize, &StatusError{Kind: ErrCaptcha, StatusCode: resp.status, URL: resp.finalURL, BodySnippet: snippet(resp.body), Chain: resp.chain})
 	}
-	var out resumeUpdateResp
+	var out resumeEditResp
 	if uerr := json.Unmarshal(resp.body, &out); uerr != nil {
-		return false, fmt.Errorf("%w: decode response: %v", ErrCloneMaterialize, uerr)
-	}
-	if len(out.Error) > 0 {
-		keys := make([]string, 0, len(out.Error))
-		for _, e := range out.Error {
-			keys = append(keys, e.Key)
-		}
-		return false, fmt.Errorf("%w: builder error: %s", ErrCloneMaterialize, strings.Join(keys, ","))
+		return fmt.Errorf("%w: decode %s response: %v", ErrCloneMaterialize, name, uerr)
 	}
 	if len(out.Errors) > 0 {
 		codes := make([]string, 0, len(out.Errors))
 		for _, e := range out.Errors {
 			codes = append(codes, e.Field+":"+e.Code)
 		}
-		return false, &ResumeUpdateValidationError{Codes: codes, Err: ErrCloneMaterialize}
+		return &ResumeUpdateValidationError{Codes: codes, Err: ErrCloneMaterialize}
 	}
-	return out.NextIncomplete == nil, nil
+	// Success is the builder-state envelope ("resume":{…}) hh echoes after
+	// an accepted save (live 200 shape); anything else that parses without
+	// errors is an upstream anomaly — never claimed as success (the verify
+	// read-back below is the authoritative gate either way).
+	if _, perr := parseBuilderState(resp.body); perr != nil {
+		return fmt.Errorf("%w: %s edit verdict: %s", ErrCloneMaterialize, name, snippet(resp.body))
+	}
+	return nil
 }
 
-// resolveUpdateURL: the update POST belongs to the resume-profile-front
-// service (T28 axios wiring — every editor POST rides the BFF host); the
-// endpoint stays config-overridable.
-func (c *Client) resolveUpdateURL() string {
-	return c.eps.resolveExternal(epResumeUpdate, resumeUpdateURL)
+// resumeEditResp is the error shape of the edit endpoint: hh answers
+// validation/business rejections with HTTP 200 {"errors":[{field,code,…}]}
+// ("title:REQUIRED" probed live 2026-09-29). Success bodies carry the
+// builder-state envelope instead (parsed via parseBuilderState).
+type resumeEditResp struct {
+	Errors []struct {
+		Field string `json:"field"`
+		Code  string `json:"code"`
+	} `json:"errors"`
+}
+
+// appliedEqual compares a changed key's sent value with the read-back
+// value. hh stores texts verbatim but canonically normalizes dictionary
+// strings — case plus dash/space variants («GitLab» stored as «Gitlab»,
+// «Docker-compose» as «Docker Compose»; live 2026-09-29) and may
+// reorder dictionary-driven string lists — so strings compare through
+// normAppliedText, string arrays as normalized sets; everything else
+// compares strictly (jsonEqual).
+func appliedEqual(a, b json.RawMessage) bool {
+	var av, bv any
+	if err := json.Unmarshal(a, &av); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &bv); err != nil {
+		return false
+	}
+	return jsonAppliedEqual(av, bv)
+}
+
+func jsonAppliedEqual(a, b any) bool {
+	switch av := a.(type) {
+	case string:
+		bv, ok := b.(string)
+		return ok && normAppliedText(av) == normAppliedText(bv)
+	case []any:
+		bv, ok := b.([]any)
+		if !ok || len(av) != len(bv) {
+			return false
+		}
+		switch {
+		case allStrings(av) && allStrings(bv):
+			// a = read-back, b = sent (see stringListCovers).
+			return stringListCovers(av, bv)
+		case allObjects(av) && allObjects(bv):
+			// a = read-back, b = sent: every sent record must be covered
+			// by some read record (see objectCovers).
+			return objectListCovers(av, bv)
+		}
+		return positionalAppliedEqual(av, bv)
+	default:
+		return jsonEqual(a, b)
+	}
+}
+
+func allStrings(vs []any) bool {
+	for _, v := range vs {
+		if _, ok := v.(string); !ok {
+			return false
+		}
+	}
+	return len(vs) > 0
+}
+
+// stringListCovers reports whether every sent dictionary value surfaces in
+// the read-back list. hh canonizes dictionary names, sometimes expanding
+// them («Vault» stored as «HashiCorp Vault», live 2026-09-29), so equality
+// OR containment of the normalized sent string counts; a dropped (unknown)
+// value does not. a = read-back, b = sent.
+func stringListCovers(a, b []any) bool {
+	for _, sent := range b {
+		ns := normAppliedText(sent.(string))
+		covered := false
+		for _, got := range a {
+			ng := normAppliedText(got.(string))
+			if ng == ns || strings.Contains(ng, ns) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return false
+		}
+	}
+	return true
+}
+
+func allObjects(vs []any) bool {
+	for _, v := range vs {
+		if _, ok := v.(map[string]any); !ok {
+			return false
+		}
+	}
+	return len(vs) > 0
+}
+
+// objectCovers reports whether the sent record (b) is carried by the
+// read-back record (a). hh re-forks shared records with NEW server ids on
+// edit (live 2026-09-29: 2110984924 → 2110991452, same content) and may
+// reorder the array, so "id" is excluded from the comparison and any
+// read-back record can carry a sent one; every other sent field must
+// match — strings through normAppliedText (equality or containment),
+// everything else strictly.
+func objectCovers(a, b map[string]any) bool {
+	for k, sv := range b {
+		if k == "id" {
+			continue
+		}
+		gv, ok := a[k]
+		if !ok {
+			return false
+		}
+		if ss, ok1 := sv.(string); ok1 {
+			if gs, ok2 := gv.(string); ok2 {
+				ns, ng := normAppliedText(ss), normAppliedText(gs)
+				if ns != ng && !strings.Contains(ng, ns) {
+					return false
+				}
+				continue
+			}
+		}
+		if !jsonEqual(sv, gv) {
+			return false
+		}
+	}
+	return true
+}
+
+// objectListCovers: every sent record must be carried by some read-back
+// record (see objectCovers). a = read-back, b = sent.
+func objectListCovers(a, b []any) bool {
+	for _, so := range b {
+		covered := false
+		for _, got := range a {
+			if objectCovers(got.(map[string]any), so.(map[string]any)) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return false
+		}
+	}
+	return true
+}
+
+// positionalAppliedEqual is the strict fall-back for arrays that are
+// neither string lists nor object records.
+func positionalAppliedEqual(a, b []any) bool {
+	for i := range a {
+		if !jsonAppliedEqual(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// normAppliedText folds the hh canonicalization surface: case, dash
+// variants and whitespace runs are equivalent.
+func normAppliedText(s string) string {
+	s = strings.ToLower(s)
+	r := strings.NewReplacer("-", " ", "–", " ", "—", " ", "−", " ")
+	s = r.Replace(s)
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// editURL renders the site-host partial-edit save URL for one resume.
+func (c *Client) editURL(hash string) string {
+	return c.endpointURL(epResumeEdit, c.eps.siteDefault("/applicant/resume/edit")) +
+		"?resume=" + url.QueryEscape(hash) + "&hhtmSource=" + resumeEditHhtmSource
+}
+
+// editFlatValue serializes one builder-state field into the edit
+// contract's flat value: conditional-format arrays ([{"string":v},…])
+// become plain value arrays (["x"], [40] — the part value rides with its
+// JSON type); anything else (empty arrays, experience item objects)
+// travels verbatim — all four live shapes, captured 2026-09-29.
+func editFlatValue(raw json.RawMessage) json.RawMessage {
+	var parts []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &parts); err != nil || len(parts) == 0 {
+		return raw
+	}
+	flat := make([]json.RawMessage, 0, len(parts))
+	for _, p := range parts {
+		if len(p) != 1 {
+			return raw
+		}
+		v, ok := p["string"]
+		if !ok {
+			return raw
+		}
+		flat = append(flat, v)
+	}
+	out, err := json.Marshal(flat)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 // diffContentKeys returns "side.name" keys whose values differ between the
