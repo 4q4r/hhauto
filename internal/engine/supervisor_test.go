@@ -661,9 +661,11 @@ func TestRateLimitBackoffRequeues(t *testing.T) {
 		return err == nil && m[audit.KeyHTTP429] >= 1
 	})
 	// The task is re-enqueued for a later attempt (backoff), not dropped.
-	if h.deps.Queue.Len("a1") != 1 {
-		t.Fatalf("queued after 429 = %d, want 1", h.deps.Queue.Len("a1"))
-	}
+	// handleRateLimit increments the 429 metric before the requeue, so the
+	// requeue may lag behind the metric observation: poll with a deadline.
+	waitFor(t, "task requeued after 429", func() bool {
+		return h.deps.Queue.Len("a1") == 1
+	})
 }
 
 func TestPanicIsolation(t *testing.T) {
