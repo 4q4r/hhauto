@@ -20,7 +20,7 @@ package ai
 // the shape above is this build's contract, and adapting to another backend
 // is deliberately localized to this one file. Limits inherited from the
 // public docs and NOT re-enforced here (an oversized state fails the call and
-// the run escalates to the LLM): state ≤32K tokens, ≤255 choice options.
+// the run routes to review): state ≤32K tokens, ≤255 choice options.
 //
 // Failure semantics: every non-2xx status, timeout or malformed body is an
 // error — callers treat it as "Jev unavailable" and fall back to the LLM.
@@ -104,7 +104,7 @@ func NewJevClient(endpoint, apiKey string) *JevClient {
 
 // Solve sends one question batch and returns the parsed answers. Every
 // enrolled question must come back answered — a partial reply is an error
-// (the caller escalates to the LLM instead of trusting a half-decision).
+// (the caller routes to review instead of trusting a half-decision).
 func (c *JevClient) Solve(ctx context.Context, req JevRequest) (JevResponse, error) {
 	c.requests.Add(1)
 	body, err := json.Marshal(req)

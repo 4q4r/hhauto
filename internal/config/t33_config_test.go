@@ -40,6 +40,8 @@ func TestValidateJev(t *testing.T) {
 		ConfidenceThreshold: 0.9,
 		Tasks:               []string{"message_classification", "link_detection", "contact_extraction"},
 	}
+	// T60: [ai.jev] enabled requires the exclusive classifier choice.
+	c.Features.MultiApply.Classifier = ClassifierJev
 	if err := Validate(c); err != nil {
 		t.Fatalf("enabled [ai.jev] happy path must validate: %v", err)
 	}

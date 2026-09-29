@@ -22,6 +22,20 @@ import (
 	"hhauto/internal/store"
 )
 
+// applyCoverLetterProfileOverride wires the T60 cover_letter section model
+// profile onto the [ai.tasks.cover_letter] slot (empty = task default; a
+// missing task has nothing to override).
+func applyCoverLetterProfileOverride(cfg *config.Config) {
+	cl := cfg.Features.MultiApply.CoverLetter
+	if !cl.Enabled || cl.ModelProfile == "" {
+		return
+	}
+	if t, ok := cfg.AI.Tasks[string(ai.TaskCoverLetter)]; ok {
+		t.ModelProfile = cl.ModelProfile
+		cfg.AI.Tasks[string(ai.TaskCoverLetter)] = t
+	}
+}
+
 // providerKeysFailFast (T48) checks every provider a configured model
 // references: a config-file api_key is exempt from the environment
 // requirement; a provider with neither key source, or whose api_key_env
@@ -91,9 +105,12 @@ func buildAI(cfg *config.Config, db *store.DB, log *slog.Logger, forceImproveTas
 			Pricing:     cfg.AI.Pricing,
 		}),
 	}
-	// T33: optional Jev prefilter. The key is resolved fail-fast like the
-	// provider keys above — a half-configured prefilter must not start.
-	if cfg.AI.Jev.Enabled {
+	// T33/T60: the Jev endpoint is installed only when it IS the classifier
+	// ([features.multiapply] classifier="jev" — an exclusive choice
+	// enforced by config validation). The key is resolved fail-fast like
+	// the provider keys above — a half-configured classifier must not
+	// start.
+	if cfg.Features.MultiApply.Classifier == config.ClassifierJev && cfg.AI.Jev.Enabled {
 		key := ""
 		if cfg.AI.Jev.APIKeyEnv != "" {
 			key = os.Getenv(cfg.AI.Jev.APIKeyEnv)
@@ -110,16 +127,10 @@ func buildAI(cfg *config.Config, db *store.DB, log *slog.Logger, forceImproveTas
 			return nil, fmt.Errorf("ai: jev: %w", err)
 		}
 		opts = append(opts, ai.WithJev(solver))
-		// T46: jev_only_tasks — tasks where Jev is the final verdict (no
-		// LLM escalation). An empty list keeps the T33 escalation behavior.
-		if len(cfg.AI.Jev.JevOnlyTasks) > 0 {
-			only := make([]ai.TaskName, 0, len(cfg.AI.Jev.JevOnlyTasks))
-			for _, t := range cfg.AI.Jev.JevOnlyTasks {
-				only = append(only, ai.TaskName(t))
-			}
-			opts = append(opts, ai.WithJevOnly(only))
-		}
 	}
+	// T60: the cover_letter section model profile overrides the letter
+	// task's own profile (empty = the task default).
+	applyCoverLetterProfileOverride(cfg)
 	runner, err := ai.New(
 		providers,
 		cfg.AI.Models,

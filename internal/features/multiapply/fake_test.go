@@ -57,6 +57,12 @@ type applyEnv struct {
 	ratingReqs     map[int64]int
 	popupReqs      map[int64]int
 
+	// T60 vacancy-card surface: full vacancyView bodies served by
+	// GET /vacancy/{id} (default: the rich fixture below).
+	cardByVac map[int64]string
+	cardErr   map[int64]int
+	cardReqs  map[int64]int
+
 	// T26 autoclone surface: mutable mine shard + scripted clone endpoint.
 	resumeShard   []string                                 // resume JSON blocks served by GET /shards/applicant/resumes
 	cloneNext     int                                      // issued clone serial (clone1, clone2, …)
@@ -102,6 +108,9 @@ func newApplyEnv(t *testing.T) *applyEnv {
 		popupReqs:   map[int64]int{},
 		searchFound: 1,
 		cloneAuto:   true,
+		cardByVac:   map[int64]string{},
+		cardErr:     map[int64]int{},
+		cardReqs:    map[int64]int{},
 	}
 	e.builderStates = map[string]string{
 		// The parent resume: a complete published resume with a title
@@ -343,6 +352,22 @@ func newApplyEnv(t *testing.T) *applyEnv {
 		}
 		_, _ = io.WriteString(w, initialStatePage(
 			`{"applicantNegotiations":{"topicList":[`+strings.Join(items, ",")+`]}}`))
+	})
+	mux.HandleFunc("GET /vacancy/", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/vacancy/"), 10, 64)
+		e.mu.Lock()
+		e.cardReqs[id]++
+		body := e.cardByVac[id]
+		status := e.cardErr[id]
+		e.mu.Unlock()
+		if status != 0 {
+			http.Error(w, "card fail", status)
+			return
+		}
+		if body == "" {
+			body = richVacancyCard(id)
+		}
+		_, _ = io.WriteString(w, initialStatePage(`{"vacancyView":`+body+`}`))
 	})
 	mux.HandleFunc("GET /employer_reviews/proxy_components/small_widget", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := strconv.ParseInt(r.URL.Query().Get("employerId"), 10, 64)

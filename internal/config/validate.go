@@ -35,6 +35,9 @@ func Validate(c *Config) error {
 	if err := validateAI(c); err != nil {
 		return err
 	}
+	if err := validateMultiApply(c); err != nil {
+		return err
+	}
 	if err := validateAutoClone(c); err != nil {
 		return err
 	}
@@ -42,6 +45,54 @@ func Validate(c *Config) error {
 		return err
 	}
 	return validateRuns(c)
+}
+
+// validateMultiApply checks the [features.multiapply] section (T60): the
+// classifier choice is exclusive — the Jev endpoint and the LLM never
+// classify one after another, so classifier="jev" requires [ai.jev] and
+// [ai.jev] requires classifier="jev" (an enabled prefilter without the
+// explicit choice used to mean the removed cascade). The cover_letter
+// section is validated only when enabled (a disabled section may stay
+// half-filled).
+func validateMultiApply(c *Config) error {
+	switch c.Features.MultiApply.Classifier {
+	case "", ClassifierJev, ClassifierLLM:
+	default:
+		return fmt.Errorf("features.multiapply.classifier %q: must be one of jev | llm", c.Features.MultiApply.Classifier)
+	}
+	jevOn := c.AI.Jev.Enabled
+	switch {
+	case c.Features.MultiApply.Classifier == ClassifierJev && !jevOn:
+		return fmt.Errorf("features.multiapply.classifier=\"jev\" requires ai.jev.enabled=true (the Jev endpoint must be configured)")
+	case c.Features.MultiApply.Classifier != ClassifierJev && jevOn:
+		return fmt.Errorf("features.multiapply.classifier: exactly one classifier is allowed (jev OR llm, never one after another): [ai.jev].enabled=true requires classifier=\"jev\" — set it or disable ai.jev")
+	}
+	return validateCoverLetter(&c.Features.MultiApply.CoverLetter, c)
+}
+
+// validateCoverLetter checks [features.multiapply.cover_letter] (T60).
+func validateCoverLetter(cl *MultiApplyCoverLetter, c *Config) error {
+	if !cl.Enabled {
+		return nil
+	}
+	switch cl.Mode {
+	case "", CoverLetterModeAI, CoverLetterModeTemplate, CoverLetterModeOff:
+	default:
+		return fmt.Errorf("features.multiapply.cover_letter.mode %q: must be one of ai | template | off", cl.Mode)
+	}
+	if cl.Mode == CoverLetterModeTemplate && strings.TrimSpace(cl.Template) == "" {
+		return fmt.Errorf("features.multiapply.cover_letter.template: required when mode = template")
+	}
+	if cl.ModelProfile == "" {
+		return nil
+	}
+	if _, ok := c.AI.Models[cl.ModelProfile]; !ok {
+		return fmt.Errorf("features.multiapply.cover_letter.model_profile %q: unknown model", cl.ModelProfile)
+	}
+	if _, ok := c.AI.Tasks["cover_letter"]; !ok {
+		return fmt.Errorf("features.multiapply.cover_letter.model_profile %q: ai.tasks.cover_letter is not configured (there is no letter task to override)", cl.ModelProfile)
+	}
+	return nil
 }
 
 // validateBrowser checks the [browser] section (T32). The section is
@@ -385,13 +436,6 @@ func validateJev(c *Config) error {
 			return fmt.Errorf("ai.jev.tasks: %q is not a jev-compatible task (allowed: message_classification, link_detection, contact_extraction)", t)
 		}
 	}
-	// T46: jev_only_tasks must name jev-compatible tasks and only enrolled
-	// ones — an unenrolled entry would be a silent no-op the day the
-	// prefilter is enabled, and a typo would silently keep the LLM
-	// fallback the owner meant to switch off.
-	if err := validateJevOnlyTasks(j); err != nil {
-		return err
-	}
 	if !j.Enabled {
 		return nil
 	}
@@ -403,27 +447,6 @@ func validateJev(c *Config) error {
 	}
 	if j.ConfidenceThreshold <= 0 || j.ConfidenceThreshold > 1 {
 		return fmt.Errorf("ai.jev.confidence_threshold %v: must be in (0,1]", j.ConfidenceThreshold)
-	}
-	return nil
-}
-
-// validateJevOnlyTasks checks [ai.jev].jev_only_tasks (T46): allowed values
-// mirror ai.jev.tasks and every entry must be enrolled there.
-func validateJevOnlyTasks(j AIJev) error {
-	if len(j.JevOnlyTasks) == 0 {
-		return nil
-	}
-	enrolled := make(map[string]bool, len(j.Tasks))
-	for _, t := range j.Tasks {
-		enrolled[t] = true
-	}
-	for _, t := range j.JevOnlyTasks {
-		switch {
-		case t != "message_classification" && t != "link_detection" && t != "contact_extraction":
-			return fmt.Errorf("ai.jev.jev_only_tasks: %q is not a jev-compatible task (allowed: message_classification, link_detection, contact_extraction)", t)
-		case !enrolled[t]:
-			return fmt.Errorf("ai.jev.jev_only_tasks: %q is not enrolled in ai.jev.tasks", t)
-		}
 	}
 	return nil
 }

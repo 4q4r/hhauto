@@ -36,7 +36,7 @@ const (
 	reasonGrayBand        = "gray_band"
 	reasonNumberNotInSrc  = "number_not_in_sources"
 	reasonForbiddenTopic  = "forbidden_topic_no_fact"
-	reasonJevUndecided    = "jev_undecided" // T46: jev-only task the prefilter could not decide
+	reasonJevUndecided    = "jev_undecided" // T60: exclusive jev classifier could not decide
 )
 
 // LedgerStore is the minimal audit-trail contract; Wave 3 adapts it to the
@@ -107,12 +107,8 @@ type runner struct {
 	guard     *Guard
 	budget    *budgetGuard
 	budgetCfg BudgetConfig
-	jev       *JevSolver // optional prefilter; nil = full-AI mode (T33)
-	// jevOnly (T46) lists tasks where the Jev verdict is FINAL: undecided
-	// or failed prefilter outcomes synthesize a needs_human review verdict
-	// instead of escalating to the LLM. nil/empty = full-AI escalation.
-	jevOnly map[TaskName]struct{}
-	now     func() time.Time
+	jev       *JevSolver // exclusive classifier when set; nil = LLM-only (T33/T60)
+	now       func() time.Time
 }
 
 // jev constants for prefilter-sourced decisions: Model marks the System-One
@@ -122,33 +118,16 @@ const (
 	jevPromptVer = "jev-1"
 )
 
-// WithJev installs the optional Jev (System One) prefilter (T33). nil keeps
-// full-AI mode. When set, enrolled tasks ([ai.jev].tasks) try Jev first: a
-// confident verdict is returned without an LLM call; low confidence,
-// unavailability or malformed answers escalate to the normal LLM pipeline.
+// WithJev installs the exclusive Jev (System One) classifier (T33, T60).
+// nil keeps LLM-only classification. When set, enrolled tasks
+// ([ai.jev].tasks) are classified by Jev ONLY: a confident verdict is
+// returned without an LLM call; low confidence, unavailability or
+// malformed answers synthesize a needs_human review verdict instead of
+// escalating — the LLM is never called for classification in jev mode
+// (owner decision: one classifier, never one after another).
 func WithJev(s *JevSolver) RunnerOption {
 	return func(r *runner) error {
 		r.jev = s
-		return nil
-	}
-}
-
-// WithJevOnly marks tasks where the Jev prefilter verdict is FINAL (T46):
-// when the prefilter cannot decide (low confidence, input outside its
-// competence), is unavailable or returns a schema-invalid verdict, the run
-// ends as a synthetic needs_human review verdict instead of escalating to
-// the LLM — classification tasks never fall back to the LLM in this mode.
-// Only jev-compatible tasks are allowed (fail fast); an empty list keeps
-// the T33 full-AI escalation for every task.
-func WithJevOnly(tasks []TaskName) RunnerOption {
-	return func(r *runner) error {
-		r.jevOnly = make(map[TaskName]struct{}, len(tasks))
-		for _, t := range tasks {
-			if !isJevCompatible(t) {
-				return fmt.Errorf("ai: jev_only task %q is not jev-compatible", t)
-			}
-			r.jevOnly[t] = struct{}{}
-		}
 		return nil
 	}
 }
@@ -290,15 +269,16 @@ func (r *runner) run(ctx context.Context, accountID, entityType, entityID, runID
 		return nil, Decision{}, fmt.Errorf("ai: encode input: %w", err)
 	}
 
-	// 0) Optional Jev prefilter (T33): enrolled tasks with a non-empty
-	// account try the System-One endpoint first. A decided verdict returns
-	// without touching the LLM pipeline (no cache, no budget — different
-	// service); low confidence, unavailability or malformed answers fall
-	// through to the full LLM path below (full-AI semantics preserved).
+	// 0) Exclusive Jev classifier (T60): enrolled tasks with a non-empty
+	// account are decided by the System-One endpoint ONLY. A decided
+	// verdict returns without touching the LLM pipeline (no cache, no
+	// budget — different service); low confidence, unavailability or
+	// malformed answers synthesize a needs_human review verdict. The LLM
+	// is never called for classification in jev mode (owner decision: one
+	// classifier, never one after another).
 	if r.jev != nil && accountID != "" && r.jev.Handles(task) {
-		if verdict, dec, done, err := r.jevRun(ctx, task, accountID, entityType, entityID, runID, inputJSON); done {
-			return verdict, dec, err
-		}
+		verdict, dec, err := r.jevRun(ctx, task, accountID, entityType, entityID, runID, inputJSON)
+		return verdict, dec, err
 	}
 
 	// Trusted convention: TrustedBlocks() rides in the system prompt (the
@@ -407,45 +387,30 @@ func (r *runner) run(ctx context.Context, accountID, entityType, entityID, runID
 	return verdict, dec, nil
 }
 
-// jevRun is the T33 prefilter path for one enrolled task: Jev verdict →
-// schema validation → the same deterministic post-checks and ledger record
-// as the LLM path. done=false means "escalate to the LLM" (undecided,
-// unavailable or invalid); done=true is terminal — including a record
-// failure, where the verdict is returned alongside the error (audit gap
-// visible, never silent) exactly like the main pipeline.
-//
-// T46: for jev_only tasks every escalation outcome is terminal too — the
-// run synthesizes a needs_human review verdict (reason jev_undecided or
-// schema_invalid) instead of escalating; the LLM pipeline is never reached.
-func (r *runner) jevRun(ctx context.Context, task TaskName, accountID, entityType, entityID, runID string, inputJSON []byte) (json.RawMessage, Decision, bool, error) {
+// jevRun is the exclusive classifier path for one enrolled task (T60): a
+// Jev verdict → schema validation → the same deterministic post-checks and
+// ledger record as the LLM path. Every non-decided outcome is terminal —
+// the run ends as a synthetic needs_human review verdict (reason
+// jev_undecided or schema_invalid, Source=jev) and the LLM pipeline is
+// never reached. A record failure still returns the verdict alongside the
+// error (audit gap visible, never silent) exactly like the main pipeline.
+func (r *runner) jevRun(ctx context.Context, task TaskName, accountID, entityType, entityID, runID string, inputJSON []byte) (json.RawMessage, Decision, error) {
 	start := r.now()
-	_, only := r.jevOnly[task] // T46: Jev is the final verdict for this task
 	verdict, conf, err := r.jev.Solve(ctx, task, json.RawMessage(inputJSON))
 	if err != nil {
-		if only {
-			r.log.Warn("ai: jev prefilter failed; jev-only task routes to review", "task", string(task), "err", err)
-			return r.jevOnlyUndecided(task, accountID, entityType, entityID, runID, inputJSON, start, reasonJevUndecided)
-		}
-		r.log.Warn("ai: jev prefilter failed; escalating to llm", "task", string(task), "err", err)
-		return nil, Decision{}, false, nil
+		r.log.Warn("ai: jev classifier failed; routing to review", "task", string(task), "err", err)
+		return r.jevUndecided(task, accountID, entityType, entityID, runID, inputJSON, start, reasonJevUndecided)
 	}
 	if verdict == nil {
-		if only {
-			r.log.Info("ai: jev undecided; jev-only task routes to review", "task", string(task), "confidence", conf)
-			return r.jevOnlyUndecided(task, accountID, entityType, entityID, runID, inputJSON, start, reasonJevUndecided)
-		}
-		r.log.Debug("ai: jev undecided; escalating to llm", "task", string(task), "confidence", conf)
-		return nil, Decision{}, false, nil
+		r.log.Info("ai: jev undecided; routing to review", "task", string(task), "confidence", conf)
+		return r.jevUndecided(task, accountID, entityType, entityID, runID, inputJSON, start, reasonJevUndecided)
 	}
 	// Defense in depth: a Jev verdict must pass the same strict schema
-	// validation as an LLM verdict; a failure escalates instead of trusting.
+	// validation as an LLM verdict; a failure routes to review instead of
+	// trusting.
 	if err := r.validator.validate(task, verdict); err != nil {
-		if only {
-			r.log.Warn("ai: jev verdict failed schema validation; jev-only task routes to review", "task", string(task), "err", err)
-			return r.jevOnlyUndecided(task, accountID, entityType, entityID, runID, inputJSON, start, reasonSchemaInvalid)
-		}
-		r.log.Warn("ai: jev verdict failed schema validation; escalating to llm", "task", string(task), "err", err)
-		return nil, Decision{}, false, nil
+		r.log.Warn("ai: jev verdict failed schema validation; routing to review", "task", string(task), "err", err)
+		return r.jevUndecided(task, accountID, entityType, entityID, runID, inputJSON, start, reasonSchemaInvalid)
 	}
 	// Deterministic post-checks apply verbatim (guard flag wins, never
 	// blocks; offer/invitation still route to a human).
@@ -474,17 +439,17 @@ func (r *runner) jevRun(ctx context.Context, task TaskName, accountID, entityTyp
 	dec.Injection = dec.Injection || commonBool(verdict, "injection_suspected")
 
 	if err := r.record(&dec, verdict); err != nil {
-		return verdict, dec, true, err
+		return verdict, dec, err
 	}
-	return verdict, dec, true, nil
+	return verdict, dec, nil
 }
 
-// jevOnlyUndecided is the T46 terminal review path for a jev_only task: the
-// prefilter did not produce a schema-valid verdict, so the run ends as a
-// synthetic needs_human verdict — the same shape as the budget-exhausted
-// path, recorded with Source=jev (the Jev stage owns the outcome), and the
-// LLM pipeline is never reached.
-func (r *runner) jevOnlyUndecided(task TaskName, accountID, entityType, entityID, runID string, inputJSON []byte, start time.Time, reason string) (json.RawMessage, Decision, bool, error) {
+// jevUndecided is the terminal review path of the exclusive Jev classifier
+// (T60): the classifier did not produce a schema-valid verdict, so the run
+// ends as a synthetic needs_human verdict — the same shape as the
+// budget-exhausted path, recorded with Source=jev (the Jev stage owns the
+// outcome), and the LLM pipeline is never reached.
+func (r *runner) jevUndecided(task TaskName, accountID, entityType, entityID, runID string, inputJSON []byte, start time.Time, reason string) (json.RawMessage, Decision, error) {
 	flagged, _ := r.guard.Inspect(string(inputJSON))
 	verdict := syntheticVerdict(reason, flagged)
 	dec := Decision{
@@ -505,9 +470,9 @@ func (r *runner) jevOnlyUndecided(task TaskName, accountID, entityType, entityID
 		LatencyMS:   r.now().Sub(start).Milliseconds(),
 	}
 	if err := r.record(&dec, verdict); err != nil {
-		return verdict, dec, true, err
+		return verdict, dec, err
 	}
-	return verdict, dec, true, nil
+	return verdict, dec, nil
 }
 
 // withTrustedBlocks appends the input's TrustedBlocks() to the system prompt
