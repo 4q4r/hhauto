@@ -110,6 +110,7 @@ func applyDefaults(c *Config) {
 
 	for _, d := range []boolPtrDefault{
 		{&c.Features.AutoClone.Autolift, true},
+		{&c.Features.AutoClone.Improve.ExperienceReplace, true}, // T58: the owner's clone already grew duplicates from improve applies
 		{&c.Pacing.NightPause, true},
 		{&c.Features.ChatOps.AutoReply, true}, // owner decision #6: auto-reply is ON by default
 		{&c.Email.PerEmployerOnce, true},

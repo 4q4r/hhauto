@@ -179,6 +179,7 @@
                                         # Даты (experience_dates) — НЕ ИИ-поле: улучшаются только с явным промптом владельца.
 # model_profile = ""                    # профиль [ai.models] для задачи resume_improve
 # always_ask = []                       # поля, улучшения которых НЕ применяются автоматически: дифф уходит в review
+# experience_replace = true             # T58: после успешного apply опыта удалять замещённые hh-форки записей (маршрут T56); false = дубли остаются
 # [features.autoclone.improve.prompts.title]
 # inline = "..."                        # свой промпт поля (inline | file — взаимоисключимо); без override — builtin
 # file = "prompts/title.md"

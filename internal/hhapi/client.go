@@ -43,6 +43,11 @@ type Client struct {
 
 	book   cookieBook
 	pinned atomic.Pointer[string] // effective site host after regional redirect
+
+	// experienceReplace (T58): delete forked experience generations after
+	// a verified apply; wired from [features.autoclone.improve]
+	// experience_replace via WithExperienceReplace.
+	experienceReplace bool
 }
 
 // NewClient builds the per-account web client. dialer comes from the proxy
@@ -74,12 +79,13 @@ func NewClient(cfg config.Account, endpoints config.APIEndpoints, dialer proxy.D
 		return nil, fmt.Errorf("hhapi: cookie jar: %w", err)
 	}
 	c := &Client{
-		cfg: cfg,
-		eps: newEndpointSet(endpoints),
-		log: log,
-		jar: jar,
-		lim: newLimiter(cfg.RPS),
-		rnd: rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), rand.Uint64())),
+		cfg:               cfg,
+		eps:               newEndpointSet(endpoints),
+		log:               log,
+		jar:               jar,
+		lim:               newLimiter(cfg.RPS),
+		rnd:               rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), rand.Uint64())),
+		experienceReplace: opts.experienceReplace,
 	}
 	switch opts.transport {
 	case "", config.TransportTLSClient:
