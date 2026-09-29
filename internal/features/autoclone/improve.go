@@ -108,10 +108,11 @@ type Options struct {
 
 // pending is one planned mutation awaiting the apply step.
 type pending struct {
-	spec    FieldSpec
-	item    int
-	locator string
-	value   json.RawMessage
+	spec        FieldSpec
+	item        int
+	locator     string
+	value       json.RawMessage
+	skillLevels map[string]string // key_skills only: verdict levels by skill name (T57)
 }
 
 // Improver improves one fresh clone per call.
@@ -188,6 +189,7 @@ func (im *Improver) ImproveClone(ctx context.Context, accountID, parentHash, clo
 	} else {
 		im.applyPending(ctx, cloneHash, live, mutated, pendings, artifact)
 	}
+	im.applyKeySkillLevels(ctx, cloneHash, pendings, artifact)
 	artifact.Applied = artifactHasStatus(artifact, StatusImproved)
 	im.opt.Log.Info("autoclone: improve clone done",
 		"hash", cloneHash, "planned_fields", len(artifact.Fields), "pending", len(pendings), "applied", artifact.Applied)
@@ -299,7 +301,7 @@ func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 			started := time.Now()
 			im.opt.Log.Info("autoclone: improve field asking AI",
 				"field", id, "locator", tg.locator, "label", spec.Label)
-			proposed, status, reason, reviewID := im.propose(ctx, accountID, cloneHash, spec, tg, live, candidateCtx)
+			proposed, status, reason, reviewID, verdictLevels := im.propose(ctx, accountID, cloneHash, spec, tg, live, candidateCtx)
 			diff.Status, diff.Reason, diff.ReviewID = status, reason, reviewID
 			if proposed != nil {
 				diff.After = displayValue(spec, proposed)
@@ -311,7 +313,7 @@ func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 				if werr := writeValue(spec, mutated, tg.item, proposed); werr != nil {
 					diff.Status, diff.Reason = StatusError, werr.Error()
 				} else {
-					pendings = append(pendings, pending{spec: spec, item: tg.item, locator: tg.locator, value: proposed})
+					pendings = append(pendings, pending{spec: spec, item: tg.item, locator: tg.locator, value: proposed, skillLevels: verdictLevels})
 				}
 			}
 			// always_ask proposals park for review; nothing applies.
@@ -454,9 +456,10 @@ func (im *Improver) fieldPrompt(fieldID, candidateCtx string) string {
 }
 
 // propose asks the AI for one field target's new value and returns the
-// validated payload value (nil when nothing may apply).
+// validated payload value (nil when nothing may apply). For key_skills the
+// verdict's optional key_skill_levels ride along (T57; nil otherwise).
 func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, spec FieldSpec,
-	tg target, live *hhapi.ResumeContent, candidateCtx string) (value json.RawMessage, status, reason string, reviewID int64) {
+	tg target, live *hhapi.ResumeContent, candidateCtx string) (value json.RawMessage, status, reason string, reviewID int64, skillLevels map[string]string) {
 	verdict, _, err := im.opt.Runner.RunWithSystem(ctx, accountID, "resume", cloneHash, "",
 		ai.TaskResumeImprove, im.fieldPrompt(spec.ID, candidateCtx), ai.ImproveInput{
 			Field:            spec.ID,
@@ -466,11 +469,11 @@ func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, sp
 			CandidateContext: candidateCtx,
 		})
 	if err != nil {
-		return nil, StatusError, err.Error(), 0
+		return nil, StatusError, err.Error(), 0, nil
 	}
 	out, ok := decodeImproveVerdict(verdict)
 	if !ok {
-		return nil, StatusError, "decode verdict failed", 0
+		return nil, StatusError, "decode verdict failed", 0, nil
 	}
 	if out.NeedsHuman {
 		// The AI proposal rides the parked item (best effort): it is the
@@ -479,31 +482,109 @@ func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, sp
 		proposal, _ := slotValue(spec, verdict)
 		id := im.parkReview(ctx, accountID, ReviewKindImproveNeedsHuman,
 			"improve verdict needs human: "+out.Reason, needReviewPayload(cloneHash, spec, tg, proposal))
-		return nil, StatusNeedsHuman, out.Reason, id
+		return nil, StatusNeedsHuman, out.Reason, id, nil
 	}
 	if out.Unchanged {
-		return nil, StatusUnchanged, "", 0
+		return nil, StatusUnchanged, "", 0, nil
 	}
 	proposed, err := slotValue(spec, verdict)
 	if err != nil {
-		return nil, StatusError, err.Error(), 0
+		return nil, StatusError, err.Error(), 0, nil
 	}
 	validated, verr := ValidateValueAt(spec, live, tg.item, proposed)
 	if verr != nil {
-		return nil, StatusValidationFailed, verr.Error(), 0
+		return nil, StatusValidationFailed, verr.Error(), 0, nil
 	}
 	if rawEqualT(validated, tg.raw) {
-		return nil, StatusUnchanged, "", 0
+		return nil, StatusUnchanged, "", 0, nil
 	}
 	// always_ask: the value is good but a human approves it first.
 	for _, f := range im.opt.Cfg.AlwaysAsk {
 		if f == spec.ID {
 			id := im.parkReview(ctx, accountID, ReviewKindImproveAlwaysAsk,
 				"improved "+spec.Label+" waits for owner approval", reviewPayload(cloneHash, spec.ID, validated))
-			return validated, StatusAlwaysAsk, "", id
+			return validated, StatusAlwaysAsk, "", id, nil
 		}
 	}
-	return validated, StatusImproved, "", 0
+	var levels map[string]string
+	if spec.ID == "key_skills" {
+		levels = keySkillVerdictLevels(verdict)
+	}
+	return validated, StatusImproved, "", 0, levels
+}
+
+// keySkillLeveler is the optional API surface of the T57 levels step. The
+// real content surface (*hhapi.Client and the CLI lineageEditor wrapper)
+// implements it; test fakes may substitute their own or omit it (the step
+// then degrades to a loud no-op — the content apply is unaffected).
+type keySkillLeveler interface {
+	UserSkills(ctx context.Context, resumeHash string) ([]hhapi.UserSkill, error)
+	SetKeySkillLevels(ctx context.Context, resumeHash string, sets []hhapi.KeySkillLevel) error
+}
+
+// applyKeySkillLevels runs the T57 levels step after the content apply: no
+// resume key skill may stay on «Уровень не указан». Skills without a level
+// get the verdict level (default Средний); leveled skills are never sent
+// (byte-for-byte preservation). The UserSkills re-read is the verify gate.
+// A step failure flips the key_skills artifact field (when improved this
+// run) to error — it never fails the run: the content apply already landed.
+func (im *Improver) applyKeySkillLevels(ctx context.Context, cloneHash string, pendings []pending, artifact *DiffArtifact) {
+	lvl, ok := im.opt.API.(keySkillLeveler)
+	if !ok {
+		im.opt.Log.Warn("autoclone: key-skill levels step skipped: the content surface does not implement the levels contract")
+		return
+	}
+	verdictLevels := map[string]string{}
+	for _, p := range pendings {
+		for k, v := range p.skillLevels {
+			verdictLevels[k] = v
+		}
+	}
+	skills, err := lvl.UserSkills(ctx, cloneHash)
+	if err != nil {
+		im.failKeySkillLevels(artifact, "read skill levels: "+err.Error())
+		return
+	}
+	sets := keySkillLevelSets(skills, verdictLevels)
+	if len(sets) == 0 {
+		return // every key skill already carries a level
+	}
+	if err := lvl.SetKeySkillLevels(ctx, cloneHash, sets); err != nil {
+		im.failKeySkillLevels(artifact, "set skill levels: "+err.Error())
+		return
+	}
+	got, err := lvl.UserSkills(ctx, cloneHash)
+	if err != nil {
+		im.failKeySkillLevels(artifact, "verify skill levels: "+err.Error())
+		return
+	}
+	byID := make(map[int64]int64, len(got))
+	for _, s := range got {
+		byID[s.ID] = s.LevelID
+	}
+	var missing []int64
+	for _, s := range sets {
+		if byID[s.SkillID] != s.LevelID {
+			missing = append(missing, s.SkillID)
+		}
+	}
+	if len(missing) > 0 {
+		im.failKeySkillLevels(artifact, fmt.Sprintf("verify skill levels: skills %v still on «Уровень не указан»", missing))
+	}
+}
+
+// failKeySkillLevels attributes a levels-step failure to the key_skills
+// artifact field when this run improved it; without such a field the log
+// carries the failure (nothing else to mark).
+func (im *Improver) failKeySkillLevels(artifact *DiffArtifact, reason string) {
+	for i := range artifact.Fields {
+		f := &artifact.Fields[i]
+		if f.Field == "key_skills" && f.Status == StatusImproved {
+			f.Status, f.Reason = StatusError, "skill levels: "+reason
+			return
+		}
+	}
+	im.opt.Log.Warn("autoclone: key-skill levels step failed", "reason", reason)
 }
 
 // parkReview records one review item (best effort: a broken reviewer must
