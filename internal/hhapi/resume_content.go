@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -263,7 +264,13 @@ func (c *Client) UpdateResumeContent(ctx context.Context, hash string, content *
 	// sent value. hh applies saves asynchronously (a marker edit was
 	// invisible +2s and visible +4s after the POST — live 2026-09-29), so
 	// the read-back polls until the budget expires; only the keys still
-	// unreadable back then are reported missing.
+	// unreadable back then are reported missing. T58: when the
+	// experience-replace flow is on, an edited experience record is
+	// answered by a FORK (new id, old record stays — live T55), so the
+	// strict array equality can never hold for profile.experience; that
+	// key accepts once every sent record is covered (id-insensitively) and
+	// the replace step re-checks the record-count/keep/target invariants.
+	forkAwareExperience := c.experienceReplace && slices.Contains(changed, "profile.experience")
 	var missing []string
 	for {
 		verify, err := c.ResumeContent(ctx, hash)
@@ -273,11 +280,20 @@ func (c *Client) UpdateResumeContent(ctx context.Context, hash string, content *
 		missing = nil
 		for _, key := range changed {
 			side, name := splitContentKey(key)
-			if !appliedEqual(sideOf(verify, side)[name], sideOf(content, side)[name]) {
+			got := sideOf(verify, side)[name]
+			want := sideOf(content, side)[name]
+			ok := appliedEqual(got, want)
+			if !ok && forkAwareExperience && key == "profile.experience" {
+				ok = experienceCovered(got, want)
+			}
+			if !ok {
 				missing = append(missing, key)
 			}
 		}
 		if len(missing) == 0 {
+			if forkAwareExperience {
+				return c.replaceForkedExperience(ctx, hash, live, content, verify)
+			}
 			return nil
 		}
 		if time.Since(verifyStart) >= verifyWaitBudget {
@@ -290,6 +306,163 @@ func (c *Client) UpdateResumeContent(ctx context.Context, hash string, content *
 		}
 	}
 	return &ResumeContentVerifyError{Keys: missing, Err: ErrCloneMaterialize}
+}
+
+// experienceCovered is the fork-aware acceptance predicate of the T58
+// replace flow: every sent experience record must be carried by some
+// read-back record (hh answers content edits with forks — new id, old
+// record stays — so the read-back legitimately holds MORE records than
+// were sent). Non-object shapes are rejected; the ordinary gate already
+// covered them.
+func experienceCovered(a, b json.RawMessage) bool {
+	var av, bv any
+	if json.Unmarshal(a, &av) != nil || json.Unmarshal(b, &bv) != nil {
+		return false
+	}
+	al, aok := av.([]any)
+	bl, bok := bv.([]any)
+	if !aok || !bok || !allObjects(al) || !allObjects(bl) {
+		return false
+	}
+	return objectListCovers(al, bl) // a = read-back, b = sent
+}
+
+// replaceForkedExperience closes the edit contract's fork gap (live T55):
+// upsert-by-id forks every edited experience record — the new content
+// lands on a fresh id while the old record stays, so the resume grows
+// duplicate blocks (one improve run grew a clone's own records 3 → 11).
+// After a verified apply, a pre-apply record that still carries its old
+// content is a replaced generation: delete it through the T56 pool-replace
+// route (the split only ever holds this resume's own records; inherited
+// ones never reach this point, and DeleteExperienceRecords re-guards
+// shared records), then re-check the flow invariant on a fresh read: own
+// record count constant, keep records byte-identical, sent targets
+// present. A delete rejection surfaces as-is — the resume visibly keeps
+// the duplicates instead of a silent claim of success.
+func (c *Client) replaceForkedExperience(ctx context.Context, hash string, live, sent, verify *ResumeContent) error {
+	pre, err := experienceByID(live)
+	if err != nil {
+		return err
+	}
+	sentByID, err := experienceByID(sent)
+	if err != nil {
+		return err
+	}
+	post, err := experienceByID(verify)
+	if err != nil {
+		return err
+	}
+	replaced := replacedExperienceIDs(pre, sentByID, post)
+	if len(replaced) == 0 {
+		return nil
+	}
+	if _, err := c.DeleteExperienceRecords(ctx, hash, replaced); err != nil {
+		return err
+	}
+	final, err := c.ResumeContent(ctx, hash)
+	if err != nil {
+		return fmt.Errorf("experience replace verify: %w", err)
+	}
+	return verifyReplaceOutcome(pre, sentByID, final, replaced)
+}
+
+// replacedExperienceIDs returns the sorted ids of the records this apply
+// replaced: a record that was edited (sent content differs) and still
+// carries its pre-apply content after the verified apply — its new content
+// rides a fork, so the old id is a replaced generation. Records updated in
+// place (or absent) and records this apply did not touch are kept.
+func replacedExperienceIDs(pre, sentByID, post map[int64]json.RawMessage) []int64 {
+	var replaced []int64
+	for id, preRaw := range pre {
+		sentRaw, ok := sentByID[id]
+		if !ok || rawEqual(sentRaw, preRaw) {
+			continue // not edited by this apply: no fork exists to replace it
+		}
+		postRaw, ok := post[id]
+		if !ok || !rawEqual(postRaw, preRaw) {
+			continue // gone or updated in place: nothing replaced
+		}
+		replaced = append(replaced, id)
+	}
+	sort.Slice(replaced, func(i, j int) bool { return replaced[i] < replaced[j] })
+	return replaced
+}
+
+// verifyReplaceOutcome re-checks the flow invariant on the fresh read the
+// caller made after the deletes (the T55 defect: the coverage-based verify
+// gate cannot see record-count changes; this flow can and must): own
+// record count constant, keep records byte-identical, every edited sent
+// record still carried by some own record (the fork).
+func verifyReplaceOutcome(pre, sentByID map[int64]json.RawMessage, final *ResumeContent, replaced []int64) error {
+	fin, err := experienceByID(final)
+	if err != nil {
+		return err
+	}
+	if len(fin) != len(pre) {
+		return fmt.Errorf("%w: own experience records %d -> %d", ErrExperienceDelete, len(pre), len(fin))
+	}
+	for id, preRaw := range pre {
+		if slices.Contains(replaced, id) {
+			continue
+		}
+		if got, ok := fin[id]; !ok || !rawEqual(preRaw, got) {
+			return fmt.Errorf("%w: keep record id=%d changed", ErrExperienceDelete, id)
+		}
+	}
+	var finList []any
+	if err := json.Unmarshal(final.Profile["experience"], &finList); err != nil {
+		return fmt.Errorf("experience replace verify: %w", err)
+	}
+	for id, sentRaw := range sentByID {
+		preRaw, ok := pre[id]
+		if !ok || rawEqual(sentRaw, preRaw) {
+			continue // only the edited targets need a carrier
+		}
+		var want map[string]any
+		if err := json.Unmarshal(sentRaw, &want); err != nil {
+			return fmt.Errorf("experience replace verify: %w", err)
+		}
+		found := false
+		for _, it := range finList {
+			if rec, ok := it.(map[string]any); ok && objectCovers(rec, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("%w: replaced target id=%d missing after replace", ErrExperienceDelete, id)
+		}
+	}
+	return nil
+}
+
+// experienceByID indexes the split's own experience records by id. The
+// verify gate just decoded both sides, so a decode failure is an upstream
+// anomaly — reported, never swallowed; id-less records are skipped (they
+// cannot be addressed).
+func experienceByID(rc *ResumeContent) (map[int64]json.RawMessage, error) {
+	raw, ok := rc.Profile["experience"]
+	if !ok || len(raw) == 0 {
+		return map[int64]json.RawMessage{}, nil
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, fmt.Errorf("hhapi: experience replace decode: %w", err)
+	}
+	out := make(map[int64]json.RawMessage, len(items))
+	for _, it := range items {
+		var p struct {
+			ID int64 `json:"id"`
+		}
+		if err := json.Unmarshal(it, &p); err != nil {
+			return nil, fmt.Errorf("hhapi: experience replace decode id: %w", err)
+		}
+		if p.ID == 0 {
+			continue
+		}
+		out[p.ID] = it
+	}
+	return out, nil
 }
 
 // postResumeEdit issues one field save through the site edit endpoint with

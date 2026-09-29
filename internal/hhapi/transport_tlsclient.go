@@ -180,6 +180,10 @@ type clientOptions struct {
 	transport   string      // "" => config.TransportTLSClient
 	proxyURL    string      // tls-client only: full proxy URL (SetProxy form)
 	browserSpec *tlsfp.Spec // tls-client only: captured browser hello (1:1 replay)
+	// T58: delete forked experience generations after a verified apply
+	// (see resume_content.go; wired from [features.autoclone.improve]
+	// experience_replace).
+	experienceReplace bool
 }
 
 // ClientOption extends NewClient without changing the HHAPI contract or the
@@ -199,6 +203,17 @@ func WithTransport(mode string) ClientOption {
 // rejected for the legacy http transport (which proxies via its Dialer).
 func WithProxyURL(raw string) ClientOption {
 	return func(o *clientOptions) { o.proxyURL = raw }
+}
+
+// WithExperienceReplace turns on the T58 post-apply replacement of forked
+// experience records: the edit contract is upsert-by-id (live T55), so
+// every edited experience record forks — the new content lands on a fresh
+// id while the old record stays and the resume grows duplicate blocks.
+// With the flag on, a verified experience apply deletes the replaced old
+// generations (resume_content.go). The engine wires it from
+// [features.autoclone.improve] experience_replace (default true).
+func WithExperienceReplace(on bool) ClientOption {
+	return func(o *clientOptions) { o.experienceReplace = on }
 }
 
 // WithBrowserTLSSpec switches the tls-client transport onto a 1:1 replay

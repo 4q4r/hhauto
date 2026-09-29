@@ -419,6 +419,14 @@ type AutoCloneImprove struct {
 	// that gates off-browser POSTs); without it the pipeline keeps the
 	// T29 builder-update path and its degradation semantics.
 	Editor AutoCloneImproveEditor `toml:"editor"`
+	// ExperienceReplace closes the edit contract's fork gap (T58): the
+	// /applicant/resume/edit route is upsert-by-id (live T55) — every
+	// edited experience record forks, the old record stays and the resume
+	// grows duplicate blocks. With this on (default), a verified
+	// experience apply deletes the replaced old generations through the
+	// T56 pool-replace route and re-checks the record-count invariant;
+	// off restores the raw behavior without deletions.
+	ExperienceReplace *bool `toml:"experience_replace"`
 }
 
 // AutoCloneImproveEditor configures the T30 browser editor runner.

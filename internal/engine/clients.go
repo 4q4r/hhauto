@@ -154,6 +154,13 @@ func BuildAPIClients(ctx context.Context, cfg *config.Config, reg proxy.Registry
 		if browserSpec != nil {
 			opts = append(opts, hhapi.WithBrowserTLSSpec(browserSpec))
 		}
+		// T58: the replace flow deletes forked experience generations after
+		// a verified apply; [features.autoclone.improve].experience_replace
+		// defaults to true (the owner decision — improve applies forked the
+		// clone's records into duplicates), an explicit false opts out.
+		if ir := cfg.Features.AutoClone.Improve.ExperienceReplace; ir == nil || *ir {
+			opts = append(opts, hhapi.WithExperienceReplace(true))
+		}
 		client, err := hhapi.NewClient(acct, cfg.API.Endpoints, dialer, log, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("engine: account %s: %w", id, err)
