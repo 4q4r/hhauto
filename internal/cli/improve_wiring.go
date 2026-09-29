@@ -210,6 +210,22 @@ func buildImprove(cfg *config.Config, runner ai.Runner, db interface {
 	})
 }
 
+// buildNeedApplier constructs the T54 needs_human resolver for one review
+// item: the item account's content surface plus the browser editor runner
+// when [features.autoclone.improve.editor] is enabled. No AI wiring — the
+// value was already proposed, the human approved (or corrected) it.
+func buildNeedApplier(rt *Runtime, accountID string) (*autoclone.NeedApply, error) {
+	editor, err := rt.contentEditorFor(accountID)
+	if err != nil {
+		return nil, err
+	}
+	browser, err := buildEditorRunner(rt.Cfg, rt.DB, rt.Cookies, editor, accountID, rt.Log)
+	if err != nil {
+		return nil, err
+	}
+	return &autoclone.NeedApply{API: editor, Editor: browser}, nil
+}
+
 // buildImproveForCommand constructs the improver for the standalone
 // `resume improve` command (T35): the content surface is the ACCOUNT's own
 // client (not the clone-lineage editor — base resumes have no lineage

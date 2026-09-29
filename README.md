@@ -209,7 +209,7 @@ TOML, по умолчанию `~/.config/hhauto/hhauto.toml` (переопред
 | `hhauto chats list\|show\|reply\|leave` | чаты: `reply --text` (ссылки запрещены), `leave --yes`, `list --state` |
 | `hhauto contacts export [--format csv\|json]` | экспорт собранных контактов |
 | `hhauto tests list\|show\|open\|solve ID` | тесты: артефакты ответов, URL внешней формы, принудительное решение черновиком |
-| `hhauto review list\|show\|resolve\|ignore` | очередь ручного разбора (`resolve --note`) |
+| `hhauto review list\|show\|resolve\|ignore` | очередь ручного разбора; `resolve ID --decision apply[\|--value "текст"]\|discard` — решение человека по needs_human-вердикту improve (apply через обычный apply-путь, `--value` — свой текст вместо AI-предложения; dry-run/JSON поддерживаются) |
 | `hhauto profile edit` | profile.md в `$EDITOR` |
 | `hhauto ai status\|eval [--task]` | расход токенов/USD за день; золотая регрессия промптов |
 | `hhauto ai compare <expA> <expB> [--days N]` | сравнение двух экспериментов (`prompt_ver`/`model`) по ai_decisions: needs-human, уверенность, латентность, стоимость |
