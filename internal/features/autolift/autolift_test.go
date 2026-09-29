@@ -17,6 +17,7 @@ import (
 
 	"hhauto/internal/captcha"
 	"hhauto/internal/config"
+	"hhauto/internal/console"
 	"hhauto/internal/features/featurekit"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/queue"
@@ -172,10 +173,11 @@ func quietLogger() *slog.Logger {
 var now = time.Date(2026, 9, 24, 10, 15, 0, 0, time.UTC)
 
 type harness struct {
-	db    *store.DB
-	fake  *hhFake
-	chain *fakeChain
-	cfg   config.Config
+	db      *store.DB
+	fake    *hhFake
+	chain   *fakeChain
+	cfg     config.Config
+	console *console.Surface // T69 lift success lines; nil = silent
 }
 
 func newHarness(t *testing.T, mutate func(*config.Config), resumes ...fakeResume) *harness {
@@ -207,6 +209,7 @@ func (h *harness) feature(t *testing.T) *Feature {
 		ChainFor: func(string) (captcha.Chain, bool) { return h.chain, true },
 		Now:      func() time.Time { return now },
 		Log:      quietLogger(),
+		Console:  h.console,
 	})
 	return f
 }

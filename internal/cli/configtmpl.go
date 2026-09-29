@@ -29,6 +29,21 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # file = "{data_dir}/hhauto.log"        # required for json
 # redact_secrets = true                 # mandatory: the validator rejects false
 
+[console]                                # T69: консоль-поверхность демона (только представление; ledger/метрики/вебхуки не трогает)
+# applied = true                        # строки «✓ Откликнулся…» (в dry-run «Откликнулся бы»)
+# errors = true                         # строки «✗ Ошибка отклика…»
+# letters = true                        # строки «? Письмо на проверку…»
+# lift = true                           # строки «↑ Поднято…»
+# verdicts = false                      # ИИ-вердикты классификации (score/отклик-скип) — альтернатива --log-level debug
+# skips = "interesting,aggregate"       # режимы через запятую: none | all | interesting | aggregate
+# skips_reasons = []                    # если непустой — индивидуально показывать только эти reason
+# template_applied = ""                 # переопределение шаблона (Go text/template); пусто = дефолт
+# template_skip = ""
+# template_error = ""
+# template_letter = ""
+# template_digest = ""
+# template_lift = ""
+
 [api]
 # kind = "web"                          # "web" (cookie surface) is the only v1 mode
 [api.endpoints]

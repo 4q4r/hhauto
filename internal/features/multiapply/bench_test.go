@@ -88,7 +88,7 @@ func BenchmarkCascade(b *testing.B) {
 		n++
 		v := base
 		v.ID = int64(424241 + n) // fresh dedup key per op: the F5 read is real
-		stop, skip := f.processVacancy(ctx, "run1", run, "acc1", nil, prof, "hash1", v, map[int64]bool{}, nil)
+		stop, skip := f.processVacancy(ctx, "run1", run, "acc1", nil, prof, "hash1", v, map[int64]bool{}, nil, newPassStats())
 		if stop != "run_quota" || skip != "" {
 			b.Fatalf("stop=%q skip=%q, want run_quota (cascade must stop after the filters, before the popup)", stop, skip)
 		}

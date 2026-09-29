@@ -109,6 +109,8 @@ Chrome — фича opt-in), santhosh-tekuri/jsonschema/v6, agnivade/levenshtein
 - `[general]` data_dir, timezone, dry_run=false
 - `[storage]` path, busy_timeout_ms
 - `[log]` level/format/file, redact_secrets=true (валидатор запрещает false)
+- `[console]` консоль-поверхность демона (T69): applied/errors/letters/lift=true,
+  verdicts=false, skips="interesting,aggregate", skips_reasons=[], template_*
 - `[api]` kind="web"|"developer"; `[api.endpoints]` базовые URL (site, chatik, search_page);
   `[api.endpoints.override]` — переопределение ЛЮБОГО эндпоинта (страховка от дрейфа неофициального API)
 - `[captcha.<id>]` protocol="2captcha"|"anticaptcha", base_url, key_env, per-task-таймауты;

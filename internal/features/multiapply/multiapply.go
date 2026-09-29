@@ -17,6 +17,7 @@ import (
 
 	"hhauto/internal/ai"
 	"hhauto/internal/config"
+	"hhauto/internal/console"
 	"hhauto/internal/features/autoclone"
 	"hhauto/internal/features/featurekit"
 	"hhauto/internal/hhapi"
@@ -75,6 +76,11 @@ type Options struct {
 	// (internal/features/autoclone). nil = improve disabled — the clone
 	// runs unimproved.
 	Improver AutoCloneImprover
+
+	// T69: Console renders the daemon's console surface (applied/skip/
+	// error/letter/verdict lines and the end-of-pass digest). nil = silent
+	// (unwired tests, disabled console).
+	Console *console.Surface
 }
 
 // AutoCloneImprover is the improve seam (implemented by the autoclone
@@ -91,9 +97,10 @@ type RunPayload struct {
 
 // Feature is the WF2 implementation of features.Feature.
 type Feature struct {
-	opt Options
-	log *slog.Logger
-	q   queue.Queue
+	opt     Options
+	log     *slog.Logger
+	q       queue.Queue
+	console *console.Surface
 }
 
 // New builds the feature. A nil logger falls back to slog.Default().
@@ -104,7 +111,7 @@ func New(o Options) *Feature {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	return &Feature{opt: o, log: o.Log}
+	return &Feature{opt: o, log: o.Log, console: o.Console}
 }
 
 // Name implements features.Feature.

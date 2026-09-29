@@ -46,6 +46,21 @@
 # file = "{data_dir}/hhauto.log"        # required for json
 # redact_secrets = true                 # mandatory: the validator rejects false
 
+[console]                                # T69: консоль-поверхность демона (только представление; ledger/метрики/вебхуки не трогает)
+# applied = true                        # строки «✓ Откликнулся…» (в dry-run «Откликнулся бы»)
+# errors = true                         # строки «✗ Ошибка отклика…»
+# letters = true                        # строки «? Письмо на проверку…»
+# lift = true                           # строки «↑ Поднято…»
+# verdicts = false                      # ИИ-вердикты классификации (score/отклик-скип) — альтернатива --log-level debug
+# skips = "interesting,aggregate"       # режимы через запятую: none | all | interesting | aggregate
+# skips_reasons = []                    # если непустой — индивидуально показывать только эти reason
+# template_applied = ""                 # переопределение шаблона (Go text/template); пусто = дефолт
+# template_skip = ""
+# template_error = ""
+# template_letter = ""
+# template_digest = ""
+# template_lift = ""
+
 [api]
 # kind = "web"                          # "web" (cookie surface) is the only v1 mode
 # transport = "tls-client"              # "tls-client" (default) | "http" (stdlib, debugging)
@@ -572,6 +587,32 @@ remote+RU, 2026-09-25: name=28, description=319, все поля=375),
   пингов, максимум 3, список или ИИ.
 - `schedule`: джиттер расписаний, политика пропущенных (`skip | run_once`)
   и потолок догоняющего запуска.
+
+### `[console]`
+Консоль-поверхность демона (T69): какие события и в каком виде рендерятся
+в терминал. Только представление — ledger, метрики и вебхуки не зависят от
+этих настроек. Цвета следуют T53 (✓ зелёный, ✗ красный, ? жёлтый, · dim,
+вердикты cyan) и включаются только на TTY без `NO_COLOR`/`TERM=dumb`/
+`--no-color`; не-TTY вывод остаётся plain.
+- `applied` / `errors` / `letters` / `lift` (дефолт true): строки
+  «✓ Откликнулся…» (в dry-run «Откликнулся бы»), «✗ Ошибка отклика…»,
+  «? Письмо на проверку…» и «↑ Поднято…».
+- `verdicts` (дефолт false): строки ИИ-вердиктов классификации
+  (score/порог → отклик|скип) — альтернатива `--log-level debug`.
+- `skips` (дефолт `"interesting,aggregate"`): режимы индивидуальных строк
+  скипов через запятую — `none` | `all` | `interesting` (причины,
+  требующие внимания: ai_needs_human, ai_injection, inconsistencies,
+  letter_*, popup/vacancy_card/intent ошибки, hh_limit, captcha_exhausted)
+  | `aggregate` (скипы видны только в дайджесте прохода). `none` стоит
+  один; сочетание с другими — ошибка валидации.
+- `skips_reasons` (дефолт `[]`): allowlist поверх режима — если непустой,
+  индивидуально показываются только эти reason (дайджест считает всё).
+- `template_*` (`template_applied`, `template_skip`, `template_error`,
+  `template_letter`, `template_digest`, `template_lift`): полное
+  переопределение строки (Go text/template); пусто = встроенный дефолт.
+  Битый шаблон = ошибка старта. Дайджест прохода: `✓ Проход: откликов N ·
+  писем на проверку N · пропущено N (дедуп N, ИИ N, квота N, прочее N) ·
+  ошибок N · поднято N`; пустые сегменты (бейджи/город/зарплата) исчезают.
 
 ### `[browser]`
 Общая браузерная подсистема (T32): единая точка резолва Chrome для

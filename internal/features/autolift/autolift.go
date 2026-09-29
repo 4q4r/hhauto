@@ -16,12 +16,14 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
 
 	"hhauto/internal/captcha"
 	"hhauto/internal/config"
+	"hhauto/internal/console"
 	"hhauto/internal/features/featurekit"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/queue"
@@ -55,14 +57,19 @@ type Options struct {
 	// AfterFunc is the wake-up timer seam (tests capture the arm); nil →
 	// time.AfterFunc.
 	AfterFunc func(d time.Duration, fn func()) *time.Timer
+
+	// T69: Console renders the lift success line (↑ Поднято …). nil =
+	// silent (unwired tests, disabled console).
+	Console *console.Surface
 }
 
 // Feature is the WF1 implementation of features.Feature.
 type Feature struct {
-	opt   Options
-	log   *slog.Logger
-	q     queue.Queue
-	after func(d time.Duration, fn func()) *time.Timer
+	opt     Options
+	log     *slog.Logger
+	q       queue.Queue
+	after   func(d time.Duration, fn func()) *time.Timer
+	console *console.Surface
 
 	// planMu guards the server_timer state: the local lift plan (account →
 	// resume hash → next lift moment) and the pending arm timer per account.
@@ -87,7 +94,7 @@ func New(o Options) *Feature {
 		after = time.AfterFunc
 	}
 	return &Feature{
-		opt: o, log: o.Log, q: o.Queue, after: after,
+		opt: o, log: o.Log, q: o.Queue, after: after, console: o.Console,
 		plans:     map[string]map[string]time.Time{},
 		armTimers: map[string]*time.Timer{},
 	}
@@ -207,6 +214,8 @@ func (f *Feature) runDiscover(ctx context.Context, accountID string) error {
 	// T36: gating is by nextTouchAt (empty → updated_at + 4h); the plan is
 	// built from the same snapshot.
 	lifted := map[string]bool{}
+	var liftedHashes []string
+	liftedTitles := map[string]string{}
 
 	for _, r := range got {
 		if !isLiftable(r) {
@@ -235,13 +244,36 @@ func (f *Feature) runDiscover(ctx context.Context, accountID string) error {
 			continue
 		}
 		lifted[r.HHID] = true
+		liftedHashes = append(liftedHashes, r.HHID)
+		liftedTitles[r.HHID] = r.Title
 	}
 
 	if !dryRun {
 		f.setPlan(accountID, f.buildPlan(got, exclude, lifted))
 		f.arm(accountID)
+		// T69: the per-lift success line, NextAt straight from the plan
+		// the pass just installed.
+		f.liftLines(accountID, liftedHashes, liftedTitles)
 	}
 	return nil
+}
+
+// liftLines renders the T69 lift success lines for the hashes lifted in
+// this pass; the plan moment is read back from the freshly installed local
+// plan. titles may be empty per hash (the shard carries no titles) — the
+// console surface falls back to the store snapshot and the short hash.
+func (f *Feature) liftLines(accountID string, hashes []string, titles map[string]string) {
+	if f.console == nil || len(hashes) == 0 {
+		return
+	}
+	plan := f.currentPlan(accountID)
+	for _, h := range hashes {
+		at, ok := plan[h]
+		if !ok {
+			continue
+		}
+		f.console.Lift(accountID, h, titles[h], at)
+	}
 }
 
 // cloneExcludes resolves the tracked clone pool excluded from lifting by
@@ -297,6 +329,7 @@ func (f *Feature) runPlanned(ctx context.Context, accountID string, plan map[str
 	day := featurekit.DayUTC(nowT)
 	window := featurekit.LiftWindow(nowT)
 
+	var liftedHashes []string
 	for hash, at := range plan {
 		if dryRun {
 			f.log.Info("autolift: dry-run planned lift", "account", accountID, "resume", hash, "at", at.UTC().Format(time.RFC3339))
@@ -314,6 +347,7 @@ func (f *Feature) runPlanned(ctx context.Context, accountID string, plan map[str
 			f.log.Warn("autolift: lift failed", "account", accountID, "resume", hash, "err", err)
 			continue
 		}
+		liftedHashes = append(liftedHashes, hash)
 	}
 	if dryRun {
 		return nil // no plan mutation, no arm: dry-run is read-only
@@ -325,6 +359,10 @@ func (f *Feature) runPlanned(ctx context.Context, accountID string, plan map[str
 	}
 	f.setPlan(accountID, plan)
 	f.arm(accountID)
+	// T69: the per-lift success line from the re-counted plan (map order
+	// makes the loop above nondeterministic — sort for stable output).
+	sort.Strings(liftedHashes)
+	f.liftLines(accountID, liftedHashes, nil)
 	return nil
 }
 
