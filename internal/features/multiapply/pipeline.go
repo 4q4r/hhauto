@@ -440,9 +440,16 @@ func alreadyMarker(err error) bool {
 	return strings.Contains(body, "уже") || strings.Contains(body, "already")
 }
 
-// countToday counts today's applied applications for account+run.
+// countToday counts today's applications for account+run. Live mode counts
+// applied rows only — a dry_run survey row never burns real quota. Dry-run
+// counts today's survey rows too: the pass shows what WOULD have been sent
+// today, so run.max_per_day caps the proposals (T68).
 func (f *Feature) countToday(ctx context.Context, accountID, runID string) int {
-	n, err := f.opt.DB.ApplicationsCountToday(ctx, accountID, runID, f.dayUTC())
+	count := f.opt.DB.ApplicationsCountToday
+	if f.opt.Config.General.DryRun {
+		count = f.opt.DB.ApplicationsCountTodayInclDryRun
+	}
+	n, err := count(ctx, accountID, runID, f.dayUTC())
 	if err != nil {
 		f.log.Warn("multiapply: count today failed", "run", runID, "err", err)
 		return 0
@@ -667,10 +674,17 @@ func (f *Feature) prefilter(ctx context.Context, runID string, run config.Run, a
 		}
 	}
 
-	// F5: dedup — recorded application (dry_run survey rows never block a
-	// live apply), native auto-responder.
+	// F5: dedup — recorded application (live mode ignores dry_run survey
+	// rows: a survey never blocks a real apply; dry-run sees them, so a
+	// repeated dry-run filters the already-surveyed vacancies out instead
+	// of re-proposing them and tripping the UNIQUE dedup_key — T68), native
+	// auto-responder.
 	key := featurekit.DedupKey(accountID, resumeHash, v.ID)
-	if app, err := f.opt.DB.ApplicationsGetByDedupKeyLive(ctx, key); err == nil && app != nil {
+	getByDedupKey := f.opt.DB.ApplicationsGetByDedupKeyLive
+	if f.opt.Config.General.DryRun {
+		getByDedupKey = f.opt.DB.ApplicationsGetByDedupKey
+	}
+	if app, err := getByDedupKey(ctx, key); err == nil && app != nil {
 		return "already_applied", whitelisted
 	}
 	if f.opt.Config.Features.MultiApply.DedupNativeResp {
@@ -838,6 +852,9 @@ func (f *Feature) dryRunApply(ctx context.Context, runID string, accountID strin
 		DedupKey: featurekit.DedupKey(accountID, resumeHash, v.ID),
 		Status:   "dry_run",
 		Letter:   strPtr(letter),
+		// The feature clock stamps the survey time: the dry-run quota view
+		// counts today's survey rows by created_at (T68).
+		CreatedAt: f.opt.Now(),
 	}); err != nil {
 		f.log.Error("multiapply: dry-run application record failed", "err", err)
 	}

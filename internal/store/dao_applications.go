@@ -142,6 +142,25 @@ func scanApplication(rs rowScanner) (*Application, error) {
 	return &a, nil
 }
 
+// ApplicationsCountTodayInclDryRun is the dry-run quota view (T68): today's
+// applied AND survey rows for account+run, so a dry-run pass respects
+// run.max_per_day by counting what would have been sent today. Applied rows
+// count by applied_at, survey rows by created_at.
+func (db *DB) ApplicationsCountTodayInclDryRun(ctx context.Context, accountID, runID, day string) (int, error) {
+	var n int
+	err := db.conn.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM applications
+		WHERE account_id = ? AND run_id = ?
+		  AND status IN ('applied', 'dry_run')
+		  AND (CASE WHEN status = 'applied' THEN substr(applied_at, 1, 10)
+		            ELSE substr(created_at, 1, 10) END) = ?`,
+		accountID, runID, day).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("store: ApplicationsCountTodayInclDryRun: %w", err)
+	}
+	return n, nil
+}
+
 // ApplicationsGetByDedupKeyLive behaves like ApplicationsGetByDedupKey but
 // ignores dry_run survey rows: a dry-run record must never block a real
 // application (Wave 3 review, T10). Returns nil (no error) when the only
