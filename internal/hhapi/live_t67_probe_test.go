@@ -181,6 +181,55 @@ func TestLive67PoolDump(t *testing.T) {
 	live67DumpPool(t, c, live67Fullstack, "fullstack", dir, 2)
 }
 
+// TestLive67RefRegression re-runs the T66 no-op contract on the reference
+// clone 4f48f357 through the T67 code: prod no-op apply (no diff → no
+// POST), title no-op POST, experience no-op POST, then the pool must stay
+// byte-identical (3 own + 9 parent, keeps' desc shas unchanged).
+func TestLive67RefRegression(t *testing.T) {
+	c := live67Client(t)
+	hash := "4f48f357ff112c2fcc0039ed1f6c7555414349"
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+
+	before, err := c.ResumeContent(ctx, hash)
+	if err != nil {
+		t.Fatalf("content: %v", err)
+	}
+	beforeSha := live67Sha(before.Profile["experience"])
+	t.Logf("[regress] before: title=%s exp-sha=%s", before.Resume["title"], beforeSha)
+
+	// Prod no-op apply: no diff → nothing posted, nil result.
+	if err := c.UpdateResumeContent(ctx, hash, before.Clone(), []string{"resume.title", "profile.experience"}); err != nil {
+		t.Fatalf("no-op apply: %v", err)
+	}
+	// Direct no-op POSTs (the T66 probe contract): title, then experience.
+	if err := c.postResumeEdit(ctx, hash, "title", before.Resume["title"]); err != nil {
+		t.Fatalf("title no-op POST: %v", err)
+	}
+	if err := c.postResumeEdit(ctx, hash, "experience", editFlatValue(before.Profile["experience"])); err != nil {
+		t.Fatalf("experience no-op POST: %v", err)
+	}
+	after, err := c.ResumeContent(ctx, hash)
+	if err != nil {
+		t.Fatalf("read-back: %v", err)
+	}
+	if !appliedEqual(after.Profile["experience"], before.Profile["experience"]) {
+		t.Fatalf("experience read-back mismatch after no-op POST")
+	}
+	afterSha := live67Sha(after.Profile["experience"])
+	t.Logf("[regress] after: exp-sha=%s byte-identical=%v", afterSha, afterSha == beforeSha)
+	if afterSha != beforeSha {
+		t.Fatal("reference experience pool changed on a no-op apply")
+	}
+	live67DumpPool(t, c, hash, "ref", "/tmp/opencode/t67", 3)
+}
+
+// TestLive67ExperienceVerifyProbe reproduces the failing verify step in
+// minimal form on 79d39537… (marker suffix on the FIRST own description,
+// the prod POST path, then a manual verify poll dumping BOTH the split and
+// the raw pool per poll — fork landing time and membership lag become
+// visible). The marker is removed by the next real improve run (T66
+// precedent).
 func TestLive67ExperienceVerifyProbe(t *testing.T) {
 	c := live67Client(t)
 	hash := live67Fullstack
