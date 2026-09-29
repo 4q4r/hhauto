@@ -39,7 +39,10 @@ func TestConsoleColors(t *testing.T) {
 		{"improved status is green", func(l *slog.Logger) {
 			l.Info("autoclone: improve field verdict", "field", "about", "status", "improved")
 		}, ansiGreen},
-		{"plain info is uncolored", func(l *slog.Logger) { l.Info("resume improve: start", "hash", "abc") }, ""},
+		{"applied=true is green", func(l *slog.Logger) {
+			l.Info("autoclone: improve clone done", "applied", true)
+		}, ansiGreen},
+		{"plain info is cyan", func(l *slog.Logger) { l.Info("resume improve: start", "hash", "abc") }, ansiCyan},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -57,6 +60,21 @@ func TestConsoleColors(t *testing.T) {
 				t.Errorf("expected color %q plus reset, got:\n%s", tc.color, out)
 			}
 		})
+	}
+}
+
+func TestConsoleSecondaryAttrsAreDim(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(newConsoleHandler(&buf, true, slog.LevelInfo))
+	logger.Info("resume improve: start", "hash", "abc123", "account", "main", "fields", 3)
+	out := buf.String()
+	for _, attr := range []string{"hash=abc123", "account=main"} {
+		if !strings.Contains(out, ansiDim+attr+ansiReset) {
+			t.Errorf("expected dim %q, got:\n%s", attr, out)
+		}
+	}
+	if strings.Contains(out, ansiDim+"fields=") {
+		t.Errorf("non-secondary attr must not be dim, got:\n%s", out)
 	}
 }
 

@@ -290,8 +290,8 @@ func newConfigValidateCmd() *cobra.Command {
 			}
 			applyCLIDefaults(cfg)
 			o := outFor(cmd)
-			o.printf("OK: %s валиден (аккаунтов: %d, фич включено: %d, провайдеров ИИ: %d)\n",
-				flags.configPath, len(cfg.Accounts),
+			o.printf("%s %s валиден (аккаунтов: %d, фич включено: %d, провайдеров ИИ: %d)\n",
+				o.st.green("OK:"), flags.configPath, len(cfg.Accounts),
 				countEnabledFeatures(cfg), len(cfg.AI.Tasks))
 			return nil
 		},
