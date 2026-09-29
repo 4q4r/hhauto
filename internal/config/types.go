@@ -264,9 +264,13 @@ type Setka struct {
 	// Blacklists by person id and company name (substring, case-insensitive).
 	BlacklistPersons   []string `toml:"blacklist_persons"`
 	BlacklistCompanies []string `toml:"blacklist_companies"`
-	// Endpoints: the four Setka API URLs. Live contracts are NOT captured
-	// yet (research-setka.md §6) — there are NO defaults; all four must be
-	// set explicitly or enabling the feature is a startup error.
+	// Endpoints: the Setka API URLs. Live contracts are NOT captured
+	// yet (research-setka.md §6) — there are NO defaults; search_people,
+	// get_person and send_dm must be set explicitly or enabling the
+	// feature is a startup error. T64: can_message is optional (the wire
+	// has no such endpoint — t63-setka-recon.md §4): empty means every
+	// profile is considered writable, and a send refusal with
+	// ACCOUNT_NOT_ACTIVATED becomes a permanent skip.
 	Endpoints SetkaEndpoints `toml:"endpoints"`
 	// Targets pre-filters the search results before classification.
 	Targets SetkaTargets `toml:"targets"`
@@ -277,8 +281,9 @@ type Setka struct {
 	Personalize SetkaPersonalize `toml:"personalize"`
 }
 
-// SetkaEndpoints carries the four Setka API URLs (T61). No defaults: the
-// wire contracts are uncaptured, so unset endpoints are a fail-fast.
+// SetkaEndpoints carries the Setka API URLs (T61). No defaults: the
+// wire contracts are uncaptured, so unset mandatory endpoints are a
+// fail-fast. T64: CanMessage is optional (no such wire endpoint).
 type SetkaEndpoints struct {
 	SearchPeople string `toml:"search_people"`
 	GetPerson    string `toml:"get_person"`

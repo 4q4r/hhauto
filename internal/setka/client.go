@@ -4,10 +4,13 @@
 // transport, XSRF-analog) WITHOUT invented endpoints.
 //
 // IRON CONSTRAINT (T61): the live Setka wire contracts are not captured yet
-// (see .sdd/research-setka.md §6 — the reconnaissance checklist). The four
+// (see .sdd/research-setka.md §6 — the reconnaissance checklist). The
 // endpoint URLs come ONLY from config overrides ([features.setka.endpoints]);
-// anything unset is a loud fail-fast ("эндпоинт не захвачен — прогони живую
-// разведку"), never a silent skip. The methods below stay typed stubs until
+// an unset mandatory one is a loud fail-fast ("эндпоинт не захвачен —
+// прогони живую разведку"), never a silent skip. T64: can_message has no
+// wire endpoint at all (t63-setka-recon.md §4) and is optional — empty
+// means every profile is considered writable. The methods below stay typed
+// stubs until
 // the live capture lands: they return ErrEndpointNotCaptured instead of
 // fabricating request/response shapes. Everything above the transport is
 // real and tested against fakes.
@@ -26,6 +29,12 @@ import (
 // not captured yet: either an unset config endpoint (startup fail-fast) or
 // an uncaptured wire contract (method call). Loud by design.
 var ErrEndpointNotCaptured = errors.New("эндпоинт Сетки не захвачен — прогони живую разведку (research-setka.md §6)")
+
+// ErrAccountNotActivated marks a SendDM refusal for a profile whose Setka
+// account is not activated — a "ghost" imported from hh that can never be
+// written to (the API answers with the ACCOUNT_NOT_ACTIVATED code,
+// t63-setka-recon.md §3.2). The feature turns it into a permanent skip.
+var ErrAccountNotActivated = errors.New("ACCOUNT_NOT_ACTIVATED: аккаунт Сетки не активирован («призрак» из hh)")
 
 // Person is one Setka profile as the feature consumes it. SearchPeople
 // returns the light card (ID, Name, Headline, Company, Status); GetPerson
@@ -62,15 +71,16 @@ type Client struct {
 	eps config.SetkaEndpoints
 }
 
-// New validates the configured endpoints up front: every one of the four
-// must be set (there are no defaults to invent) — otherwise it fails fast
-// with the missing names in the message.
+// New validates the configured endpoints up front: the three mandatory
+// ones must be set (there are no defaults to invent) — otherwise it fails
+// fast with the missing names in the message. T64: can_message is optional
+// (the wire has no such endpoint — t63-setka-recon.md §4); empty means the
+// owner policy "everyone is writable".
 func New(eps config.SetkaEndpoints) (*Client, error) {
 	var missing []string
 	for name, raw := range map[string]string{
 		"search_people": eps.SearchPeople,
 		"get_person":    eps.GetPerson,
-		"can_message":   eps.CanMessage,
 		"send_dm":       eps.SendDM,
 	} {
 		if strings.TrimSpace(raw) == "" {
@@ -93,8 +103,14 @@ func (c *Client) GetPerson(_ context.Context, _ string) (*Person, error) {
 	return nil, fmt.Errorf("setka: GetPerson (%s): %w", c.eps.GetPerson, ErrEndpointNotCaptured)
 }
 
-// CanMessage implements SetkaClient. Stub until the live capture.
+// CanMessage implements SetkaClient. T64: the wire has no can_message
+// endpoint (t63-setka-recon.md §4) — an unset endpoint means every profile
+// is considered writable; a configured one still waits for the live
+// capture.
 func (c *Client) CanMessage(_ context.Context, _ string) (bool, error) {
+	if strings.TrimSpace(c.eps.CanMessage) == "" {
+		return true, nil
+	}
 	return false, fmt.Errorf("setka: CanMessage (%s): %w", c.eps.CanMessage, ErrEndpointNotCaptured)
 }
 

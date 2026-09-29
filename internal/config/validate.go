@@ -653,17 +653,22 @@ func requireSetkaModelProfile(c *Config, task, profile string) error {
 	return nil
 }
 
-// validateSetkaEndpoints fails loudly when any of the four Setka endpoints
-// is unset or not an absolute http(s) URL — the feature must not start
-// half-captured.
+// validateSetkaEndpoints fails loudly when one of the three mandatory Setka
+// endpoints is unset or any set value is not an absolute http(s) URL — the
+// feature must not start half-captured. T64: can_message is optional (the
+// wire has no such endpoint — t63-setka-recon.md §4): empty means "assume
+// everyone is writable", a set value must still be a valid URL.
 func validateSetkaEndpoints(e SetkaEndpoints) error {
 	for name, raw := range map[string]string{
 		"search_people": e.SearchPeople,
 		"get_person":    e.GetPerson,
-		"can_message":   e.CanMessage,
 		"send_dm":       e.SendDM,
+		"can_message":   e.CanMessage,
 	} {
 		if raw == "" {
+			if name == "can_message" {
+				continue // T64: optional
+			}
 			return fmt.Errorf("features.setka.endpoints.%s: эндпоинт Сетки не захвачен — прогони живую разведку (research-setka.md §6) и задай URL", name)
 		}
 		u, err := url.Parse(raw)

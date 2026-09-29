@@ -320,6 +320,9 @@ func (f *Feature) sendAuto(ctx context.Context, client setka.SetkaClient,
 		if errors.Is(err, setka.ErrEndpointNotCaptured) {
 			return fmt.Errorf("setka: send %s: %w", personID, err) // loud config error
 		}
+		if errors.Is(err, setka.ErrAccountNotActivated) {
+			return f.skipNotActivated(ctx, rowID, personID)
+		}
 		return f.parkSendFailure(ctx, p, vacancy, rowID, personID, personName, text, err)
 	}
 	if err := f.DB.SetkaDMMarkSent(ctx, rowID); err != nil {
@@ -340,6 +343,22 @@ func (f *Feature) sendAuto(ctx context.Context, client setka.SetkaClient,
 			},
 		})
 	}
+	return nil
+}
+
+// skipNotActivated records the permanent skip of a Setka "ghost": the API
+// refused the send with ACCOUNT_NOT_ACTIVATED (t63-setka-recon.md §3.2) —
+// this person can never be written to. The ledger row is skipped with the
+// stable reason (the idempotency check keeps every later scan away) and the
+// metric counts it; no review parking, no retry.
+func (f *Feature) skipNotActivated(ctx context.Context, rowID int64, personID string) error {
+	if err := f.DB.SetkaDMMarkSkipped(ctx, rowID, "account_not_activated"); err != nil {
+		return err
+	}
+	if err := f.DB.MetricsIncr(ctx, "setka.dm_not_activated", kit11.Day(f.now())); err != nil {
+		return fmt.Errorf("setka: metric: %w", err)
+	}
+	f.log().Info("setka: отказ ACCOUNT_NOT_ACTIVATED — перманентный skip («призрак» из hh)", "person", personID)
 	return nil
 }
 
