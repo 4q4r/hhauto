@@ -204,12 +204,12 @@ func (e *ResumeContentVerifyError) Error() string {
 func (e *ResumeContentVerifyError) Unwrap() error { return e.Err }
 
 // ResumeContentEditor is the T29 content-mutation seam: read the mutable
-// split of one resume, post a modified split through the builder update
-// walk with the verify gate. *Client implements it; feature fakes may
+// split of one resume and post a modified split through the apply walk
+// with the verify gate. *Client implements it; feature fakes may
 // substitute their own.
 type ResumeContentEditor interface {
 	ResumeContent(ctx context.Context, hash string) (*ResumeContent, error)
-	UpdateResumeContent(ctx context.Context, hash string, content *ResumeContent, screens []string) error
+	UpdateResumeContent(ctx context.Context, hash string, content *ResumeContent, targets []string) error
 }
 
 var _ ResumeContentEditor = (*Client)(nil)
@@ -238,17 +238,22 @@ func (c *Client) ResumeContent(ctx context.Context, hash string) (*ResumeContent
 // endpoint (one POST per field, the real UI save contract — see the file
 // doc) and verifies by read-back that every changed key landed. Changed
 // keys are computed against the LIVE state first: an unchanged content
-// posts nothing. Validation rejections surface as
-// *ResumeUpdateValidationError (the feature retries with a fixed value or
-// skips the field); a verify mismatch is *ResumeContentVerifyError. The
-// screens argument is part of the ResumeContentEditor contract only: the
-// edit endpoint addresses fields directly, no screen walk exists anymore.
-func (c *Client) UpdateResumeContent(ctx context.Context, hash string, content *ResumeContent, _ []string) error {
+// posts nothing. targets scopes the apply to the caller's intended keys
+// ("resume.title", "profile.experience"): hh's own presentation of other
+// builder-state sections drifts between reads (live T66: the
+// specializationTree nested translit case flips), and an unscoped diff
+// would post and verify stale sections the plan never touched — nil (or
+// empty) targets keeps the legacy full-diff scope. Validation rejections
+// surface as *ResumeUpdateValidationError (the feature retries with a
+// fixed value or skips the field); a verify mismatch is
+// *ResumeContentVerifyError. The targets argument replaces the retired
+// screens walk of the original contract.
+func (c *Client) UpdateResumeContent(ctx context.Context, hash string, content *ResumeContent, targets []string) error {
 	live, err := c.ResumeContent(ctx, hash)
 	if err != nil {
 		return fmt.Errorf("live content: %w", err)
 	}
-	changed := diffContentKeys(live, content)
+	changed := scopeTargets(diffContentKeys(live, content), targets)
 	if len(changed) == 0 {
 		return nil
 	}
@@ -306,6 +311,21 @@ func (c *Client) UpdateResumeContent(ctx context.Context, hash string, content *
 		}
 	}
 	return &ResumeContentVerifyError{Keys: missing, Err: ErrCloneMaterialize}
+}
+
+// scopeTargets restricts the changed keys to the caller's apply targets;
+// empty targets keeps the full diff (legacy scope).
+func scopeTargets(changed, targets []string) []string {
+	if len(targets) == 0 {
+		return changed
+	}
+	scoped := make([]string, 0, len(changed))
+	for _, key := range changed {
+		if slices.Contains(targets, key) {
+			scoped = append(scoped, key)
+		}
+	}
+	return scoped
 }
 
 // experienceCovered is the fork-aware acceptance predicate of the T58
@@ -620,7 +640,10 @@ func allObjects(vs []any) bool {
 // reorder the array, so "id" is excluded from the comparison and any
 // read-back record can carry a sent one; every other sent field must
 // match — strings through normAppliedText (equality or containment),
-// everything else strictly.
+// containers recursively through the same canonical rules (live T66: hh
+// canonicalizes dictionary strings at ANY depth — the specializationTree
+// nested translit case flips between reads), so nested string content
+// compares canonically instead of strictly.
 func objectCovers(a, b map[string]any) bool {
 	for k, sv := range b {
 		if k == "id" {
@@ -639,7 +662,7 @@ func objectCovers(a, b map[string]any) bool {
 				continue
 			}
 		}
-		if !jsonEqual(sv, gv) {
+		if !jsonAppliedEqual(gv, sv) { // a = read-back, b = sent
 			return false
 		}
 	}

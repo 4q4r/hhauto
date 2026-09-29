@@ -295,7 +295,7 @@ func TestUpdateResumeContentPostsEditContract(t *testing.T) {
 		t.Fatalf("ResumeContent: %v", err)
 	}
 	mutated := mutatedContent(base, "DevOps-инженер Test (копия)")
-	if err := c.UpdateResumeContent(context.Background(), "cl0ne1", mutated, []string{"title"}); err != nil {
+	if err := c.UpdateResumeContent(context.Background(), "cl0ne1", mutated, []string{"resume.title"}); err != nil {
 		t.Fatalf("UpdateResumeContent: %v", err)
 	}
 	if got := surface.updateCount(); got != 1 {
@@ -382,7 +382,7 @@ func TestUpdateResumeContentVerifyMismatch(t *testing.T) {
 		t.Fatalf("ResumeContent: %v", err)
 	}
 	mutated := mutatedContent(base, "DevOps-инженер Test (копия)")
-	err = c.UpdateResumeContent(context.Background(), "cl0ne1", mutated, []string{"title"})
+	err = c.UpdateResumeContent(context.Background(), "cl0ne1", mutated, []string{"resume.title"})
 	if err == nil {
 		t.Fatal("verify mismatch must fail the update")
 	}
@@ -414,7 +414,7 @@ func TestUpdateResumeContentValidationTyped(t *testing.T) {
 		t.Fatalf("ResumeContent: %v", err)
 	}
 	mutated := mutatedContent(base, "Другое")
-	err = c.UpdateResumeContent(context.Background(), "cl0ne1", mutated, []string{"title"})
+	err = c.UpdateResumeContent(context.Background(), "cl0ne1", mutated, []string{"resume.title"})
 	var ve *ResumeUpdateValidationError
 	if !errors.As(err, &ve) {
 		t.Fatalf("err = %T (%v), want *ResumeUpdateValidationError", err, err)
@@ -435,7 +435,7 @@ func TestUpdateResumeContentNoDiffSkipsPosts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResumeContent: %v", err)
 	}
-	if err := c.UpdateResumeContent(context.Background(), "cl0ne1", base, []string{"title"}); err != nil {
+	if err := c.UpdateResumeContent(context.Background(), "cl0ne1", base, []string{"resume.title"}); err != nil {
 		t.Fatalf("UpdateResumeContent: %v", err)
 	}
 	if surface.updateCount() != 0 {

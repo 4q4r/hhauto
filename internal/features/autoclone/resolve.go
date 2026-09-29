@@ -61,5 +61,5 @@ func (na *NeedApply) ApplyValue(ctx context.Context, hash string, spec FieldSpec
 	if err := writeValue(spec, mutated, item, validated); err != nil {
 		return fmt.Errorf("autoclone: %w", err)
 	}
-	return na.API.UpdateResumeContent(ctx, hash, mutated, affectedScreens([]string{spec.ID}, mutated))
+	return na.API.UpdateResumeContent(ctx, hash, mutated, []string{spec.Side + "." + spec.Key})
 }
