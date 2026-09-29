@@ -57,6 +57,12 @@ const resumeEditHhtmSource = "resume_partial_edit"
 var (
 	verifyPollInterval = 10 * time.Second
 	verifyWaitBudget   = 600 * time.Second
+	// forkVerifyWaitBudget is the extended verify budget for the
+	// fork-aware experience path: hh materializes the answer fork of a
+	// shared-record edit asynchronously (live T67: the fork surfaced only
+	// after the ordinary budget had expired — the dump shows it carrying
+	// the sent content verbatim). 30 min = 3× the observed worst case.
+	forkVerifyWaitBudget = 1800 * time.Second
 )
 
 // hhSharedRecordLists are the builder-state arrays whose items are shared
@@ -276,6 +282,13 @@ func (c *Client) UpdateResumeContent(ctx context.Context, hash string, content *
 	// key accepts once every sent record is covered (id-insensitively) and
 	// the replace step re-checks the record-count/keep/target invariants.
 	forkAwareExperience := c.experienceReplace && slices.Contains(changed, "profile.experience")
+	// The fork of an edited shared record materializes asynchronously
+	// (live T67: after the ordinary budget had expired); the fork-aware
+	// path waits on the extended budget.
+	budget := verifyWaitBudget
+	if forkAwareExperience {
+		budget = forkVerifyWaitBudget
+	}
 	var missing []string
 	for {
 		verify, err := c.ResumeContent(ctx, hash)
@@ -301,7 +314,7 @@ func (c *Client) UpdateResumeContent(ctx context.Context, hash string, content *
 			}
 			return nil
 		}
-		if time.Since(verifyStart) >= verifyWaitBudget {
+		if time.Since(verifyStart) >= budget {
 			break
 		}
 		select {
@@ -357,8 +370,11 @@ func experienceCovered(a, b json.RawMessage) bool {
 // ones never reach this point, and DeleteExperienceRecords re-guards
 // shared records), then re-check the flow invariant on a fresh read: own
 // record count constant, keep records byte-identical, sent targets
-// present. A delete rejection surfaces as-is — the resume visibly keeps
-// the duplicates instead of a silent claim of success.
+// present. Records shared with other resumes are never deletable
+// generations (live T67: hh answers their edit with a fork and reassigns
+// the rendering itself) — skipped, and the invariant re-checked
+// accordingly. A delete rejection surfaces as-is — the resume visibly
+// keeps the duplicates instead of a silent claim of success.
 func (c *Client) replaceForkedExperience(ctx context.Context, hash string, live, sent, verify *ResumeContent) error {
 	pre, err := experienceByID(live)
 	if err != nil {
@@ -372,7 +388,17 @@ func (c *Client) replaceForkedExperience(ctx context.Context, hash string, live,
 	if err != nil {
 		return err
 	}
-	replaced := replacedExperienceIDs(pre, sentByID, post)
+	shared, err := c.sharedExperienceIDs(ctx, hash)
+	if err != nil {
+		return err
+	}
+	replaced := make([]int64, 0, len(pre))
+	for _, id := range replacedExperienceIDs(pre, sentByID, post) {
+		if shared[id] {
+			continue // renders on other resumes — hh reassigns it, never deletable
+		}
+		replaced = append(replaced, id)
+	}
 	if len(replaced) == 0 {
 		return nil
 	}
@@ -383,7 +409,29 @@ func (c *Client) replaceForkedExperience(ctx context.Context, hash string, live,
 	if err != nil {
 		return fmt.Errorf("experience replace verify: %w", err)
 	}
-	return verifyReplaceOutcome(pre, sentByID, final, replaced)
+	return verifyReplaceOutcome(pre, sentByID, final, replaced, shared)
+}
+
+// sharedExperienceIDs returns the ids of the resume's experience pool
+// records whose resumes list mentions any resume other than hash. The
+// split cannot answer this (filterSharedRecords strips the usage lists),
+// so the raw pool is read once per replace step.
+func (c *Client) sharedExperienceIDs(ctx context.Context, hash string) (map[int64]bool, error) {
+	st, err := c.fetchBuilderState(ctx, hash)
+	if err != nil {
+		return nil, err
+	}
+	pool, err := experiencePool(st)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]bool, len(pool))
+	for _, r := range pool {
+		if r.sharedWithOthers(hash) {
+			out[r.ID] = true
+		}
+	}
+	return out, nil
 }
 
 // replacedExperienceIDs returns the sorted ids of the records this apply
@@ -408,21 +456,41 @@ func replacedExperienceIDs(pre, sentByID, post map[int64]json.RawMessage) []int6
 	return replaced
 }
 
+// editedSharedStillOwn counts the shared records this apply edited whose
+// fork has not yet taken over the rendering (the original still renders on
+// self) — each adds one own record to the expected count.
+func editedSharedStillOwn(pre, sentByID, fin map[int64]json.RawMessage, shared map[int64]bool) int {
+	still := 0
+	for id, preRaw := range pre {
+		if !shared[id] {
+			continue
+		}
+		sentRaw, edited := sentByID[id]
+		if _, own := fin[id]; own && edited && !rawEqual(sentRaw, preRaw) {
+			still++
+		}
+	}
+	return still
+}
+
 // verifyReplaceOutcome re-checks the flow invariant on the fresh read the
 // caller made after the deletes (the T55 defect: the coverage-based verify
 // gate cannot see record-count changes; this flow can and must): own
 // record count constant, keep records byte-identical, every edited sent
-// record still carried by some own record (the fork).
-func verifyReplaceOutcome(pre, sentByID map[int64]json.RawMessage, final *ResumeContent, replaced []int64) error {
+// record still carried by some own record (the fork). Shared records are
+// hh-managed for the other resumes: they are neither replaced nor kept for
+// self, and a fork that still renders them (reassignment lag, live T67)
+// adds one own record.
+func verifyReplaceOutcome(pre, sentByID map[int64]json.RawMessage, final *ResumeContent, replaced []int64, shared map[int64]bool) error {
 	fin, err := experienceByID(final)
 	if err != nil {
 		return err
 	}
-	if len(fin) != len(pre) {
-		return fmt.Errorf("%w: own experience records %d -> %d", ErrExperienceDelete, len(pre), len(fin))
+	if expected := len(pre) + editedSharedStillOwn(pre, sentByID, fin, shared); len(fin) != expected {
+		return fmt.Errorf("%w: own experience records %d -> %d", ErrExperienceDelete, expected, len(fin))
 	}
 	for id, preRaw := range pre {
-		if slices.Contains(replaced, id) {
+		if slices.Contains(replaced, id) || shared[id] {
 			continue
 		}
 		if got, ok := fin[id]; !ok || !rawEqual(preRaw, got) {
@@ -435,8 +503,8 @@ func verifyReplaceOutcome(pre, sentByID map[int64]json.RawMessage, final *Resume
 	}
 	for id, sentRaw := range sentByID {
 		preRaw, ok := pre[id]
-		if !ok || rawEqual(sentRaw, preRaw) {
-			continue // only the edited targets need a carrier
+		if !ok || rawEqual(sentRaw, preRaw) || shared[id] {
+			continue // only the edited non-shared targets need a carrier
 		}
 		var want map[string]any
 		if err := json.Unmarshal(sentRaw, &want); err != nil {

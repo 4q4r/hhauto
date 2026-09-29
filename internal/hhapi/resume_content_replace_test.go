@@ -42,8 +42,23 @@ type replaceSurface struct {
 	nextID       int64
 	hash         string
 	silentUpdate bool // profile/update answers 200 but applies nothing
-	editPosts    int
-	updatePosts  int
+	silentEdit   bool // edit POST answers 200 but applies nothing (T55 no-op)
+	// lagForkResumes: forks are created WITHOUT self membership — the
+	// observed T67 blind window (the fork exists in the raw pool while the
+	// resumes-filtered split does not show it yet).
+	lagForkResumes bool
+	// reassignShared: the fork of a record shared with other resumes drops
+	// self from the original's resumes list (the live T67 dump shape).
+	reassignShared bool
+	// forkAfterReads: hh's async fork queue — edit POSTs register the fork,
+	// and it materializes in the pool only after this many builder-state
+	// reads (the live T67 latency: the fork surfaced after the verify
+	// budget had already expired).
+	forkAfterReads int
+	pendingForks   []string
+	reads          int
+	editPosts      int
+	updatePosts    int
 }
 
 func (s *replaceSurface) snapshot() []string {
@@ -61,6 +76,11 @@ func (s *replaceSurface) mount(env *testEnv, hash string) {
 	env.serve(env.mux1, "1", "GET", "/profile/shards/resume/get_by_hash", func(w http.ResponseWriter, _ *http.Request) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		s.reads++
+		if s.forkAfterReads > 0 && s.reads >= s.forkAfterReads && len(s.pendingForks) > 0 {
+			s.pool = append(s.pool, s.pendingForks...)
+			s.pendingForks = nil
+		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = w.Write([]byte(s.stateLocked()))
 	})
@@ -84,16 +104,29 @@ func (s *replaceSurface) mount(env *testEnv, hash string) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.editPosts++
-		for _, item := range req.Experience {
-			var id int64
-			_ = json.Unmarshal(item["id"], &id)
-			idx := t58PoolIndex(s.pool, id)
-			switch {
-			case id == 0 || idx < 0: // unknown id → add (live T55 upsert semantics)
-				s.pool = append(s.pool, t58WithMeta(item, s.hash, 0))
-			case !t58SameContent(s.pool[idx], item): // content edit → FORK: new id, old record stays
-				s.nextID++
-				s.pool = append(s.pool, t58WithMeta(item, s.hash, s.nextID))
+		if !s.silentEdit {
+			for _, item := range req.Experience {
+				var id int64
+				_ = json.Unmarshal(item["id"], &id)
+				idx := t58PoolIndex(s.pool, id)
+				switch {
+				case id == 0 || idx < 0: // unknown id → add (live T55 upsert semantics)
+					s.pool = append(s.pool, t58WithMeta(item, s.hash, 0))
+				case !t58SameContent(s.pool[idx], item): // content edit → FORK: new id, old record stays
+					s.nextID++
+					fork := t58WithMeta(item, s.hash, s.nextID)
+					if s.lagForkResumes {
+						fork = t58SelflessMeta(item, s.nextID)
+					}
+					if s.forkAfterReads > 0 {
+						s.pendingForks = append(s.pendingForks, fork)
+					} else {
+						s.pool = append(s.pool, fork)
+					}
+					if s.reassignShared && t58SharedWith(s.pool[idx], s.hash) {
+						s.pool[idx] = t58DropMember(s.pool[idx], s.hash)
+					}
+				}
 			}
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -164,6 +197,73 @@ func t58WithMeta(item map[string]json.RawMessage, self string, forkID int64) str
 		panic(err)
 	}
 	return string(b)
+}
+
+// t58SelflessMeta is a fork record created before hh assigned it to the
+// editing resume (the T67 lag window): present in the raw pool, invisible
+// to the resumes-filtered split.
+func t58SelflessMeta(item map[string]json.RawMessage, forkID int64) string {
+	rec := make(map[string]json.RawMessage, len(item)+2)
+	for k, v := range item {
+		rec[k] = v
+	}
+	rec["resumes"] = json.RawMessage(`[]`)
+	rec["id"] = json.RawMessage(itoa64(forkID))
+	b, err := json.Marshal(rec)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
+// t58SharedWith reports whether a pool record renders on any resume other
+// than self.
+func t58SharedWith(poolRaw, self string) bool {
+	var rec struct {
+		Resumes []struct {
+			Hash string `json:"hash"`
+		} `json:"resumes"`
+	}
+	if json.Unmarshal([]byte(poolRaw), &rec) != nil {
+		return false
+	}
+	for _, r := range rec.Resumes {
+		if r.Hash != self {
+			return true
+		}
+	}
+	return false
+}
+
+// t58DropMember removes self from a pool record's resumes list (the live
+// T67 reassignment: the fork takes over the editing resume's rendering).
+func t58DropMember(poolRaw, self string) string {
+	var rec map[string]json.RawMessage
+	if json.Unmarshal([]byte(poolRaw), &rec) != nil {
+		return poolRaw
+	}
+	var list []map[string]json.RawMessage
+	if json.Unmarshal(rec["resumes"], &list) != nil {
+		return poolRaw
+	}
+	kept := make([]map[string]json.RawMessage, 0, len(list))
+	for _, m := range list {
+		var h string
+		if json.Unmarshal(m["hash"], &h) == nil && h == self {
+			continue
+		}
+		kept = append(kept, m)
+	}
+	b, err := json.Marshal(kept)
+	if err != nil {
+		panic(err)
+	}
+	rec["resumes"] = b
+	out, err := json.Marshal(rec)
+	if err != nil {
+		panic(err)
+	}
+	return string(out)
 }
 
 // t58SameContent compares a pool record with a sent item ignoring the
