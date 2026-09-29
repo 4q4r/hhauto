@@ -157,10 +157,10 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # blacklist_persons = []
 # blacklist_companies = []
 # [features.setka.endpoints]            # БЕЗ дефолтов: живые контракты Сетки не захвачены (.sdd/research-setka.md §6)
-# search_people = "https://api.setka.ru/…"   # все четыре обязательны, иначе старт = ошибка
+# search_people = "https://api.setka.ru/…"   # search_people/get_person/send_dm обязательны (пустые = старт-ошибка)
 # get_person = "https://api.setka.ru/…"
-# can_message = "https://api.setka.ru/…"
-# send_dm = "https://api.setka.ru/…"
+# can_message = ""                      # ОПЦИОНАЛЕН (T64): живого эндпоинта нет; пусто = всех считаем доступными для ЛС
+# send_dm = "https://api.setka.ru/…"    # отказ ACCOUNT_NOT_ACTIVATED = перманентный skip человека
 # [features.setka.targets]
 # status_filter = ["нанимаю"]           # из 12 статусов Сетки
 # headline_include = []                 # подстроки должности (HR, рекрутер, техлид…)

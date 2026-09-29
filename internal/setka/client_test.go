@@ -18,9 +18,11 @@ func fullEndpoints() config.SetkaEndpoints {
 	}
 }
 
-// T61: the client constructor fails fast when any of the four Setka
-// endpoints is unset — the live contracts are NOT captured, there are no
-// defaults, and a half-configured client must not start.
+// T61/T64: the client constructor fails fast when one of the three
+// mandatory Setka endpoints is unset — the live contracts are NOT captured,
+// there are no defaults, and a half-configured client must not start.
+// T64: can_message is exempt (the wire has no such endpoint —
+// t63-setka-recon.md §4).
 func TestNewClientFailsFastOnMissingEndpoints(t *testing.T) {
 	eps := fullEndpoints()
 	for name := range epsAsMap(eps) {
@@ -31,7 +33,7 @@ func TestNewClientFailsFastOnMissingEndpoints(t *testing.T) {
 		case "get_person":
 			partial.GetPerson = ""
 		case "can_message":
-			partial.CanMessage = ""
+			continue // T64: optional — covered by TestCanMessageOptionalEndpoint
 		case "send_dm":
 			partial.SendDM = ""
 		}
@@ -51,6 +53,31 @@ func TestNewClientFailsFastOnMissingEndpoints(t *testing.T) {
 	}
 	if _, err := New(fullEndpoints()); err != nil {
 		t.Fatalf("full endpoints: %v", err)
+	}
+}
+
+// T64: can_message is optional. Empty = the owner policy "everyone is
+// writable" (the send refusal with ACCOUNT_NOT_ACTIVATED becomes a
+// permanent skip); a set endpoint keeps the loud uncaptured-contract
+// behavior.
+func TestCanMessageOptionalEndpoint(t *testing.T) {
+	eps := fullEndpoints()
+	eps.CanMessage = ""
+	c, err := New(eps)
+	if err != nil {
+		t.Fatalf("empty can_message must be accepted: %v", err)
+	}
+	ok, err := c.CanMessage(context.Background(), "u-1")
+	if err != nil || !ok {
+		t.Fatalf("empty can_message endpoint must mean writable for all: ok=%v err=%v", ok, err)
+	}
+
+	c2, err := New(fullEndpoints())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c2.CanMessage(context.Background(), "u-1"); !errors.Is(err, ErrEndpointNotCaptured) {
+		t.Fatalf("set can_message endpoint: err = %v, want ErrEndpointNotCaptured", err)
 	}
 }
 

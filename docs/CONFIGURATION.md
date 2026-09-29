@@ -471,9 +471,13 @@ UA и заголовки, `rps` и `concurrency` — локальные лими
   Идемпотентность: таблица `setka_dms` — повторный прогон не шлёт дважды
   одному человеку по одной вакансии. ВАЖНО: живые контракты Сетки
   (api.setka.ru) не захвачены — эндпоинты задаются ТОЛЬКО в
-  `[features.setka.endpoints]` (все четыре обязательны, дефолтов нет;
-  незаданные = fail-fast при старте: «прогони живую разведку»,
-  `.sdd/research-setka.md` §6);
+  `[features.setka.endpoints]`: `search_people`/`get_person`/`send_dm`
+  обязательны (незаданные = fail-fast при старте: «прогони живую
+  разведку», `.sdd/research-setka.md` §6); `can_message` опционален —
+  живого эндпоинта не существует (T63): пусто = всех считаем доступными
+  для ЛС (политика владельца), а отказ отправки с кодом
+  `ACCOUNT_NOT_ACTIVATED` = перманентный skip человека (ledger
+  `skip_reason=account_not_activated`, метрика, без ретраев);
 - `resume_visibility`, `websocket_push` — зарезервированы (websocket — роадмап).
 
 ### `[pacing]`

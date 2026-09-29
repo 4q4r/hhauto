@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -27,6 +28,7 @@ type fakeClient struct {
 	sent       []string // personIDs passed to SendDM
 	texts      map[string]string
 	err        error
+	sendErr    error // SendDM-only failure (T64)
 }
 
 func (c *fakeClient) SearchPeople(_ context.Context, _ string) ([]setka.Person, error) {
@@ -57,6 +59,9 @@ func (c *fakeClient) CanMessage(_ context.Context, id string) (bool, error) {
 }
 
 func (c *fakeClient) SendDM(_ context.Context, id, text string) error {
+	if c.sendErr != nil {
+		return c.sendErr
+	}
 	if c.err != nil {
 		return c.err
 	}
@@ -624,6 +629,74 @@ func TestRequireCanMessage(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("require_can_message=false must pass hr-1: %v", h2.client.sent)
+	}
+}
+
+// T64: a SendDM refusal with ACCOUNT_NOT_ACTIVATED ("призрак" из hh,
+// t63-setka-recon.md §3.2) is a PERMANENT skip: the ledger row is skipped
+// with the stable reason (the idempotency check keeps every later scan
+// away), the metric counts it, nothing parks in review, and a repeated
+// scan never retries this person. Flow errors out loud on other failures.
+func TestSendAccountNotActivatedPermanentSkip(t *testing.T) {
+	h := newHarness(t, nil)
+	h.client.sendErr = fmt.Errorf("setka: send: %w", setka.ErrAccountNotActivated)
+	h.seedApplied(t, "acc1:r1:7")
+	if err := h.f.HandleDM(context.Background(), h.runScan(t, "acc1")[0]); err != nil {
+		t.Fatalf("account_not_activated skip must not fail the flow: %v", err)
+	}
+	if len(h.client.sent) != 0 {
+		t.Fatalf("nothing may be sent: %v", h.client.sent)
+	}
+	day := testNow.UTC().Format("2006-01-02")
+	snap, err := h.db.MetricsSnapshot(context.Background(), day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap["setka.dm_not_activated"] != 2 { // hr-1 и hr-2 прошли статус-фильтр
+		t.Fatalf("metric setka.dm_not_activated = %d, want 2 (snapshot %+v)", snap["setka.dm_not_activated"], snap)
+	}
+	if len(h.review.items) != 0 {
+		t.Fatalf("permanent skip must not park review items: %+v", h.review.items)
+	}
+	// Permanent: the ledger rows exist → the idempotency check blocks any
+	// future DM to these people, and the done marker keeps the application
+	// out of the next scan.
+	for _, person := range []string{"hr-1", "hr-2"} {
+		ok, err := h.db.SetkaDMExists(context.Background(), "acc1", person, 7)
+		if err != nil || !ok {
+			t.Fatalf("%s: ledger row must exist (skip_reason=account_not_activated): %v", person, err)
+		}
+	}
+	if !h.markerSet("acc1:r1:7") {
+		t.Fatal("done marker must be set — no retry on the next scan")
+	}
+	tasks := h.runScan(t, "acc1")
+	if len(tasks) != 0 {
+		t.Fatalf("next scan must not re-enqueue: %+v", tasks)
+	}
+}
+
+// T64: every other send failure keeps the former policy — the row is
+// skipped with the transport reason and the human sees a setka_send_failed
+// review item.
+func TestSendOtherFailureKeepsParkPolicy(t *testing.T) {
+	h := newHarness(t, nil)
+	h.client.sendErr = errors.New("транспорт умер")
+	h.seedApplied(t, "acc1:r1:7")
+	if err := h.f.HandleDM(context.Background(), h.runScan(t, "acc1")[0]); err != nil {
+		t.Fatalf("dm: %v", err)
+	}
+	if len(h.client.sent) != 0 {
+		t.Fatalf("nothing may be sent: %v", h.client.sent)
+	}
+	found := false
+	for _, it := range h.review.items {
+		if it.Kind == "setka_send_failed" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("setka_send_failed review item expected: %+v", h.review.items)
 	}
 }
 

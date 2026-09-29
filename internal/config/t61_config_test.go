@@ -133,6 +133,48 @@ func TestSetkaValidateRequiresEndpoints(t *testing.T) {
 	}
 }
 
+// T64: can_message is optional — the wire has no such endpoint
+// (t63-setka-recon.md §4): an enabled feature validates with it empty,
+// while the other three stay mandatory fail-fast and a set can_message
+// must still be an absolute http(s) URL.
+func TestSetkaCanMessageEndpointOptional(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hhauto.toml")
+	body := `
+[ai.models.fast]
+provider = "glm"
+[ai.providers.glm]
+dialect = "openai-chat"
+base_url = "https://example.invalid/v1"
+api_key = "k"
+[features.setka]
+enabled = true
+[features.setka.classify]
+model_profile = "fast"
+[features.setka.personalize]
+model_profile = "fast"
+[features.setka.endpoints]
+search_people = "https://api.setka.ru/search"
+get_person = "https://api.setka.ru/person"
+send_dm = "https://api.setka.ru/send"
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load without can_message must succeed: %v", err)
+	}
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("validate without can_message: %v", err)
+	}
+	// A set but broken can_message stays loud.
+	cfg.Features.Setka.Endpoints.CanMessage = "not-a-url"
+	if err := Validate(cfg); err == nil || !contains(err.Error(), "can_message") {
+		t.Fatalf("broken can_message URL: %v", err)
+	}
+}
+
 // T61: mode, borderline, delay, window and negative limits are validated.
 func TestSetkaValidateValues(t *testing.T) {
 	ok := func(c *Config) *Config {
