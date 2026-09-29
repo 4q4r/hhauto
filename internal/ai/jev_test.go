@@ -1,13 +1,15 @@
 package ai
 
-// T33: the optional Jev (System One) prefilter — client wire contract and
-// solver/runner routing semantics. Routing matrix under test:
+// T60: the Jev (System One) classifier — client wire contract and
+// solver/runner routing semantics. Since T60 the choice is EXCLUSIVE
+// (owner decision: jev OR llm, never one after another). Routing matrix
+// under test:
 //
 //	jev decided (confidence ≥ threshold) → verdict, Source=jev, no LLM call
-//	jev low confidence                   → LLM (escalation)
-//	jev unavailable / malformed          → LLM (fail-safe fallback)
-//	jev disabled (no WithJev)            → LLM (full-AI mode)
-//	empty accountID / unenrolled task    → LLM (prefilter skipped)
+//	jev low confidence                   → needs_human review, Source=jev, no LLM call
+//	jev unavailable / malformed          → needs_human review, no LLM call
+//	jev disabled (no WithJev)            → LLM (llm-classifier mode)
+//	empty accountID / unenrolled task    → LLM (prefilter not consulted)
 
 import (
 	"context"
@@ -121,6 +123,35 @@ func wantEscalated(t *testing.T, desc string, p *scriptedProvider, dec Decision)
 	}
 }
 
+// wantReview asserts the run ended as a jev-sourced needs_human verdict
+// without a single LLM call (T60: jev is the exclusive classifier).
+func wantReview(t *testing.T, desc string, p *scriptedProvider, dec Decision, verdict json.RawMessage, wantReason string) {
+	t.Helper()
+	if dec.Source != SourceJev {
+		t.Errorf("%s: decision source = %q, want %q", desc, dec.Source, SourceJev)
+	}
+	if !dec.NeedsHuman {
+		t.Errorf("%s: decision needs_human = false, want true", desc)
+	}
+	if dec.Model != jevModelName {
+		t.Errorf("%s: decision model = %q, want %q", desc, dec.Model, jevModelName)
+	}
+	if p.callCount() != 0 {
+		t.Errorf("%s: LLM called %d times in jev mode, want 0", desc, p.callCount())
+	}
+	var v struct {
+		Confidence float64 `json:"confidence"`
+		NeedsHuman bool    `json:"needs_human"`
+		Reason     string  `json:"needs_human_reason"`
+	}
+	if err := json.Unmarshal(verdict, &v); err != nil {
+		t.Fatalf("%s: verdict decode: %v", desc, err)
+	}
+	if !v.NeedsHuman || v.Reason != wantReason {
+		t.Errorf("%s: verdict needs_human=%v reason=%q, want true/%q", desc, v.NeedsHuman, v.Reason, wantReason)
+	}
+}
+
 func TestJevClassificationDecidedSkipsLLM(t *testing.T) {
 	fake := &fakeJev{conf: 0.9}
 	srv := httptest.NewServer(fake.handler())
@@ -177,23 +208,30 @@ func TestJevClassificationDecidedSkipsLLM(t *testing.T) {
 	}
 }
 
-func TestJevLowConfidenceEscalatesToLLM(t *testing.T) {
+func TestJevLowConfidenceRoutesReview(t *testing.T) {
+	// T60: jev is the exclusive classifier — low confidence routes to a
+	// human review verdict, never to the LLM.
 	fake := &fakeJev{conf: 0.5}
 	srv := httptest.NewServer(fake.handler())
 	defer srv.Close()
 
 	p := &scriptedProvider{contents: []string{validClassVerdict}}
-	r := mustRunner(t, p, oneModel(""), jevTasks(), &fakeLedger{}, nil,
-		WithJev(jevSolver(t, srv.URL, 0.85, jevAllTasks())))
-	_, dec, err := r.Run(context.Background(), "acc1", "message", "m1", "", TaskClassification,
+	ledger := &fakeLedger{}
+	s := jevSolver(t, srv.URL, 0.85, jevAllTasks())
+	r := mustRunner(t, p, oneModel(""), jevTasks(), ledger, nil, WithJev(s))
+	verdict, dec, err := r.Run(context.Background(), "acc1", "message", "m1", "", TaskClassification,
 		map[string]any{"message": map[string]any{"author": "HR", "text": "x"}})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	wantEscalated(t, "low confidence", p, dec)
+	wantReview(t, "low confidence", p, dec, verdict, reasonJevUndecided)
+	if len(ledger.recs) != 1 || ledger.recs[0].Source != SourceJev || !ledger.recs[0].NeedsHuman {
+		t.Errorf("ledger records = %d, want 1 jev-sourced needs_human", len(ledger.recs))
+	}
 }
 
-func TestJevEndpointErrorEscalatesToLLM(t *testing.T) {
+func TestJevEndpointErrorRoutesReview(t *testing.T) {
+	// T60: an unavailable endpoint routes to review, never to the LLM.
 	fake := &fakeJev{conf: 0.9, status: http.StatusInternalServerError}
 	srv := httptest.NewServer(fake.handler())
 	defer srv.Close()
@@ -201,19 +239,19 @@ func TestJevEndpointErrorEscalatesToLLM(t *testing.T) {
 	p := &scriptedProvider{contents: []string{validClassVerdict}}
 	s := jevSolver(t, srv.URL, 0.85, jevAllTasks())
 	r := mustRunner(t, p, oneModel(""), jevTasks(), &fakeLedger{}, nil, WithJev(s))
-	_, dec, err := r.Run(context.Background(), "acc1", "message", "m1", "", TaskClassification,
+	verdict, dec, err := r.Run(context.Background(), "acc1", "message", "m1", "", TaskClassification,
 		map[string]any{"message": map[string]any{"author": "HR", "text": "x"}})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	wantEscalated(t, "endpoint 500", p, dec)
+	wantReview(t, "endpoint 500", p, dec, verdict, reasonJevUndecided)
 	if st := s.Stats(); st.Failed != 1 {
 		t.Errorf("failed counter = %d, want 1", st.Failed)
 	}
 }
 
-func TestJevDisabledMeansFullAI(t *testing.T) {
-	// enabled=false never installs a solver (cli wiring): plain runner.
+func TestJevDisabledMeansLLMClassifier(t *testing.T) {
+	// classifier=llm never installs a solver (cli wiring): plain runner.
 	p := &scriptedProvider{contents: []string{validClassVerdict}}
 	r := mustRunner(t, p, oneModel(""), jevTasks(), &fakeLedger{}, nil)
 	_, dec, err := r.Run(context.Background(), "acc1", "message", "m1", "", TaskClassification,
@@ -223,7 +261,7 @@ func TestJevDisabledMeansFullAI(t *testing.T) {
 	}
 	wantEscalated(t, "disabled", p, dec)
 
-	// WithJev(nil) is the explicit full-AI opt-out.
+	// WithJev(nil) is the explicit llm-classifier opt-out.
 	p2 := &scriptedProvider{contents: []string{validClassVerdict}}
 	r2 := mustRunner(t, p2, oneModel(""), jevTasks(), &fakeLedger{}, nil, WithJev(nil))
 	_, dec2, err := r2.Run(context.Background(), "acc1", "message", "m1", "", TaskClassification,
@@ -326,7 +364,9 @@ func TestJevLinkDetectionDecidedPerURL(t *testing.T) {
 	}
 }
 
-func TestJevLinkDetectionNoURLsEscalates(t *testing.T) {
+func TestJevLinkDetectionNoURLsRoutesReview(t *testing.T) {
+	// T60: nothing to classify outside jev's competence routes to review,
+	// never to the LLM.
 	fake := &fakeJev{conf: 0.9}
 	srv := httptest.NewServer(fake.handler())
 	defer srv.Close()
@@ -334,14 +374,14 @@ func TestJevLinkDetectionNoURLsEscalates(t *testing.T) {
 	p := &scriptedProvider{contents: []string{validLinkVerdict}}
 	s := jevSolver(t, srv.URL, 0.85, jevAllTasks())
 	r := mustRunner(t, p, oneModel(""), jevTasks(), &fakeLedger{}, nil, WithJev(s))
-	_, dec, err := r.Run(context.Background(), "acc1", "chat", "7", "", TaskLinkDetection,
+	verdict, dec, err := r.Run(context.Background(), "acc1", "chat", "7", "", TaskLinkDetection,
 		map[string]any{"urls": []string{}, "context": map[string]any{"around": "нет ссылок"}})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	wantEscalated(t, "no urls", p, dec)
+	wantReview(t, "no urls", p, dec, verdict, reasonJevUndecided)
 	if st := s.Stats(); st.Escalated != 1 || st.Failed != 0 {
-		t.Errorf("stats = %+v, want quiet escalation", st)
+		t.Errorf("stats = %+v, want quiet escalation counter", st)
 	}
 }
 
@@ -374,9 +414,10 @@ func TestJevContactNoDecidedYesEscalates(t *testing.T) {
 		t.Errorf("contacts = %v (err %v), want empty", v.Contacts, err)
 	}
 
-	// A confident "yes" escalates: Jev cannot extract value/normalized/
-	// source_quote (no text generation) — an empty skeleton would silently
-	// drop the contacts the LLM would have extracted.
+	// A confident "yes" routes to review (T60): Jev cannot extract
+	// value/normalized/source_quote (no text generation) — an empty
+	// skeleton would silently drop the contacts, and the LLM is never
+	// reached in jev mode.
 	fakeYes := &fakeJev{conf: 0.9, pick: func(q JevQuestion) any {
 		if q.Type == JevQuestionNoul {
 			return 1.0
@@ -388,12 +429,12 @@ func TestJevContactNoDecidedYesEscalates(t *testing.T) {
 	p2 := &scriptedProvider{contents: []string{validContactVerdict}}
 	r2 := mustRunner(t, p2, oneModel(""), jevTasks(), &fakeLedger{}, nil,
 		WithJev(jevSolver(t, srvYes.URL, 0.85, jevAllTasks())))
-	_, dec2, err := r2.Run(context.Background(), "acc1", "message", "contact", "", TaskContactExtract,
+	verdict2, dec2, err := r2.Run(context.Background(), "acc1", "message", "contact", "", TaskContactExtract,
 		map[string]any{"text": "пиши в телеграм @ivan", "source": "chat_message"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	wantEscalated(t, "contacts yes", p2, dec2)
+	wantReview(t, "contacts yes", p2, dec2, verdict2, reasonJevUndecided)
 }
 
 func TestJevOfferVerdictRoutesHuman(t *testing.T) {
@@ -450,7 +491,8 @@ func TestJevInjectionFlagged(t *testing.T) {
 	}
 }
 
-func TestJevMalformedAnswerEscalatesToLLM(t *testing.T) {
+func TestJevMalformedAnswerRoutesReview(t *testing.T) {
+	// T60: malformed endpoint answers route to review, never to the LLM.
 	fake := &fakeJev{conf: 0.9, pick: func(_ JevQuestion) any { return "totally_unknown" }}
 	srv := httptest.NewServer(fake.handler())
 	defer srv.Close()
@@ -458,12 +500,12 @@ func TestJevMalformedAnswerEscalatesToLLM(t *testing.T) {
 	p := &scriptedProvider{contents: []string{validClassVerdict}}
 	r := mustRunner(t, p, oneModel(""), jevTasks(), &fakeLedger{}, nil,
 		WithJev(jevSolver(t, srv.URL, 0.85, jevAllTasks())))
-	_, dec, err := r.Run(context.Background(), "acc1", "message", "m1", "", TaskClassification,
+	verdict, dec, err := r.Run(context.Background(), "acc1", "message", "m1", "", TaskClassification,
 		map[string]any{"message": map[string]any{"author": "HR", "text": "x"}})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	wantEscalated(t, "malformed answer", p, dec)
+	wantReview(t, "malformed answer", p, dec, verdict, reasonJevUndecided)
 }
 
 func TestJevThresholdBoundary(t *testing.T) {
@@ -473,7 +515,7 @@ func TestJevThresholdBoundary(t *testing.T) {
 		wantSrc string
 	}{
 		{"at threshold decides", 0.85, SourceJev},
-		{"below threshold escalates", 0.84, SourceLLM},
+		{"below threshold routes to review", 0.84, SourceJev},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -491,6 +533,9 @@ func TestJevThresholdBoundary(t *testing.T) {
 			}
 			if dec.Source != tc.wantSrc {
 				t.Errorf("source = %q, want %q", dec.Source, tc.wantSrc)
+			}
+			if tc.conf < 0.85 && !dec.NeedsHuman {
+				t.Errorf("below-threshold run must be needs_human, got %+v", dec)
 			}
 		})
 	}

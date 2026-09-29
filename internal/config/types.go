@@ -120,7 +120,7 @@ type Account struct {
 }
 
 // AI aggregates the LLM subsystem: budgets, providers, models, tasks, pricing
-// and the optional Jev prefilter.
+// and the optional Jev classifier.
 type AI struct {
 	DailyBudgetTokens int                   `toml:"daily_budget_tokens"` // 0 = unlimited
 	DailyBudgetUSD    float64               `toml:"daily_budget_usd"`
@@ -129,20 +129,24 @@ type AI struct {
 	Models            map[string]AIModel    `toml:"models"`
 	Tasks             map[string]AITask     `toml:"tasks"`
 	Pricing           map[string]AIPricing  `toml:"pricing"`
-	// Jev (T33): optional System-One prefilter in front of the LLM
-	// pipeline. Disabled by default — false means full-AI mode. When
-	// enabled, enrolled tasks are classified by the Jev-compatible
-	// endpoint first; verdicts at or above confidence_threshold are
-	// returned without an LLM call, everything else (low confidence,
-	// endpoint unavailable, malformed answers) escalates to the LLM.
+	// Jev (T33): optional System-One classification endpoint. Disabled by
+	// default — false means LLM-only classification. Since T60 the choice
+	// is exclusive ([features.multiapply].classifier): enrolled tasks are
+	// classified by the Jev-compatible endpoint ONLY; verdicts at or above
+	// confidence_threshold are returned, everything else (low confidence,
+	// endpoint unavailable, malformed answers) routes to human review —
+	// the LLM is never called for classification in jev mode.
 	// The API key never lives in this file: it is read from the
 	// api_key_env environment variable at startup (fail-fast).
 	Jev AIJev `toml:"jev"`
 }
 
-// AIJev configures the Jev-compatible prefilter endpoint (T33).
+// AIJev configures the Jev-compatible classification endpoint (T33). Since
+// T60 the endpoint is THE classifier for its enrolled tasks (exclusive, no
+// LLM escalation): enabled=true requires [features.multiapply]
+// classifier="jev".
 type AIJev struct {
-	// Enabled gates the whole prefilter (default false = full AI).
+	// Enabled gates the whole classifier (default false = LLM-only).
 	Enabled bool `toml:"enabled"`
 	// Endpoint is the Jev-compatible System-One URL; defaults to
 	// https://api.typesafe.ai/v1/systemone. Must be an absolute http(s) URL.
@@ -151,21 +155,12 @@ type AIJev struct {
 	// required (and resolved fail-fast at startup) when Enabled.
 	APIKeyEnv string `toml:"api_key_env"`
 	// ConfidenceThreshold gates Jev verdicts: >= threshold is decided by
-	// Jev, below escalates to the LLM; default 0.85, must be in (0,1].
+	// Jev, below routes to human review; default 0.85, must be in (0,1].
 	ConfidenceThreshold float64 `toml:"confidence_threshold"`
-	// Tasks enrolls tasks in the prefilter; allowed values are the
+	// Tasks enrolls tasks in the classifier; allowed values are the
 	// classification-only tasks: message_classification,
 	// link_detection, contact_extraction.
 	Tasks []string `toml:"tasks"`
-	// JevOnlyTasks (T46) lists enrolled tasks where the Jev verdict is
-	// FINAL: when the prefilter cannot decide (low confidence, input
-	// outside its competence), is unavailable or returns a schema-invalid
-	// verdict, the run routes to human review instead of escalating to the
-	// LLM. Allowed values mirror Tasks and every entry must also be
-	// enrolled in Tasks. An empty list (the default, never auto-filled)
-	// keeps the T33 full-AI behavior: undecided outcomes escalate to the
-	// LLM.
-	JevOnlyTasks []string `toml:"jev_only_tasks"`
 }
 
 // AIProvider is one LLM API endpoint (one of the three dialects).
@@ -367,6 +362,25 @@ type AutoLift struct {
 	Jitter  string `toml:"jitter"`  // e.g. "20-40m"
 }
 
+// Classifier vocabulary for [features.multiapply].classifier (T60 owner
+// decision): classification runs through exactly ONE stage — the Jev
+// endpoint or the LLM — never one after another. "" behaves as llm (the
+// pre-T60 default install: [ai.jev] disabled, LLM-only classification).
+const (
+	ClassifierJev = "jev"
+	ClassifierLLM = "llm"
+)
+
+// Cover-letter mode vocabulary for [features.multiapply.cover_letter].mode
+// (T60): ai composes through the AI runner (template as context/fallback),
+// template sends the rendered static template without AI, off disables
+// letter generation entirely.
+const (
+	CoverLetterModeAI       = "ai"
+	CoverLetterModeTemplate = "template"
+	CoverLetterModeOff      = "off"
+)
+
 // MultiApply configures the apply pipeline.
 type MultiApply struct {
 	Enabled            bool `toml:"enabled"`
@@ -375,6 +389,34 @@ type MultiApply struct {
 	ExcludeAgenciesDef bool `toml:"exclude_agencies_default"`
 	PrioritizeOnlineHR bool `toml:"prioritize_online_hr"`
 	DedupNativeResp    bool `toml:"dedup_native_autoresponse"`
+	// Classifier (T60) picks THE classification stage: "jev" routes the
+	// classification tasks through the Jev endpoint exclusively (undecided
+	// outcomes route to human review, never to the LLM), "llm" keeps the
+	// LLM-only pipeline and forbids [ai.jev]. Unset behaves as "llm".
+	Classifier string `toml:"classifier"`
+	// CoverLetter (T60) configures the outgoing cover letter. A disabled
+	// section is inert: the per-run letter_mode/letter_template behavior is
+	// unchanged.
+	CoverLetter MultiApplyCoverLetter `toml:"cover_letter"`
+}
+
+// MultiApplyCoverLetter is the [features.multiapply.cover_letter] section
+// (T60). Defaults are inert: enabled=false keeps the pre-T60 behavior.
+type MultiApplyCoverLetter struct {
+	// Enabled gates the section; false = per-run letter config as before.
+	Enabled bool `toml:"enabled"`
+	// Mode selects ai | template | off ("" behaves as ai).
+	Mode string `toml:"mode"`
+	// Template is the letter template used when the run sets none. In
+	// template mode it is mandatory. Placeholders: {{.VacancyTitle}},
+	// {{.VacancyDescription}}, {{.VacancySalary}}, {{.VacancyExperience}},
+	// {{.VacancyEmployment}}, {{.VacancySchedule}}, {{.VacancyKeySkills}},
+	// {{.VacancyArea}}, {{.VacancyAddress}}, {{.VacancyURL}},
+	// {{.EmployerName}}, {{.Contacts}}, {{.PublishedAt}}.
+	Template string `toml:"template"`
+	// ModelProfile overrides [ai.tasks.cover_letter].model_profile; empty =
+	// the letter task's own profile.
+	ModelProfile string `toml:"model_profile"`
 }
 
 // Browser release-channel and humanize-preset vocabularies for [browser].

@@ -112,36 +112,32 @@
 # input_per_mtok_usd = 0.15
 # output_per_mtok_usd = 0.6
 
-# [ai.jev]                              # T33: Jev (System One) префильтр ПЕРЕД LLM
-                                        # Выключен по умолчанию (full AI). Когда включён,
-                                        # зачисленные задачи сначала классифицирует Jev-compatible
-                                        # эндпоинт: confidence >= порога -> вердикт БЕЗ вызова LLM,
-                                        # ниже порога / эндпоинт недоступен / кривой ответ -> LLM.
-                                        # Дешёвый быстрый путь не может сломать прогон.
-# enabled = false                       # false = режим full AI (раннер без префильтера)
+# [ai.jev]                              # T33/T60: Jev (System One) — ЭКСКЛЮЗИВНЫЙ классификатор
+                                        # Выключен по умолчанию (классификация на LLM). С T60 выбор
+                                        # ступени классификации эксклюзивен ([features.multiapply]
+                                        # classifier): включённый Jev — ЕДИНСТВЕННАЯ ступень для
+                                        # зачисленных задач; недешёвые исходы на LLM НЕ попадают
+                                        # никогда («один за другим» запрещено решением владельца).
+# enabled = false                       # false = классификация на LLM (classifier = "llm")
+                                        # true требует classifier = "jev" в [features.multiapply]
 # endpoint = "https://api.typesafe.ai/v1/systemone"  # любой Jev-compatible URL (http/https)
 # api_key_env = "TYPESAFE_API_KEY"      # ключ ТОЛЬКО через переменную окружения (fail-fast на старте)
-# confidence_threshold = 0.85           # (0,1]; >= порога решает Jev, ниже — эскалация на LLM
+# confidence_threshold = 0.85           # (0,1]; >= порога решает Jev, ниже — needs_human на проверку
 # tasks = ["message_classification", "link_detection", "contact_extraction"]
                                         # только эти три задачи Jev-совместимы (классификация без
                                         # генерации текста). Особенности: message_classification и
                                         # link_detection решаются Jev полностью (по одному Choice на
                                         # URL из input.urls); contact_extraction: уверенное «нет
-                                        # контактов» решается Jev, уверенное «да» эскалирует на LLM —
-                                        # Jev не может извлечь value/normalized/source_quote.
+                                        # контактов» решается Jev, уверенное «да» уходит на проверку
+                                        # человеку — Jev не может извлечь value/normalized/source_quote.
                                         # Вердикты Jev проходят ту же строгую schema-валидацию,
                                         # детерминированные post-checks и пишутся в ledger с
                                         # Model="jev", Source="jev" (LLM-решения: Source="llm").
-# jev_only_tasks = ["message_classification", "link_detection", "contact_extraction"]
-                                        # T46: задачи, где вердикт Jev ФИНАЛЬНЫЙ — без эскалации на LLM.
-                                        # Если Jev не решил (низкая confidence, задача вне его
-                                        # компетенции, эндпоинт недоступен, schema-invalid ответ),
-                                        # прогон завершается needs_human-вердиктом на проверку
-                                        # человеку (needs_human_reason="jev_undecided" или
-                                        # "schema_invalid"), LLM не вызывается. Значения должны
-                                        # совпадать с разрешёнными и быть зачислены в tasks.
-                                        # Пусто (по умолчанию, не автозаполняется) = режим full AI:
-                                        # нерешённые исходы эскалируют на LLM, как в T33.
+                                        # Нерешённые исходы (низкая confidence, задача вне
+                                        # компетенции, недоступный эндпоинт, schema-invalid ответ)
+                                        # завершаются needs_human-вердиктом
+                                        # (needs_human_reason="jev_undecided" или "schema_invalid");
+                                        # LLM для классификации не вызывается (T60).
 
 [features]
 # resume_visibility = false
@@ -158,6 +154,42 @@
 # exclude_agencies_default = true
 # prioritize_online_hr = true
 # dedup_native_autoresponse = true
+# classifier = ""                       # T60: ступень классификации ЭКСКЛЮЗИВНО: "jev" | "llm"
+                                        # "" (по умолчанию) = "llm". Владелец запретил «один за другим»:
+                                        # classifier="jev" требует [ai.jev] enabled=true (классификация
+                                        # только через Jev, нерешённое — на проверку человеку);
+                                        # [ai.jev] enabled=true требует classifier="jev" (иначе — ошибка
+                                        # валидации: прежний каскад префильтер→LLM удалён).
+# [features.multiapply.cover_letter]    # T60: настраиваемое сопроводительное
+# enabled = false                       # false (по умолчанию) = секция инертна, поведение задаёт runs.*
+                                        # (letter_mode/letter_template). true = секция управляет письмами всех ранов.
+# mode = "ai"                           # ai | template | off ("" = ai)
+                                        # ai — письмо сочиняет ИИ (шаблон как контекст/фолбэк);
+                                        # template — статический шаблон с подстановками, БЕЗ ИИ;
+                                        # off — письма не генерируются вовсе (вакансии, где hh требует
+                                        # письмо, пропускаются с skip "letter_off").
+# template = ""                         # шаблон для template-режима и как контекст/фолбэк для ai
+                                        # (когда у рана нет своего letter_template). Плейсхолдеры
+                                        # (данные — те же, что получает ИИ):
+                                        # {{.VacancyTitle}} {{.VacancyDescription}} {{.VacancySalary}}
+                                        # {{.VacancyExperience}} {{.VacancyEmployment}}
+                                        # {{.VacancySchedule}} {{.VacancyKeySkills}} {{.VacancyArea}}
+                                        # {{.VacancyAddress}} {{.VacancyURL}} {{.EmployerName}}
+                                        # {{.Contacts}} {{.PublishedAt}}
+# model_profile = ""                    # override профиля [ai.models] для задачи cover_letter
+                                        # (пусто = профиль из [ai.tasks.cover_letter])
+                                        # T60: перед СОПРОВОДИТЕЛЬНЫМ вакансия дотягивается ПОЛНЫМ
+                                        # объектом карточки (api.VacancyCard): название, зарплата±вилки,
+                                        # опыт, занятость, график, форматы работы, ключевые навыки,
+                                        # адрес/метро, работодатель+тип компании, контакты,
+                                        # отклик-инструкции и все вторичные поля — всё уходит в промпт
+                                        # (блок vacancy_details) и в плейсхолдеры шаблона. Токен-бюджет:
+                                        # описание передаётся текстом (HTML→текст), обрезка с 12000
+                                        # символов; вторичные поля ("other") — по 800 байт на поле,
+                                        # суммарно 4000 байт (превышающие лимит поля отбрасываются);
+                                        # decorative branded_description/branded_template исключены.
+                                        # Неудачное дотягивание карточки = skip "vacancy_card_failed"
+                                        # (fail-closed: письмо без полного контекста не отправляется).
 [features.autoclone]                    # T26/T28: автоклонирование резюме (нативный hh-клон clone_resumes: hh сам копирует контент и ставит parentResumeId; lineage дублируется локально)
 # enabled = false
 # max_clones_per_resume = 2             # прямых клонов на одно резюме

@@ -85,7 +85,7 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 	api hhapi.HHAPI, prof profile.Profile, resumeHash string, v hhapi.Vacancy, letterRequired bool, rc *cloneRunState,
 ) (stop, skip string) {
 	// Cover letter: required by the popup or configured by the run.
-	letter, skip := f.prepareLetter(ctx, runID, run, accountID, prof, v, resumeHash, letterRequired)
+	letter, skip := f.prepareLetter(ctx, runID, run, accountID, api, prof, v, resumeHash, letterRequired)
 	if skip != "" {
 		return "", skip
 	}
@@ -264,42 +264,43 @@ func (f *Feature) createApplication(ctx context.Context, runID, accountID, resum
 // errLetterNeedsHuman marks a cover-letter verdict that must not be sent.
 var errLetterNeedsHuman = errors.New("multiapply: cover letter needs human")
 
-// buildLetter produces the outgoing cover letter per the run's letter_mode
-// (T26): template sends the static template verbatim, template_ai polishes
-// it with the AI (falling back to the raw template), ai_company composes for
-// the company/vacancy through the AI runner with the template as context and
-// fallback (the pre-T26 behavior).
-func (f *Feature) buildLetter(ctx context.Context, runID string, run config.Run, accountID string,
-	prof profile.Profile, v hhapi.Vacancy, _ string,
+// buildLetter produces the outgoing cover letter (T26 modes; T60 resolves
+// the effective mode/template from the run fields and the cover_letter
+// section in prepareLetter): template sends the rendered static template
+// verbatim, template_ai polishes it with the AI (falling back to the
+// rendered template), ai_company composes for the company/vacancy through
+// the AI runner with the template as context and fallback.
+func (f *Feature) buildLetter(ctx context.Context, runID string, mode, tmpl, extraInstructions, accountID string,
+	prof profile.Profile, v *hhapi.Vacancy, details *vacancyDetails,
 ) (string, error) {
-	switch run.LetterMode {
+	switch mode {
 	case config.LetterModeTemplate:
-		if strings.TrimSpace(run.LetterTemplate) == "" {
+		if strings.TrimSpace(tmpl) == "" {
 			return "", errors.New("multiapply: letter_mode=template requires letter_template")
 		}
-		return run.LetterTemplate, nil
+		return renderLetterTemplate(tmpl, letterTemplateDataOf(*v, details))
 	case config.LetterModeTemplateAI:
-		if strings.TrimSpace(run.LetterTemplate) == "" {
+		if strings.TrimSpace(tmpl) == "" {
 			return "", errors.New("multiapply: letter_mode=template_ai requires letter_template")
 		}
 		if f.opt.Runner != nil {
-			letter, aerr := f.aiLetter(ctx, runID, run, accountID, prof, v)
+			letter, aerr := f.aiLetter(ctx, runID, mode, tmpl, extraInstructions, accountID, prof, v, details)
 			if aerr == nil {
 				return letter, nil
 			}
 			f.log.Warn("multiapply: cover letter polish failed; using the raw template", "vacancy", v.ID, "err", aerr)
 		}
-		return run.LetterTemplate, nil
+		return renderLetterTemplate(tmpl, letterTemplateDataOf(*v, details))
 	default: // config.LetterModeAICompany
 		if f.opt.Runner != nil {
-			letter, aerr := f.aiLetter(ctx, runID, run, accountID, prof, v)
+			letter, aerr := f.aiLetter(ctx, runID, mode, tmpl, extraInstructions, accountID, prof, v, details)
 			if aerr == nil {
 				return letter, nil
 			}
 			f.log.Warn("multiapply: cover letter task failed", "vacancy", v.ID, "err", aerr)
 		}
-		if run.LetterTemplate != "" {
-			return run.LetterTemplate, nil
+		if tmpl != "" {
+			return renderLetterTemplate(tmpl, letterTemplateDataOf(*v, details))
 		}
 		return "", errors.New("multiapply: no cover letter available")
 	}
@@ -307,21 +308,24 @@ func (f *Feature) buildLetter(ctx context.Context, runID string, run config.Run,
 
 // aiLetter asks the runner for the cover-letter verdict; needs_human,
 // injection-flagged or empty letters are refused (errLetterNeedsHuman).
-func (f *Feature) aiLetter(ctx context.Context, runID string, run config.Run, accountID string,
-	prof profile.Profile, v hhapi.Vacancy) (string, error) {
-	mode := run.LetterMode
-	if mode == "" {
-		mode = config.LetterModeAICompany
-	}
+func (f *Feature) aiLetter(ctx context.Context, runID, mode, tmpl, extraInstructions, accountID string,
+	prof profile.Profile, v *hhapi.Vacancy, details *vacancyDetails) (string, error) {
+	// The prompt carries the slim vacancy summary; the full field set rides
+	// in vacancy_details (raw JSON and the HTML description would duplicate
+	// the dump and burn the token budget).
+	summary := *v
+	summary.Raw = nil
+	summary.Description = ""
 	raw, _, err := f.opt.Runner.Run(ctx, accountID, "vacancy",
 		strconv.FormatInt(v.ID, 10), runID, ai.TaskCoverLetter, letterInput{
-			Vacancy:           v,
+			Vacancy:           summary,
+			Details:           details,
 			ResumeDigest:      prof.ResumeDigest,
 			ProfileText:       prof.ProfileText,
 			Facts:             prof.Facts,
-			Template:          run.LetterTemplate,
+			Template:          tmpl,
 			LetterMode:        mode,
-			ExtraInstructions: run.AIFilterOverrides.ExtraInstructions,
+			ExtraInstructions: extraInstructions,
 		})
 	if err != nil {
 		return "", err
@@ -345,6 +349,7 @@ func (f *Feature) aiLetter(ctx context.Context, runID string, run config.Run, ac
 
 type letterInput struct {
 	Vacancy           hhapi.Vacancy     `json:"vacancy"`
+	Details           *vacancyDetails   `json:"vacancy_details,omitempty"`
 	ResumeDigest      string            `json:"resume_digest"`
 	ProfileText       string            `json:"profile_text"`
 	Facts             map[string]string `json:"facts"`
@@ -758,14 +763,48 @@ func (f *Feature) popupGate(ctx context.Context, accountID string, api hhapi.HHA
 	return "", "", meta.LetterRequired
 }
 
-// prepareLetter builds the cover letter when the popup requires one or the
-// run configures a template; links in the letter are a hard skip.
+// prepareLetter builds the cover letter when the popup requires one, the
+// run configures a template or the [features.multiapply.cover_letter]
+// section asks for one; links in the letter are a hard skip. T60: whenever
+// a letter is built the FULL vacancy card is fetched — its complete field
+// set feeds the AI prompt and the template placeholders alike; a failed
+// fetch skips the vacancy fail-closed (a letter without the full context
+// contradicts the owner's requirement).
 func (f *Feature) prepareLetter(ctx context.Context, runID string, run config.Run, accountID string,
-	prof profile.Profile, v hhapi.Vacancy, resumeHash string, letterRequired bool) (string, string) {
-	if !letterRequired && run.LetterTemplate == "" {
+	api hhapi.HHAPI, prof profile.Profile, v hhapi.Vacancy, _ string, letterRequired bool) (string, string) {
+	mode, tmpl := run.LetterMode, run.LetterTemplate
+	if mode == "" {
+		mode = config.LetterModeAICompany // pre-T60 default
+	}
+	if cl := f.opt.Config.Features.MultiApply.CoverLetter; cl.Enabled {
+		switch cl.Mode {
+		case config.CoverLetterModeOff:
+			// Letters are never generated; a letter-required vacancy
+			// cannot be applied to properly.
+			if letterRequired {
+				return "", "letter_off"
+			}
+			return "", ""
+		case config.CoverLetterModeTemplate:
+			mode = config.LetterModeTemplate
+		default: // "" behaves as ai
+			mode = config.LetterModeAICompany
+		}
+		if tmpl == "" {
+			tmpl = cl.Template
+		}
+	}
+	if !letterRequired && tmpl == "" {
 		return "", ""
 	}
-	letter, err := f.buildLetter(ctx, runID, run, accountID, prof, v, resumeHash)
+	full, err := api.VacancyCard(ctx, v.ID)
+	if err != nil {
+		f.log.Warn("multiapply: vacancy card failed", "vacancy", v.ID, "err", err)
+		return "", "vacancy_card_failed"
+	}
+	details := buildVacancyDetails(*full)
+	letter, err := f.buildLetter(ctx, runID, mode, tmpl, run.AIFilterOverrides.ExtraInstructions,
+		accountID, prof, full, details)
 	if err != nil {
 		if letterRequired {
 			return "", "letter_unavailable"

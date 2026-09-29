@@ -1,28 +1,28 @@
 package ai
 
-// JevSolver is the optional System-One prefilter (T33). For the three
-// classification-only tasks it asks the Jev-compatible endpoint typed
+// JevSolver is the exclusive System-One classifier (T33, T60). For the
+// three classification-only tasks it asks the Jev-compatible endpoint typed
 // questions about the task input and, when the calibrated confidence clears
 // the configured threshold, produces the task's strict-schema verdict
 // WITHOUT an LLM call. Jev never generates text — answers are option
 // strings/indices and numbers only — so the solver maps them onto the enums
 // of internal/ai/schemas/*.json.
 //
-// Outcome taxonomy (mirror of the runner routing in runner.go):
+// Outcome taxonomy (mirror of the runner routing in runner.go; T60 makes
+// every non-decided outcome terminal — review, never the LLM):
 //   - decided   — confidence ≥ threshold → schema-shaped verdict;
 //   - undecided — confidence < threshold, or the input is outside Jev's
 //     competence (no URLs to classify; contacts present but Jev cannot
-//     extract their values) → escalate to the LLM;
+//     extract their values) → routes to human review;
 //   - failed    — transport error, HTTP error or malformed answers →
-//     escalate to the LLM (fail-safe: the prefilter can only save calls,
-//     never break a run).
+//     routes to human review.
 //
 // Capability note (contact_extraction): a confident "yes, there are
-// contacts" still escalates — value/normalized/source_quote require text
+// contacts" stays undecided — value/normalized/source_quote require text
 // generation Jev cannot do, and an empty-string skeleton would silently
-// drop the contacts the LLM would have extracted. The confident "no"
-// (contacts: []) is decided locally and saves the LLM call. The
-// contact_type choice still rides in every request per the T33 contract.
+// drop the contacts. The confident "no" (contacts: []) is decided locally.
+// The contact_type choice still rides in every request per the T33
+// contract.
 
 import (
 	"context"
@@ -39,13 +39,12 @@ const (
 	SourceJev = "jev"
 )
 
-// errJevUndecided marks a normal escalation: the input is outside Jev's
-// competence (not a failure — no warning, no error counter).
+// errJevUndecided marks a normal undecided outcome: the input is outside
+// Jev's competence (not a failure — no warning, no error counter).
 var errJevUndecided = errors.New("jev: task input is outside jev competence")
 
-// jevCompatibleTasks is the classification-only task set the prefilter can
-// serve (T33); shared by solver enrollment and the T46 Jev-only routing
-// gate in runner.go.
+// jevCompatibleTasks is the classification-only task set the Jev classifier
+// can serve (T33); shared by solver enrollment.
 var jevCompatibleTasks = map[TaskName]struct{}{
 	TaskClassification: {},
 	TaskLinkDetection:  {},
@@ -121,8 +120,8 @@ func (s *JevSolver) Handles(task TaskName) bool {
 func (s *JevSolver) Threshold() float64 { return s.threshold }
 
 // Solve runs one prefilter round. Returns (verdict, confidence, nil) when
-// Jev decided, (nil, confidence, nil) on a normal escalation and an error
-// when Jev is unavailable or answered malformed data (also escalates).
+// Jev decided, (nil, confidence, nil) on an undecided outcome and an error
+// when Jev is unavailable or answered malformed data (both route to review).
 func (s *JevSolver) Solve(ctx context.Context, task TaskName, input any) (json.RawMessage, float64, error) {
 	verdict, conf, err := s.solve(ctx, task, input)
 	if errors.Is(err, errJevUndecided) {
@@ -170,7 +169,7 @@ func (s *JevSolver) solve(ctx context.Context, task TaskName, input any) (json.R
 }
 
 // verdict maps the answers onto the task's strict schema and applies the
-// threshold gate; nil verdict = escalate (undecided).
+// threshold gate; nil verdict = undecided (routes to review).
 func (s *JevSolver) verdict(task TaskName, inputJSON []byte, resp JevResponse) (json.RawMessage, float64, error) {
 	byID := make(map[string]JevAnswer, len(resp.Answers))
 	for _, a := range resp.Answers {
@@ -252,7 +251,7 @@ func (s *JevSolver) verdictLinkDetection(inputJSON []byte, byID map[string]JevAn
 }
 
 // verdictContact maps the has_contacts noul onto contact_extraction. A
-// confident "no" decides (contacts: []); a confident "yes" escalates —
+// confident "no" decides (contacts: []); a confident "yes" stays undecided —
 // value/normalized/source_quote require text generation Jev cannot do, and
 // a skeleton would silently drop the contacts the LLM would extract.
 func (s *JevSolver) verdictContact(byID map[string]JevAnswer) (json.RawMessage, float64, error) {
@@ -295,7 +294,7 @@ func jevMarshal(m map[string]any) json.RawMessage {
 
 // jevChoiceValue resolves a choice answer's value: an option string or a
 // zero-based option index; anything else (or an unknown option) is an error
-// that escalates the run to the LLM.
+// that routes the run to review.
 func jevChoiceValue(a JevAnswer, options []string) (string, error) {
 	var opt string
 	if err := json.Unmarshal(a.Value, &opt); err == nil {
@@ -363,7 +362,7 @@ func jevLinkRequest(inputJSON []byte) (*JevRequest, error) {
 		URLs []string `json:"urls"`
 	}
 	if err := json.Unmarshal(inputJSON, &probe); err != nil || len(probe.URLs) == 0 {
-		// Nothing to classify — outside Jev's competence, escalate quietly.
+		// Nothing to classify — outside Jev's competence, undecided quietly.
 		return nil, errJevUndecided
 	}
 	qs := make([]JevQuestion, 0, len(probe.URLs))
