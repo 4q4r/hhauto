@@ -76,6 +76,7 @@ func applyDefaults(c *Config) {
 		{&c.Features.AutoClone.CloneOriginalAction, CloneActionKeep},
 		{&c.Features.AutoClone.Improve.Editor.BaseURL, "https://hh.ru"},
 		{&c.Features.AutoClone.Improve.Editor.CookieDomain, ".hh.ru"},
+		{&c.Console.Skips, "interesting,aggregate"}, // T69: interesting skip lines + digest breakdown
 	} {
 		if *d.dst == "" {
 			*d.dst = d.val
@@ -121,6 +122,10 @@ func applyDefaults(c *Config) {
 		{&c.Browser.Humanize, true},                 // T32: humanize launch profile on
 		{&c.Features.Setka.RequireCanMessage, true}, // T61: skip hh-ghosts
 		{&c.Features.Setka.NoLinks, true},           // T61: links are a shadow-ban trigger
+		{&c.Console.Applied, true},                  // T69: console surface defaults — vacancy lines on
+		{&c.Console.Errors, true},
+		{&c.Console.Letters, true},
+		{&c.Console.Lift, true},
 	} {
 		if *d.dst == nil {
 			v := d.val

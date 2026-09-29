@@ -3,11 +3,14 @@
 // implementers must not rename fields or change types without an orchestrator ruling.
 package config
 
+import "strings"
+
 // Config is the root of hhauto.toml.
 type Config struct {
 	General  General                    `toml:"general"`
 	Storage  Storage                    `toml:"storage"`
 	Log      Log                        `toml:"log"`
+	Console  Console                    `toml:"console"`
 	API      API                        `toml:"api"`
 	Captcha  map[string]CaptchaProvider `toml:"captcha"`
 	Proxy    map[string]Proxy           `toml:"proxy"`
@@ -51,6 +54,50 @@ type Log struct {
 	Format        string `toml:"format"` // text | json
 	File          string `toml:"file"`
 	RedactSecrets bool   `toml:"redact_secrets"` // validator forbids false
+}
+
+// Console configures the daemon's console surface (T69): which event lines
+// render on the terminal and through which Go text/template. Ledger rows,
+// metrics and webhooks are unaffected — this section is a presentation
+// layer for what the daemon already writes to the console.
+type Console struct {
+	// Applied/Errors/Letters/Lift gate the per-event vacancy and lift
+	// lines. Default true; default-true toggles are *bool (R1), so an
+	// explicit false in TOML is respected and nil means on.
+	Applied *bool `toml:"applied"`
+	Errors  *bool `toml:"errors"`
+	Letters *bool `toml:"letters"`
+	Lift    *bool `toml:"lift"`
+	// Verdicts renders the AI classification verdict lines (score and
+	// apply/skip outcome) — an alternative to running --log-level debug.
+	Verdicts bool `toml:"verdicts"`
+	// Skips selects which skip lines render individually: a comma-separated
+	// mode list none | all | interesting | aggregate (default
+	// "interesting,aggregate"). aggregate never renders individual lines —
+	// its skips appear in the digest breakdown; none must stand alone.
+	Skips string `toml:"skips"`
+	// SkipsReasons is an allowlist on top of the mode: when non-empty, only
+	// these skip reasons render individually (the digest still counts all).
+	SkipsReasons []string `toml:"skips_reasons"`
+	// Template overrides (Go text/template); empty = the built-in default.
+	// A non-empty template replaces the default entirely; malformed
+	// templates are a config validation error.
+	TemplateApplied string `toml:"template_applied"`
+	TemplateSkip    string `toml:"template_skip"`
+	TemplateError   string `toml:"template_error"`
+	TemplateLetter  string `toml:"template_letter"`
+	TemplateDigest  string `toml:"template_digest"`
+	TemplateLift    string `toml:"template_lift"`
+}
+
+// SkipModes splits the validated Skips field into a mode set (T69). The
+// token vocabulary and the none-is-alone rule are enforced by Validate.
+func (c Console) SkipModes() map[string]bool {
+	modes := make(map[string]bool)
+	for _, tok := range strings.Split(c.Skips, ",") {
+		modes[strings.TrimSpace(tok)] = true
+	}
+	return modes
 }
 
 // Transport selection vocabulary for [api].transport. TransportTLSClient

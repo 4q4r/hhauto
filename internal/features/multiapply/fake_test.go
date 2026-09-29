@@ -18,6 +18,7 @@ import (
 	"hhauto/internal/ai"
 	"hhauto/internal/captcha"
 	"hhauto/internal/config"
+	"hhauto/internal/console"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/profile"
 	"hhauto/internal/queue"
@@ -596,7 +597,8 @@ type harness struct {
 	profile profile.Profile
 	q       queue.Queue
 	reg     *scheduler.Registry
-	noChain bool // build the feature without a captcha chain
+	noChain bool             // build the feature without a captcha chain
+	console *console.Surface // T69 console surface under test; nil = silent
 }
 
 func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
@@ -639,6 +641,7 @@ func (h *harness) feature(t *testing.T) *Feature {
 		Notifier: h.notify,
 		Now:      func() time.Time { return now },
 		Log:      quietLogger(),
+		Console:  h.console,
 	})
 }
 

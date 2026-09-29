@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
+	"text/template"
 	"time"
 )
 
@@ -47,7 +48,51 @@ func Validate(c *Config) error {
 	if err := validateBrowser(c); err != nil {
 		return err
 	}
+	if err := validateConsole(c); err != nil {
+		return err
+	}
 	return validateRuns(c)
+}
+
+// validateConsole checks the [console] section (T69): the skips mode
+// vocabulary (none stands alone) and the template overrides (a non-empty
+// template must parse as a Go text/template; field references are resolved
+// at render time by the console surface).
+func validateConsole(c *Config) error {
+	if c.Console.Skips != "" {
+		none, other := false, false
+		for _, tok := range strings.Split(c.Console.Skips, ",") {
+			switch strings.TrimSpace(tok) {
+			case "none":
+				none = true
+			case "all", "interesting", "aggregate":
+				other = true
+			default:
+				return fmt.Errorf("console.skips %q: mode %q must be none | all | interesting | aggregate", c.Console.Skips, tok)
+			}
+		}
+		if none && other {
+			return fmt.Errorf("console.skips %q: none cannot be combined with other modes", c.Console.Skips)
+		}
+	}
+	for _, t := range []struct {
+		name, body string
+	}{
+		{"template_applied", c.Console.TemplateApplied},
+		{"template_skip", c.Console.TemplateSkip},
+		{"template_error", c.Console.TemplateError},
+		{"template_letter", c.Console.TemplateLetter},
+		{"template_digest", c.Console.TemplateDigest},
+		{"template_lift", c.Console.TemplateLift},
+	} {
+		if t.body == "" {
+			continue
+		}
+		if _, err := template.New(t.name).Parse(t.body); err != nil {
+			return fmt.Errorf("console.%s: %w", t.name, err)
+		}
+	}
+	return nil
 }
 
 // validateMultiApply checks the [features.multiapply] section (T60): the

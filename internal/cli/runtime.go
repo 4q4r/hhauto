@@ -32,6 +32,7 @@ import (
 	"hhauto/internal/browser"
 	"hhauto/internal/captcha"
 	"hhauto/internal/config"
+	"hhauto/internal/console"
 	"hhauto/internal/cookies"
 	"hhauto/internal/engine"
 	"hhauto/internal/features"
@@ -302,6 +303,24 @@ func webhookEndpointConfigs(cfg *config.Config) []config.Webhook {
 	return out
 }
 
+// resumeTitles resolves a resume title from the store snapshot by
+// (account, hash) — the console surface's T69 lookup (no network; empty
+// when the snapshot has no row, the surface falls back to the short hash).
+func resumeTitles(db *store.DB) func(accountID, hash string) string {
+	return func(accountID, hash string) string {
+		rows, err := db.ResumesListByAccount(context.Background(), accountID)
+		if err != nil {
+			return ""
+		}
+		for _, r := range rows {
+			if r.HhResumeID == hash {
+				return r.Title
+			}
+		}
+		return ""
+	}
+}
+
 // contentEditorFor resolves the per-account resume content surface for
 // the improve pipeline and the browser editor runner (type-asserted off
 // the full client; an account whose client lacks the surface fails here).
@@ -329,9 +348,15 @@ func (rt *Runtime) buildFeatures() error {
 	feats := &features.Registry{}
 	reviewer := rt.review.For(rt.DB)
 	stopped := func(ctx context.Context) bool { return rt.Kill != nil && rt.Kill.Tripped(ctx) }
+	// T69: the daemon console surface — one instance for the process, the
+	// T53 color gate on stderr (the --no-color flag participates).
+	surf, err := console.New(os.Stderr, !flags.noColor, cfg.Console, resumeTitles(rt.DB))
+	if err != nil {
+		return err
+	}
 	lift := autolift.New(autolift.Options{
 		Config: *cfg, DB: rt.DB, APIFor: apiFor, ChainFor: chainFor,
-		Pacer: rt.Pacer, Log: rt.Log, Queue: rt.Queue,
+		Pacer: rt.Pacer, Log: rt.Log, Queue: rt.Queue, Console: surf,
 	})
 	feats.Add(lift)
 	improver, err := buildImprove(cfg, rt.AI, rt.DB, rt.contentEditorFor, rt.Cookies, rt.Log, rt.profileFor)
@@ -342,7 +367,7 @@ func (rt *Runtime) buildFeatures() error {
 		Config: *cfg, DB: rt.DB, APIFor: apiFor, ChainFor: chainFor,
 		Runner: rt.AI, ProfileFor: rt.profileFor, Pacer: rt.Pacer,
 		Notifier: rt.Webhooks, Review: reviewer, Stopped: stopped, Log: rt.Log,
-		Improver: improver,
+		Improver: improver, Console: surf,
 	})
 	feats.Add(apply)
 	chat := chatops.New(*cfg, rt.DB, rt.AI, rt.Webhooks, kit11.APIResolver(rt.APIFor), rt.Log)

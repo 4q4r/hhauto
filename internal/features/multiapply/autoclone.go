@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"hhauto/internal/config"
+	"hhauto/internal/console"
 	"hhauto/internal/features/autoclone"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/profile"
@@ -106,6 +107,30 @@ func (f *Feature) executeRun(ctx context.Context, runID string, run config.Run, 
 	return f.maybeAutoClone(ctx, runID, run, accountID, api, prof, resumeHash, vacancies, depth)
 }
 
+// passStats accumulates one pass's console digest counters (T69). The
+// struct is local to a runPass invocation and threaded through the
+// pipeline call chain — never a Feature field, since passes for different
+// accounts run concurrently.
+type passStats struct {
+	applied int
+	letters int
+	errors  int
+	skips   map[string]int
+}
+
+func newPassStats() *passStats {
+	return &passStats{skips: map[string]int{}}
+}
+
+// skipped totals the per-reason skip counts.
+func (ps *passStats) skipped() int {
+	total := 0
+	for _, n := range ps.skips {
+		total += n
+	}
+	return total
+}
+
 // runPass is one collect → filter → apply pass with the given resume; it
 // returns the collected pool so the autoclone trigger can judge exhaustion.
 func (f *Feature) runPass(ctx context.Context, runID string, run config.Run, accountID string,
@@ -125,6 +150,7 @@ func (f *Feature) runPass(ctx context.Context, runID string, run config.Run, acc
 	}
 
 	batch := map[int64]bool{}
+	stats := newPassStats()
 	for _, v := range vacancies {
 		if f.opt.Stopped != nil && f.opt.Stopped(ctx) {
 			// Kill switch: the vacancy processed last has fully settled
@@ -134,18 +160,31 @@ func (f *Feature) runPass(ctx context.Context, runID string, run config.Run, acc
 				"run", runID, "account", accountID)
 			return vacancies, true, nil
 		}
-		stop, skip := f.processVacancy(ctx, runID, run, accountID, api, prof, resumeHash, v, batch, rc)
+		stop, skip := f.processVacancy(ctx, runID, run, accountID, api, prof, resumeHash, v, batch, rc, stats)
 		switch {
 		case stop != "":
 			f.incr(ctx, "apply.stop."+stop)
 			if stop != stopLoggedOut { // a logged-out account needs a human, not a tomorrow retry
 				f.queueTomorrow(ctx, accountID, runID)
 			}
+			// T69: a stopped pass still reports the counters it gathered.
+			f.console.Digest(console.DigestLine{
+				Applied: stats.applied, Letters: stats.letters,
+				Skipped: stats.skipped(), SkipBreakdown: console.SkipBreakdownByReason(stats.skips),
+				Errors: stats.errors,
+			})
 			return vacancies, true, nil
 		case skip != "":
 			f.incr(ctx, "apply.skip."+skip)
+			stats.skips[skip]++
+			f.console.Skip(accountID, skip, v)
 		}
 	}
+	f.console.Digest(console.DigestLine{
+		Applied: stats.applied, Letters: stats.letters,
+		Skipped: stats.skipped(), SkipBreakdown: console.SkipBreakdownByReason(stats.skips),
+		Errors: stats.errors,
+	})
 	return vacancies, false, nil
 }
 

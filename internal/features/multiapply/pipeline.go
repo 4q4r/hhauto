@@ -35,6 +35,7 @@ const (
 // intent fence is scoped to the clone resume.
 func (f *Feature) processVacancy(ctx context.Context, runID string, run config.Run, accountID string,
 	api hhapi.HHAPI, prof profile.Profile, resumeHash string, v hhapi.Vacancy, batch map[int64]bool, rc *cloneRunState,
+	stats *passStats,
 ) (stop, skip string) {
 	// In-batch dedup: the same vacancy from two sources is processed once.
 	if batch[v.ID] {
@@ -75,7 +76,7 @@ func (f *Feature) processVacancy(ctx context.Context, runID string, run config.R
 	}
 
 	// F8: apply.
-	return f.applyOne(ctx, runID, run, accountID, api, prof, resumeHash, v, letterRequired, rc)
+	return f.applyOne(ctx, runID, run, accountID, api, prof, resumeHash, v, letterRequired, rc, stats)
 }
 
 // applyOne performs the mutation with intent, letter, captcha retry and
@@ -83,14 +84,15 @@ func (f *Feature) processVacancy(ctx context.Context, runID string, run config.R
 // retry path to the clone resume.
 func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, accountID string,
 	api hhapi.HHAPI, prof profile.Profile, resumeHash string, v hhapi.Vacancy, letterRequired bool, rc *cloneRunState,
+	stats *passStats,
 ) (stop, skip string) {
 	// Cover letter: required by the popup or configured by the run.
-	letter, skip := f.prepareLetter(ctx, runID, run, accountID, api, prof, v, resumeHash, letterRequired)
+	letter, skip := f.prepareLetter(ctx, runID, run, accountID, api, prof, v, resumeHash, letterRequired, stats)
 	if skip != "" {
 		return "", skip
 	}
 
-	if f.dryRunApply(ctx, runID, accountID, resumeHash, v, letter) {
+	if f.dryRunApply(ctx, runID, accountID, resumeHash, v, letter, stats) {
 		return "", ""
 	}
 
@@ -119,7 +121,7 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 		return "", skip
 	}
 	if err == nil {
-		f.recordApplied(ctx, runID, accountID, resumeHash, v, claim, letter, "apply.ok")
+		f.recordApplied(ctx, runID, accountID, resumeHash, v, claim, letter, "apply.ok", stats)
 		return "", ""
 	}
 
@@ -128,7 +130,7 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 	var se *hhapi.StatusError
 	if errors.As(err, &se) && errors.Is(err, hhapi.ErrValidation) && alreadyMarker(err) {
 		_ = featurekit.FinishIntent(ctx, f.opt.DB, claim, nil)
-		f.createApplication(ctx, runID, accountID, resumeHash, v, "applied", letter, "")
+		f.createApplication(ctx, runID, accountID, resumeHash, v, "applied", letter, "", stats)
 		f.incr(ctx, "apply.already")
 		f.bumpEmployer(ctx, accountID, v.EmployerID)
 		return "", ""
@@ -144,7 +146,7 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 	// reading, never by repeating.
 	var amb *hhapi.AmbiguousError
 	if errors.As(err, &amb) {
-		handled, _ := f.resolveAmbiguous(ctx, runID, accountID, api, resumeHash, v, letter, claim, err, rc)
+		handled, _ := f.resolveAmbiguous(ctx, runID, accountID, api, resumeHash, v, letter, claim, err, rc, stats)
 		if handled {
 			return "", ""
 		}
@@ -152,9 +154,12 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 
 	// Plain failure.
 	_ = featurekit.FinishIntent(ctx, f.opt.DB, claim, err)
-	f.createApplication(ctx, runID, accountID, resumeHash, v, "failed", letter, err.Error())
+	f.createApplication(ctx, runID, accountID, resumeHash, v, "failed", letter, err.Error(), stats)
 	f.incr(ctx, "apply.error")
-	f.log.Warn("multiapply: apply failed", "vacancy", v.ID, "err", err)
+	// T69: the console surface renders the failure line; the structured
+	// record stays visible at debug level (one banner per event on the
+	// default console — T52).
+	f.log.Debug("multiapply: apply failed", "vacancy", v.ID, "err", err)
 	return "", ""
 }
 
@@ -204,12 +209,12 @@ func (f *Feature) reconcileNegotiations(ctx context.Context, api hhapi.HHAPI, va
 
 // recordApplied closes the flow for a successful (or reconciled) apply.
 func (f *Feature) recordApplied(ctx context.Context, runID, accountID, resumeHash string,
-	v hhapi.Vacancy, claim featurekit.IntentClaim, letter, metric string,
+	v hhapi.Vacancy, claim featurekit.IntentClaim, letter, metric string, stats *passStats,
 ) {
 	if err := featurekit.FinishIntent(ctx, f.opt.DB, claim, nil); err != nil {
 		f.log.Error("multiapply: intent mark failed", "err", err)
 	}
-	f.createApplication(ctx, runID, accountID, resumeHash, v, "applied", letter, "")
+	f.createApplication(ctx, runID, accountID, resumeHash, v, "applied", letter, "", stats)
 	f.incr(ctx, metric)
 	f.bumpEmployer(ctx, accountID, v.EmployerID)
 	// Reconciled applies land on the wire as real responses too — the
@@ -225,9 +230,19 @@ func (f *Feature) recordApplied(ctx context.Context, runID, accountID, resumeHas
 }
 
 func (f *Feature) createApplication(ctx context.Context, runID, accountID, resumeHash string,
-	v hhapi.Vacancy, status, letter, failReason string,
+	v hhapi.Vacancy, status, letter, failReason string, stats *passStats,
 ) {
 	appKey := featurekit.DedupKey(accountID, resumeHash, v.ID)
+	// T69: the console surface renders the terminal vacancy line at the
+	// record point — one line per outcome, counters ride along.
+	switch status {
+	case "applied":
+		stats.applied++
+		f.console.Applied(false, accountID, resumeHash, v)
+	case "failed":
+		stats.errors++
+		f.console.Error(accountID, v, failReason)
+	}
 	// A dry_run survey row for the same vacancy is upgraded in place —
 	// ApplicationsCreate would fail on the UNIQUE dedup_key (Wave 3 fix 2).
 	if existing, err := f.opt.DB.ApplicationsGetByDedupKey(ctx, appKey); err == nil && existing != nil {
@@ -271,7 +286,7 @@ var errLetterNeedsHuman = errors.New("multiapply: cover letter needs human")
 // rendered template), ai_company composes for the company/vacancy through
 // the AI runner with the template as context and fallback.
 func (f *Feature) buildLetter(ctx context.Context, runID string, mode, tmpl, extraInstructions, accountID string,
-	prof profile.Profile, v *hhapi.Vacancy, details *vacancyDetails,
+	prof profile.Profile, v *hhapi.Vacancy, details *vacancyDetails, stats *passStats,
 ) (string, error) {
 	switch mode {
 	case config.LetterModeTemplate:
@@ -284,7 +299,7 @@ func (f *Feature) buildLetter(ctx context.Context, runID string, mode, tmpl, ext
 			return "", errors.New("multiapply: letter_mode=template_ai requires letter_template")
 		}
 		if f.opt.Runner != nil {
-			letter, aerr := f.aiLetter(ctx, runID, mode, tmpl, extraInstructions, accountID, prof, v, details)
+			letter, aerr := f.aiLetter(ctx, runID, mode, tmpl, extraInstructions, accountID, prof, v, details, stats)
 			if aerr == nil {
 				return letter, nil
 			}
@@ -293,7 +308,7 @@ func (f *Feature) buildLetter(ctx context.Context, runID string, mode, tmpl, ext
 		return renderLetterTemplate(tmpl, letterTemplateDataOf(*v, details))
 	default: // config.LetterModeAICompany
 		if f.opt.Runner != nil {
-			letter, aerr := f.aiLetter(ctx, runID, mode, tmpl, extraInstructions, accountID, prof, v, details)
+			letter, aerr := f.aiLetter(ctx, runID, mode, tmpl, extraInstructions, accountID, prof, v, details, stats)
 			if aerr == nil {
 				return letter, nil
 			}
@@ -309,7 +324,7 @@ func (f *Feature) buildLetter(ctx context.Context, runID string, mode, tmpl, ext
 // aiLetter asks the runner for the cover-letter verdict; needs_human,
 // injection-flagged or empty letters are refused (errLetterNeedsHuman).
 func (f *Feature) aiLetter(ctx context.Context, runID, mode, tmpl, extraInstructions, accountID string,
-	prof profile.Profile, v *hhapi.Vacancy, details *vacancyDetails) (string, error) {
+	prof profile.Profile, v *hhapi.Vacancy, details *vacancyDetails, stats *passStats) (string, error) {
 	// The prompt carries the slim vacancy summary; the full field set rides
 	// in vacancy_details (raw JSON and the HTML description would duplicate
 	// the dump and burn the token budget).
@@ -342,6 +357,9 @@ func (f *Feature) aiLetter(ctx context.Context, runID, mode, tmpl, extraInstruct
 		f.review(ctx, accountID, "letter_needs_human",
 			"cover letter verdict needs human or is empty",
 			fmt.Sprintf(`{"vacancy_id":%d,"run":%q}`, v.ID, runID))
+		// T69: the needs-human letter is a first-class console event.
+		stats.letters++
+		f.console.Letter(accountID, *v)
 		return "", errLetterNeedsHuman
 	}
 	return strings.TrimSpace(lv.Letter), nil
@@ -717,8 +735,12 @@ func (f *Feature) aiFilterSkip(ctx context.Context, runID string, run config.Run
 			TargetRoles:       relevance.RolesFromFacts(prof),
 			ExtraInstructions: run.AIFilterOverrides.ExtraInstructions,
 		}
-		_, pass, reason := relevance.New(f.opt.Runner, f.opt.DB, accountID, runID, prof, rules, f.log).
+		vd, pass, reason := relevance.New(f.opt.Runner, f.opt.DB, accountID, runID, prof, rules, f.log).
 			Pass(ctx, v, resumeHash, threshold)
+		// T69: the classification verdict line (score and apply/skip
+		// outcome) — off by default, the [console].verdicts toggle turns
+		// it on as an alternative to --log-level debug.
+		f.console.Verdict(v, vd.Score, threshold, pass, reason)
 		if !pass {
 			return reason
 		}
@@ -785,7 +807,8 @@ func (f *Feature) popupGate(ctx context.Context, accountID string, api hhapi.HHA
 // fetch skips the vacancy fail-closed (a letter without the full context
 // contradicts the owner's requirement).
 func (f *Feature) prepareLetter(ctx context.Context, runID string, run config.Run, accountID string,
-	api hhapi.HHAPI, prof profile.Profile, v hhapi.Vacancy, _ string, letterRequired bool) (string, string) {
+	api hhapi.HHAPI, prof profile.Profile, v hhapi.Vacancy, _ string, letterRequired bool, stats *passStats,
+) (string, string) {
 	mode, tmpl := run.LetterMode, run.LetterTemplate
 	if mode == "" {
 		mode = config.LetterModeAICompany // pre-T60 default
@@ -818,7 +841,7 @@ func (f *Feature) prepareLetter(ctx context.Context, runID string, run config.Ru
 	}
 	details := buildVacancyDetails(*full)
 	letter, err := f.buildLetter(ctx, runID, mode, tmpl, run.AIFilterOverrides.ExtraInstructions,
-		accountID, prof, full, details)
+		accountID, prof, full, details, stats)
 	if err != nil {
 		if letterRequired {
 			return "", "letter_unavailable"
@@ -841,11 +864,16 @@ func (f *Feature) prepareLetter(ctx context.Context, runID string, run config.Ru
 // dryRunApply records a dry_run survey application: no pacer, no intent,
 // no mutation — the survey row is upgradeable in place later (Wave 3 fix 2).
 func (f *Feature) dryRunApply(ctx context.Context, runID string, accountID string, resumeHash string,
-	v hhapi.Vacancy, letter string) bool {
+	v hhapi.Vacancy, letter string, stats *passStats) bool {
 	if !f.opt.Config.General.DryRun {
 		return false
 	}
-	f.log.Info("multiapply: dry-run apply", "account", accountID, "vacancy", v.ID, "run", runID)
+	// T69: the console surface renders the dry-run line («Откликнулся бы»);
+	// the structured record stays visible at debug level (one banner per
+	// event — T52).
+	stats.applied++
+	f.console.Applied(true, accountID, resumeHash, v)
+	f.log.Debug("multiapply: dry-run apply", "account", accountID, "vacancy", v.ID, "run", runID)
 	if err := f.opt.DB.ApplicationsCreate(ctx, &store.Application{
 		AccountID: accountID, RunID: runID, HhResumeID: resumeHash,
 		VacancyID: v.ID, EmployerID: v.EmployerID,
@@ -916,11 +944,12 @@ func (f *Feature) solveCaptchaOrBreak(ctx context.Context, accountID string) boo
 // park for a human. handled=true means applyOne returns cleanly.
 func (f *Feature) resolveAmbiguous(ctx context.Context, runID string, accountID string, api hhapi.HHAPI,
 	resumeHash string, v hhapi.Vacancy, letter string, claim featurekit.IntentClaim, _ error, rc *cloneRunState,
+	stats *passStats,
 ) (bool, error) {
 	found, rerr := f.reconcileNegotiations(ctx, api, v.ID)
 	switch {
 	case rerr == nil && found:
-		f.recordApplied(ctx, runID, accountID, resumeHash, v, claim, letter, "apply.reconciled")
+		f.recordApplied(ctx, runID, accountID, resumeHash, v, claim, letter, "apply.reconciled", stats)
 		return true, nil
 	case rerr == nil && !found:
 		// Server has no trace: abandon the intent and retry once —
@@ -930,7 +959,7 @@ func (f *Feature) resolveAmbiguous(ctx context.Context, runID string, accountID 
 		}
 		claim2, retryErr := f.retryApplyOnce(ctx, runID, accountID, api, v, resumeHash, letter, rc)
 		if retryErr == nil {
-			f.recordApplied(ctx, runID, accountID, resumeHash, v, claim2, letter, "apply.ok")
+			f.recordApplied(ctx, runID, accountID, resumeHash, v, claim2, letter, "apply.ok", stats)
 			return true, nil
 		}
 		// A second ambiguity inside the sanctioned retry is handled
@@ -940,7 +969,7 @@ func (f *Feature) resolveAmbiguous(ctx context.Context, runID string, accountID 
 		if errors.As(retryErr, &amb2) {
 			found2, rerr2 := f.reconcileNegotiations(ctx, api, v.ID)
 			if rerr2 == nil && found2 {
-				f.recordApplied(ctx, runID, accountID, resumeHash, v, claim2, letter, "apply.reconciled")
+				f.recordApplied(ctx, runID, accountID, resumeHash, v, claim2, letter, "apply.reconciled", stats)
 				return true, nil
 			}
 			f.review(ctx, accountID, "apply_ambiguous",
@@ -950,7 +979,7 @@ func (f *Feature) resolveAmbiguous(ctx context.Context, runID string, accountID 
 			return true, nil // intent stays pending: parked for a human
 		}
 		_ = featurekit.FinishIntent(ctx, f.opt.DB, claim2, retryErr)
-		f.createApplication(ctx, runID, accountID, resumeHash, v, "failed", letter, retryErr.Error())
+		f.createApplication(ctx, runID, accountID, resumeHash, v, "failed", letter, retryErr.Error(), stats)
 		f.incr(ctx, "apply.error")
 		return true, nil
 	default:
