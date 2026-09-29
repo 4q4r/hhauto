@@ -341,7 +341,7 @@ func checkAccountSession(ctx context.Context, cfg *config.Config, db *store.DB, 
 	if err != nil {
 		return fmt.Errorf("me: %w", err)
 	}
-	o.printf("Сессия жива: %s (%s, id %d)\n", u.FullName, u.Email, u.ID)
+	o.printf("%s %s (%s, id %d)\n", o.st.green("Сессия жива:"), u.FullName, u.Email, u.ID)
 
 	resumes, err := api.ListResumes(ctx)
 	if err != nil {
@@ -369,7 +369,7 @@ func checkAccountSession(ctx context.Context, cfg *config.Config, db *store.DB, 
 	}
 	o.printf("Резюме в store: %d\n", stored)
 	for _, r := range resumes {
-		o.printf("  - %s  %s  (%s)\n", r.HHID, r.Title, r.Status)
+		o.printf("  - %s  %s  (%s)\n", r.HHID, r.Title, o.st.status(r.Status))
 	}
 	return nil
 }

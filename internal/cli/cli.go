@@ -39,7 +39,9 @@ func Execute(version, commit, date string) int {
 	buildVersion, buildCommit, buildDate = version, commit, date
 	root := newRootCmd()
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
+		// Red "Error:" on a terminal only (T53): pipes and journald keep
+		// the plain T49 form.
+		fmt.Fprintln(os.Stderr, detectStyle(os.Stderr).red("Error:"), err)
 		var ee *ExitError
 		if errors.As(err, &ee) {
 			return ee.Code // semantic exit codes (T35: 2 = session rotated)
@@ -113,9 +115,12 @@ func buildOpts() BuildOptions {
 	}
 }
 
-// outFor returns the output streams for a command context.
+// outFor returns the output streams for a command context. The style
+// binds to the stdout sink: a terminal gets colors, anything else (pipes,
+// journald, test buffers) stays plain.
 func outFor(cmd *cobra.Command) out {
-	return out{stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr()}
+	stdout := cmd.OutOrStdout()
+	return out{stdout: stdout, stderr: cmd.ErrOrStderr(), st: detectStyle(stdout)}
 }
 
 // exitErr formats a command failure for the cobra error path.

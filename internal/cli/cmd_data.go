@@ -459,11 +459,17 @@ func newResumeListCmd() *cobra.Command {
 				o.println("В store нет резюме. Запустите hhauto onboarding или hhauto account check <ID>.")
 				return nil
 			}
+			header := []string{"ACCOUNT", "HASH", "TITLE", "STATUS", "UPDATED"}
 			table := make([][]string, 0, len(rows))
 			for _, r := range rows {
-				table = append(table, []string{r.Account, r.Hash, clip(r.Title, 40), r.Status, r.Updated})
+				table = append(table, []string{r.Account, r.Hash, clip(r.Title, 40),
+					o.st.status(r.Status), r.Updated})
 			}
-			o.printTable([]string{"ACCOUNT", "HASH", "TITLE", "STATUS", "UPDATED"}, table)
+			if o.st.enabled {
+				o.printStyledTable(o.st, header, table)
+				return nil
+			}
+			o.printTable(header, table)
 			return nil
 		},
 	}

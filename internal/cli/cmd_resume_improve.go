@@ -212,10 +212,15 @@ func parseFieldsFlag(raw string, defaults []string) ([]string, error) {
 	return out, nil
 }
 
-// printImproveDiff renders the было/стало artifact (table or --json).
+// printImproveDiff renders the было/стало artifact (--json or, on a
+// terminal, one compact block per field; the plain table otherwise).
 func printImproveDiff(o out, artifact *autoclone.DiffArtifact, _ bool) error {
 	if flags.json {
 		return o.printJSON(artifact)
+	}
+	if o.st.enabled {
+		printImproveBlocks(o, artifact)
+		return nil
 	}
 	head := "improve diff"
 	if artifact.DryRun {
@@ -236,6 +241,54 @@ func printImproveDiff(o out, artifact *autoclone.DiffArtifact, _ bool) error {
 	}
 	o.printTable([]string{"FIELD", "STATUS", "БЫЛО", "СТАЛО", "ПРИЧИНА"}, rows)
 	return nil
+}
+
+// diff block layout: two-space indent, labels padded to the widest one
+// ("причина:", 8 runes) plus one space → the value column starts at 11.
+const (
+	diffLabelWidth = 8
+	diffValueCol   = 11
+)
+
+// printImproveBlocks renders the artifact as one compact block per field:
+// verdict first (colored glyph + status), field name after, the
+// было/стало values wrapped to the terminal width, the reason on its own
+// line. Same data as the plain table, shaped for reading.
+func printImproveBlocks(o out, artifact *autoclone.DiffArtifact) {
+	st := o.st
+	head := "improve diff"
+	switch {
+	case artifact.DryRun:
+		head += " " + st.cyan("(dry-run: ничего не применялось)")
+	case artifact.Applied:
+		head += " " + st.green("(применено)")
+	default:
+		head += " " + st.dim("(применения не было)")
+	}
+	o.println(head)
+	width := ttyWidth(o.stdout) - diffValueCol
+	for _, f := range artifact.Fields {
+		o.println()
+		o.println(st.status(f.Status) + "  " + f.Field)
+		printDiffValue(o, "было:", string(f.Before), width)
+		printDiffValue(o, "стало:", string(f.After), width)
+		printDiffValue(o, "причина:", f.Reason, width)
+	}
+}
+
+// printDiffValue prints one labeled value block of a diff field, wrapping
+// to width; empty values print nothing.
+func printDiffValue(o out, label, value string, width int) {
+	if value == "" {
+		return
+	}
+	for i, line := range strings.Split(wrapText(value, width), "\n") {
+		if i == 0 {
+			o.println("  " + padCell(o.st.dim(label), diffLabelWidth) + " " + line)
+			continue
+		}
+		o.println("  " + strings.Repeat(" ", diffLabelWidth) + " " + line)
+	}
 }
 
 // errUnknownTaskType marks a --task-type value outside the vocabulary.

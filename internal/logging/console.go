@@ -11,13 +11,16 @@ import (
 	"golang.org/x/term"
 )
 
-// ANSI SGR color codes for console rendering: improved/success lines are
-// green, warnings yellow, errors red; reset clears the color.
+// ANSI SGR color codes for console rendering: improved/applied results
+// are green, info cyan, warnings yellow, errors red; dim de-emphasizes
+// secondary attributes; reset clears the color.
 const (
 	ansiReset  = "\033[0m"
 	ansiGreen  = "\033[32m"
 	ansiYellow = "\033[33m"
 	ansiRed    = "\033[31m"
+	ansiCyan   = "\033[36m"
+	ansiDim    = "\033[2m"
 )
 
 // consoleHandler renders records as human-readable console lines: the bare
@@ -40,10 +43,12 @@ func newConsoleHandler(w io.Writer, color bool, minLevel slog.Leveler) *consoleH
 }
 
 // NewConsoleHandler builds the human-readable console handler, enabling
-// colors only when w is a terminal.
+// colors only when w is a terminal and the environment asks for them
+// (NO_COLOR and TERM=dumb force plain output).
 func NewConsoleHandler(w io.Writer, minLevel slog.Leveler) slog.Handler {
 	f, ok := w.(*os.File)
-	return newConsoleHandler(w, ok && term.IsTerminal(int(f.Fd())), minLevel)
+	envPlain := os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb"
+	return newConsoleHandler(w, ok && term.IsTerminal(int(f.Fd())) && !envPlain, minLevel)
 }
 
 func (h *consoleHandler) Enabled(_ context.Context, l slog.Level) bool {
@@ -51,30 +56,42 @@ func (h *consoleHandler) Enabled(_ context.Context, l slog.Level) bool {
 }
 
 // lineColor picks the ANSI code for a record: errors red, warnings yellow,
-// improved results green, everything else uncolored.
+// improved/applied results green, everything else info-cyan.
 func lineColor(level slog.Level, msg string, attrs []slog.Attr) string {
 	switch {
 	case level >= slog.LevelError:
 		return ansiRed
 	case level >= slog.LevelWarn:
 		return ansiYellow
-	case strings.Contains(msg, "improved") || hasImprovedStatus(attrs):
+	case strings.Contains(msg, "improved") || successAttr(attrs):
 		// "improved" (T29 per-field verdict status; "improved <field>
-		// waits for owner approval") marks a successful improvement.
+		// waits for owner approval") and applied=true mark success.
 		return ansiGreen
+	case level >= slog.LevelInfo:
+		return ansiCyan
 	default:
 		return ""
 	}
 }
 
-// hasImprovedStatus reports whether attrs carry status=improved.
-func hasImprovedStatus(attrs []slog.Attr) bool {
+// successAttr reports whether attrs mark a successful improvement:
+// status=improved or applied=true.
+func successAttr(attrs []slog.Attr) bool {
 	for _, a := range attrs {
-		if a.Key == "status" && a.Value.Kind() == slog.KindString && a.Value.String() == "improved" {
+		switch {
+		case a.Key == "status" && a.Value.Kind() == slog.KindString && a.Value.String() == "improved":
+			return true
+		case a.Key == "applied" && a.Value.Kind() == slog.KindBool && a.Value.Bool():
 			return true
 		}
 	}
 	return false
+}
+
+// isSecondaryAttr marks attribute strings that render dim on a terminal:
+// the secondary identifiers (hash, account) that never carry a verdict.
+func isSecondaryAttr(s string) bool {
+	return strings.HasPrefix(s, "hash=") || strings.HasPrefix(s, "account=")
 }
 
 // flattenAttrs renders attrs as flat key=value strings, descending into
@@ -102,6 +119,11 @@ func (h *consoleHandler) Handle(_ context.Context, r slog.Record) error {
 	if h.color {
 		if c := lineColor(r.Level, msg, all); c != "" {
 			msg = c + msg + ansiReset
+		}
+		for i, a := range attrs {
+			if isSecondaryAttr(a) {
+				attrs[i] = ansiDim + a + ansiReset
+			}
 		}
 	}
 	line := msg
