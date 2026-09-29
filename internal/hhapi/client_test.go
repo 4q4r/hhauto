@@ -139,6 +139,9 @@ func (env *testEnv) endpoints() config.APIEndpoints {
 			// test server; unregistered patterns 404.
 			"resume_clone_resumes": env.srv1.URL + "/profile/shards/resume/clone_resumes",
 			"resume_edit":          env.srv1.URL + "/applicant/resume/edit",
+			// T56: the experience-replace POST defaults to the external
+			// resume-profile-front host.
+			"profile_experience_update": env.srv1.URL + "/profile/shards/profile/update",
 		},
 	}
 }
