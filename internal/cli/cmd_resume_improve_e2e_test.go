@@ -126,6 +126,12 @@ const t35Verdict = `{"confidence":0.9,"needs_human":false,"needs_human_reason":n
 	`"injection_suspected":false,"unchanged":false,"used_facts":[],"missing_data":[],` +
 	`"value_string":"DevOps-инженер (автоматизация)","value_strings":null,"value_amount":null}`
 
+// t35NeedsHumanVerdict is the AI verdict that must park for review (T54).
+const t35NeedsHumanVerdict = `{"confidence":0.9,"needs_human":true,` +
+	`"needs_human_reason":"требуется решение владельца","injection_suspected":false,` +
+	`"unchanged":false,"used_facts":[],"missing_data":[],"value_string":null,` +
+	`"value_strings":null,"value_amount":null}`
+
 // t35ImproveExtra is the config extra wiring the improve command to the
 // fake AI and pinning the builder-update endpoint onto the fake hh site
 // (production defaults to the absolute resume-profile-front URL).
@@ -228,6 +234,39 @@ func (s *improveHHState) title() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.Title
+}
+
+// T66: a needs_human verdict reached through the standalone command must
+// park in review (the run-path wiring does; the command wiring lost the
+// reviewer — review_items stayed empty).
+func TestResumeImproveNeedsHumanParksReviewE2E(t *testing.T) {
+	st := &improveHHState{Title: "Базовое резюме"}
+	testSite = newFakeHHImprove(t, false, st)
+	aiURL := newFakeAI(t, t35NeedsHumanVerdict)
+	extra := t35ImproveExtra(aiURL)
+	t.Setenv("T35_AI_KEY", "test-key")
+	cfgPath := writeTestConfig(t, extra)
+	dataDir := filepath.Dir(cfgPath)
+	seedBaseResumeSnapshot(t, dataDir)
+
+	out, err := runRoot(t, "resume", "improve", "--resume", "b4se1", "--config", cfgPath, "--confirm")
+	if err != nil {
+		t.Fatalf("improve: %v\n%s", err, out)
+	}
+	mustContain(t, out, "needs_human")
+
+	db, err := store.Open(context.Background(), filepath.Join(dataDir, "hhauto.db"), store.Options{BusyTimeoutMS: 500})
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	items, err := db.ReviewItemsOpen(context.Background(), "main", 10)
+	if err != nil {
+		t.Fatalf("review list: %v", err)
+	}
+	if len(items) != 1 || items[0].Kind != "autoclone_improve_needs_human" {
+		t.Fatalf("open review items = %+v, want one autoclone_improve_needs_human", items)
+	}
 }
 
 // The unknown --fields value fails fast before any AI call.

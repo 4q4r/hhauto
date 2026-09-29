@@ -244,25 +244,6 @@ func experienceFacts(content *hhapi.ResumeContent, itemIndex int) []string {
 	return out
 }
 
-// affectedScreens resolves the update walk screens for the planned fields
-// (union of the per-field resolutions, in the resume's live screen order).
-func affectedScreens(fieldIDs []string, content *hhapi.ResumeContent) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, id := range fieldIDs {
-		for _, s := range screensFor(id, content) {
-			if !seen[s] {
-				seen[s] = true
-				out = append(out, s)
-			}
-		}
-	}
-	if len(out) == 0 {
-		return content.Screens
-	}
-	return out
-}
-
 // displayValue unwraps a stored/validated payload value back to its
 // natural scalar for the diff artifact (было/стало readability).
 func displayValue(spec FieldSpec, raw json.RawMessage) json.RawMessage {

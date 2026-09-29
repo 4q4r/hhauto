@@ -97,12 +97,12 @@ func (l *lineageEditor) ResumeContent(ctx context.Context, hash string) (*hhapi.
 }
 
 // UpdateResumeContent posts a modified split through the clone's account.
-func (l *lineageEditor) UpdateResumeContent(ctx context.Context, hash string, content *hhapi.ResumeContent, screens []string) error {
+func (l *lineageEditor) UpdateResumeContent(ctx context.Context, hash string, content *hhapi.ResumeContent, targets []string) error {
 	ed, err := l.editorFor(ctx, hash)
 	if err != nil {
 		return err
 	}
-	return ed.UpdateResumeContent(ctx, hash, content, screens)
+	return ed.UpdateResumeContent(ctx, hash, content, targets)
 }
 
 // levelerFor resolves the T57 key-skill levels surface of the clone's
@@ -304,5 +304,6 @@ func buildImproveForCommand(rt *Runtime, improve config.AutoCloneImprove, accoun
 		Log:        rt.Log,
 		ProfileFor: rt.profileFor,
 		BasePrompt: base,
+		Review:     rt.review.For(rt.DB), // T66: needs_human/always_ask park for review like the run path
 	})
 }

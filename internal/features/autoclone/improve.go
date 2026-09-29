@@ -332,7 +332,7 @@ func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 // then it is skipped (and rolled back in the payload).
 func (im *Improver) applyPending(ctx context.Context, cloneHash string,
 	live, payload *hhapi.ResumeContent, pendings []pending, artifact *DiffArtifact) {
-	err := im.opt.API.UpdateResumeContent(ctx, cloneHash, payload, affectedScreens(im.opt.Cfg.Fields, payload))
+	err := im.opt.API.UpdateResumeContent(ctx, cloneHash, payload, pendingKeys(pendings))
 	if err == nil {
 		return
 	}
@@ -351,9 +351,19 @@ func (im *Improver) applyPending(ctx context.Context, cloneHash string,
 	if len(retry) == 0 {
 		return
 	}
-	if rerr := im.opt.API.UpdateResumeContent(ctx, cloneHash, payload, affectedScreens(im.opt.Cfg.Fields, payload)); rerr != nil {
+	if rerr := im.opt.API.UpdateResumeContent(ctx, cloneHash, payload, pendingKeys(retry)); rerr != nil {
 		im.settleRetryOutcome(artifact, retry, rerr)
 	}
+}
+
+// pendingKeys maps the plan's pending fields to their content keys
+// ("side.key") — the apply/verify scope of the update call.
+func pendingKeys(pendings []pending) []string {
+	keys := make([]string, 0, len(pendings))
+	for _, p := range pendings {
+		keys = append(keys, p.spec.Side+"."+p.spec.Key)
+	}
+	return keys
 }
 
 // retryRejectedFields handles the first validation verdict: fixes the
