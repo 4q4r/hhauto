@@ -67,11 +67,6 @@ const cloneResumesURL = "https://resume-profile-front.hh.ru/profile/shards/resum
 // re-maps the sent id server-side.
 const defaultCloneRoleID = "160"
 
-// resumeUpdateURL is the builder save endpoint: the same service and
-// header discipline as clone_resumes (T28: every editor POST rides the
-// resume-profile-front BFF host; a site-host pinning earned the T27 400s).
-const resumeUpdateURL = "https://resume-profile-front.hh.ru/profile/shards/resume/update"
-
 // cloneHhtmSource is the X-hhtmSource the deployed editor sends from the
 // screen the clone modal rides on (resume_professional_role route).
 const cloneHhtmSource = "resume_professional_role"
@@ -631,35 +626,6 @@ func (c *Client) fetchBuilderState(ctx context.Context, hash string) (*builderSt
 		return nil, &StatusError{Kind: ErrUpstream, StatusCode: resp.status, URL: resp.finalURL, BodySnippet: snippet(resp.body), Chain: resp.chain}
 	}
 	return st, nil
-}
-
-// resumeScreenUpdate is the resume-profile builder save envelope (decoded
-// from the deployed editor SPA; chunk 6069 module 11154 thunk P — every
-// key of the thunk body rides: the T27 400s were the missing
-// additionalProperties/userSkillLevels/userPrint plus the missing SPA
-// header set).
-type resumeScreenUpdate struct {
-	ResumeHash      string                     `json:"resumeHash"`
-	CurrentScreenID string                     `json:"currentScreenId"`
-	Resume          map[string]json.RawMessage `json:"resume"`
-	Profile         map[string]json.RawMessage `json:"profile"`
-	QuestionMap     map[string]string          `json:"questionToAnswerMap"`
-	Additional      json.RawMessage            `json:"additionalProperties"`
-	UserSkillLevels json.RawMessage            `json:"userSkillLevels,omitempty"`
-	UserPrint       json.RawMessage            `json:"userPrint,omitempty"`
-}
-
-// resumeUpdateResp is the builder save response: null NextIncomplete means
-// the builder considers the resume complete.
-type resumeUpdateResp struct {
-	NextIncomplete *string `json:"nextIncompleteScreenId"`
-	Errors         []struct {
-		Field string `json:"field"`
-		Code  string `json:"code"`
-	} `json:"errors"`
-	Error []struct {
-		Key string `json:"key"`
-	} `json:"error"`
 }
 
 // isResumeLimitResponse re-tags the transport's 400/422/403 classification as

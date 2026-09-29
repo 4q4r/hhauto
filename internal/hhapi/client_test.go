@@ -133,13 +133,12 @@ func (env *testEnv) endpoints() config.APIEndpoints {
 		Chatik:     env.srv1.URL,
 		SearchPage: env.srv1.URL + "/search/vacancy",
 		Override: map[string]string{
-			// T28/T29: the editor POSTs (clone_resumes, update) default to
-			// the external resume-profile-front host — tests must never
-			// reach it. Every env pins them to the test server;
-			// unregistered patterns 404, which drives the native path into
-			// its fallback branch.
+			// T28/T51: the clone POST defaults to the external
+			// resume-profile-front host, the edit POST to the site host —
+			// tests must never reach either. Every env pins them to the
+			// test server; unregistered patterns 404.
 			"resume_clone_resumes": env.srv1.URL + "/profile/shards/resume/clone_resumes",
-			"resume_update":        env.srv1.URL + "/profile/shards/resume/update",
+			"resume_edit":          env.srv1.URL + "/applicant/resume/edit",
 		},
 	}
 }

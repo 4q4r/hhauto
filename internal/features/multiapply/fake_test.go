@@ -215,12 +215,13 @@ func newApplyEnv(t *testing.T) *applyEnv {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = io.WriteString(w, `{"url":"/applicant/resumes"}`)
 	})
-	mux.HandleFunc("POST /profile/shards/resume/update", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /applicant/resume/edit", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var req struct {
-			ResumeHash string `json:"resumeHash"`
+			Title []string `json:"title"`
 		}
 		_ = json.Unmarshal(body, &req)
+		hash := r.URL.Query().Get("resume")
 		e.mu.Lock()
 		e.updateCalls++
 		call := e.updateCalls
@@ -233,15 +234,19 @@ func newApplyEnv(t *testing.T) *applyEnv {
 			}
 		}
 		e.mu.Lock()
-		if req.ResumeHash != "" {
-			// A successful materialization completes the clone: title set,
-			// status left not_finished (the fake shard keeps its own stamp —
+		if hash != "" {
+			// A successful save completes the clone: title set, status
+			// left not_finished (the fake shard keeps its own stamp —
 			// awaitCloneReady keeps gating on it).
-			e.builderStates[req.ResumeHash] = builderStateFixture(req.ResumeHash, "published", "DevOps-инженер Test", true)
+			title := ""
+			if len(req.Title) > 0 {
+				title = req.Title[0]
+			}
+			e.builderStates[hash] = builderStateFixture(hash, "published", title, true)
 		}
 		e.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = io.WriteString(w, `{"nextIncompleteScreenId":null,"resume":{"_attributes":{"hash":"`+req.ResumeHash+`","status":"published"}}}`)
+		_, _ = io.WriteString(w, e.builderStates[hash])
 	})
 	mux.HandleFunc("GET /applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
 		e.mu.Lock()
@@ -368,10 +373,11 @@ func newApplyEnv(t *testing.T) *applyEnv {
 		config.APIEndpoints{
 			Site: e.srv.URL, Chatik: e.srv.URL, SearchPage: e.srv.URL + "/search/vacancy",
 			Override: map[string]string{
-				// T29: the editor POST endpoints default to the external
-				// resume-profile-front host — pin them to the fake.
+				// T29/T51: the clone POST defaults to the external
+				// resume-profile-front host; the edit POST rides the site
+				// host — both pinned to the fake.
 				"resume_clone_resumes": e.srv.URL + "/profile/shards/resume/clone_resumes",
-				"resume_update":        e.srv.URL + "/profile/shards/resume/update",
+				"resume_edit":          e.srv.URL + "/applicant/resume/edit",
 			},
 		},
 		nil, nil,

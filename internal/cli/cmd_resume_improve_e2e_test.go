@@ -83,24 +83,22 @@ func newFakeHHImprove(t *testing.T, settingsLostSession bool, st *improveHHState
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = w.Write([]byte(st.builderStateBody()))
 	})
-	mux.HandleFunc("/profile/shards/resume/update", func(w http.ResponseWriter, r *http.Request) {
-		var payload struct {
-			Resume map[string]json.RawMessage `json:"resume"`
-		}
+	mux.HandleFunc("/applicant/resume/edit", func(w http.ResponseWriter, r *http.Request) {
+		// T51 UI contract: flat body {"title":["…"]} addressed by the
+		// resume query param.
+		var payload map[string]json.RawMessage
 		_ = json.NewDecoder(r.Body).Decode(&payload)
-		var title []struct {
-			String string `json:"string"`
-		}
-		if raw, ok := payload.Resume["title"]; ok {
+		var title []string
+		if raw, ok := payload["title"]; ok {
 			_ = json.Unmarshal(raw, &title)
 		}
 		if len(title) > 0 {
 			st.mu.Lock()
-			st.Title = title[0].String
+			st.Title = title[0]
 			st.mu.Unlock()
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write([]byte(`{}`))
+		_, _ = w.Write([]byte(st.builderStateBody()))
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -148,7 +146,7 @@ provider = "fast"
 model = "test-model"
 
 [api.endpoints.override]
-resume_update = "` + testSite + `/profile/shards/resume/update"
+resume_edit = "` + testSite + `/applicant/resume/edit"
 `
 }
 

@@ -29,7 +29,14 @@ const (
 	// T27 builder surface (resume-profile; live reads verified). Overridable
 	// via config like every endpoint.
 	epResumeGetByHash = "resume_get_by_hash" // GET  /profile/shards/resume/get_by_hash?resumeHash=
-	epResumeUpdate    = "resume_update"      // POST /profile/shards/resume/update
+	// T51 content mutation — the save contract the real editor UI speaks
+	// (captured live 2026-09-29 from the resume_partial_edit flow): one
+	// site-host POST per saved field with a flat JSON body. The former
+	// resume_update BFF route (/profile/shards/resume/update) is dead for
+	// off-browser clients (bare 400 for every payload variant, T29) and is
+	// not used by the deployed editor at all. Overridable via config like
+	// every endpoint.
+	epResumeEdit = "resume_edit" // POST /applicant/resume/edit?resume={hash}&hhtmSource=resume_partial_edit
 	// T28 native full clone (live-verified 2026-09-25 — one call creates a
 	// complete searchable duplicate; T45 removed the old shell-clone
 	// endpoint, this is the only cloning path). The default lives on the
