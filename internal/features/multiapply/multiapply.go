@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"hhauto/internal/ai"
@@ -112,33 +113,79 @@ func (f *Feature) Name() string { return "multiapply" }
 // Enabled implements features.Feature.
 func (f *Feature) Enabled() bool { return f.opt.Config.Features.MultiApply.Enabled }
 
+// runRotationKey is the feature_state key holding the run id seeded FIRST
+// in the previous registration — the round-robin head (T68).
+const runRotationKey = "run_seed_head"
+
 // RegisterTasks registers per-run window specs and seeds one run task per
 // enabled profile (queue dedup keeps repeated registrations idempotent).
+// T68 fairness: map iteration randomizes the seeding order on every process
+// start, and a --once pass that spends its whole budget on the first run
+// task would then process a random single profile while the rest starve.
+// Each account's runs are seeded in a sorted order rotated past the previous
+// head, so consecutive invocations walk the enabled profiles round-robin.
 func (f *Feature) RegisterTasks(ctx context.Context, q queue.Queue, reg *scheduler.Registry) error {
 	f.q = q
+	perAccount := make(map[string][]string, len(f.opt.Config.Runs))
 	for id, run := range f.opt.Config.Runs {
 		if !run.Enabled {
 			continue
 		}
-		if len(run.Windows) > 0 {
-			spec, err := f.windowSpec(id, run)
-			if err != nil {
-				return err
+		perAccount[run.Account] = append(perAccount[run.Account], id)
+	}
+	accounts := make([]string, 0, len(perAccount))
+	for id := range perAccount {
+		accounts = append(accounts, id)
+	}
+	sort.Strings(accounts)
+	for _, accountID := range accounts {
+		ids := perAccount[accountID]
+		sort.Strings(ids)
+		for _, id := range f.rotateRunIDs(ctx, accountID, ids) {
+			run := f.opt.Config.Runs[id]
+			if len(run.Windows) > 0 {
+				spec, err := f.windowSpec(id, run)
+				if err != nil {
+					return err
+				}
+				reg.Add("runs."+id, spec)
 			}
-			reg.Add("runs."+id, spec)
-		}
-		if err := q.Enqueue(ctx, queue.Task{
-			AccountID: run.Account,
-			Kind:      queue.KindApply,
-			RunID:     id,
-			DedupKey:  "multiapply:" + id,
-			Priority:  queue.PrioApply,
-			Payload:   RunPayload{RunID: id},
-		}); err != nil {
-			return fmt.Errorf("multiapply: seed run %s: %w", id, err)
+			if err := q.Enqueue(ctx, queue.Task{
+				AccountID: run.Account,
+				Kind:      queue.KindApply,
+				RunID:     id,
+				DedupKey:  "multiapply:" + id,
+				Priority:  queue.PrioApply,
+				Payload:   RunPayload{RunID: id},
+			}); err != nil {
+				return fmt.Errorf("multiapply: seed run %s: %w", id, err)
+			}
 		}
 	}
 	return nil
+}
+
+// rotateRunIDs rotates the sorted run ids so seeding starts after the
+// previously seeded head and persists the new head. On a lookup/persist
+// failure it degrades to the plain sorted order — deterministic first-run,
+// never random.
+func (f *Feature) rotateRunIDs(ctx context.Context, accountID string, ids []string) []string {
+	if len(ids) <= 1 {
+		return ids
+	}
+	start := 0
+	if last, ok, err := f.opt.DB.FeatureStateGet(ctx, feature, accountID, runRotationKey); err != nil {
+		f.log.Warn("multiapply: run rotation lookup failed; seeding sorted", "err", err)
+	} else if ok {
+		if i := sort.SearchStrings(ids, last); i < len(ids) && ids[i] == last {
+			start = (i + 1) % len(ids)
+		}
+	}
+	out := append(append([]string(nil), ids[start:]...), ids[:start]...)
+	if err := f.opt.DB.FeatureStateSet(ctx, feature, accountID, runRotationKey, out[0]); err != nil {
+		f.log.Warn("multiapply: run rotation persist failed", "err", err)
+	}
+	return out
 }
 
 // windowSpec merges the run's windows into one scheduler spec (times and
