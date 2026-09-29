@@ -38,6 +38,9 @@ func Validate(c *Config) error {
 	if err := validateMultiApply(c); err != nil {
 		return err
 	}
+	if err := validateSetka(c); err != nil {
+		return err
+	}
 	if err := validateAutoClone(c); err != nil {
 		return err
 	}
@@ -592,4 +595,88 @@ func checkNegatives(values map[string]float64) error {
 		}
 	}
 	return nil
+}
+
+// validateSetka checks the [features.setka] section (T61). When disabled the
+// section is not validated (hand-built configs). When enabled everything is
+// fail-fast: the four Setka endpoints have NO defaults (the live contracts
+// are uncaptured — research-setka.md §6), and both AI tasks need a
+// configured model profile.
+func validateSetka(c *Config) error {
+	s := c.Features.Setka
+	if !s.Enabled {
+		return nil
+	}
+	switch s.Mode {
+	case SetkaModeAuto, SetkaModeApprove:
+	default:
+		return fmt.Errorf("features.setka.mode %q: must be one of auto | approve", s.Mode)
+	}
+	delay, err := time.ParseDuration(s.AfterApplyDelay)
+	if err != nil || delay <= 0 {
+		return fmt.Errorf("features.setka.after_apply_delay %q: must be a positive duration (e.g. 30m)", s.AfterApplyDelay)
+	}
+	if err := validateActiveWindow(s.ActiveWindow); err != nil {
+		return fmt.Errorf("features.setka.active_window %q: %v", s.ActiveWindow, err)
+	}
+	for name, v := range map[string]int{
+		"max_dm_per_day":     s.MaxDMPerDay,
+		"max_dm_per_company": s.MaxDMPerCompany,
+		"max_dm_per_person":  s.MaxDMPerPerson,
+	} {
+		if v < 0 {
+			return fmt.Errorf("features.setka.%s %d: must be >= 0", name, v)
+		}
+	}
+	switch s.Classify.Borderline {
+	case SetkaBorderlineApply, SetkaBorderlineSkip:
+	default:
+		return fmt.Errorf("features.setka.classify.borderline %q: must be one of apply | skip", s.Classify.Borderline)
+	}
+	if err := requireSetkaModelProfile(c, "classify", s.Classify.ModelProfile); err != nil {
+		return err
+	}
+	if err := requireSetkaModelProfile(c, "personalize", s.Personalize.ModelProfile); err != nil {
+		return err
+	}
+	return validateSetkaEndpoints(s.Endpoints)
+}
+
+// requireSetkaModelProfile asserts the profile is named and configured.
+func requireSetkaModelProfile(c *Config, task, profile string) error {
+	if profile == "" {
+		return fmt.Errorf("features.setka.%s.model_profile: required when setka is enabled", task)
+	}
+	if _, ok := c.AI.Models[profile]; !ok {
+		return fmt.Errorf("features.setka.%s.model_profile %q: not configured in [ai.models]", task, profile)
+	}
+	return nil
+}
+
+// validateSetkaEndpoints fails loudly when any of the four Setka endpoints
+// is unset or not an absolute http(s) URL — the feature must not start
+// half-captured.
+func validateSetkaEndpoints(e SetkaEndpoints) error {
+	for name, raw := range map[string]string{
+		"search_people": e.SearchPeople,
+		"get_person":    e.GetPerson,
+		"can_message":   e.CanMessage,
+		"send_dm":       e.SendDM,
+	} {
+		if raw == "" {
+			return fmt.Errorf("features.setka.endpoints.%s: эндпоинт Сетки не захвачен — прогони живую разведку (research-setka.md §6) и задай URL", name)
+		}
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("features.setka.endpoints.%s %q: must be an absolute http(s) URL", name, raw)
+		}
+	}
+	return nil
+}
+
+// validateActiveWindow checks the "HH:MM-HH:MM" shape (shared grammar with
+// pacing/warmup).
+func validateActiveWindow(w string) error {
+	_, _, err := ParseActiveWindow(w)
+	return err
 }

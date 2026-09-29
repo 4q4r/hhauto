@@ -81,6 +81,7 @@ func applyDefaults(c *Config) {
 			*d.dst = d.val
 		}
 	}
+	applySetkaDefaults(c)
 
 	for _, d := range []intDefault{
 		{&c.Features.AutoClone.Improve.Editor.PageTimeoutSec, 120},
@@ -115,8 +116,10 @@ func applyDefaults(c *Config) {
 		{&c.Email.PerEmployerOnce, true},
 		{&c.Email.AttachResume, true},
 		{&c.Warmup.RespectWeekend, true},
-		{&c.Browser.AutoDownload, true}, // T32: cloakbrowser auto-download on
-		{&c.Browser.Humanize, true},     // T32: humanize launch profile on
+		{&c.Browser.AutoDownload, true},             // T32: cloakbrowser auto-download on
+		{&c.Browser.Humanize, true},                 // T32: humanize launch profile on
+		{&c.Features.Setka.RequireCanMessage, true}, // T61: skip hh-ghosts
+		{&c.Features.Setka.NoLinks, true},           // T61: links are a shadow-ban trigger
 	} {
 		if *d.dst == nil {
 			v := d.val
@@ -160,5 +163,42 @@ func applyAccountDefaults(a *Account) {
 	}
 	if a.RPS == 0 {
 		a.RPS = 0.5
+	}
+}
+
+// applySetkaDefaults fills the [features.setka] defaults (T61): auto mode,
+// 30m delay, 12:00-18:00 window, 5/2/1 caps, safety toggles on, the
+// "нанимаю" status filter.
+func applySetkaDefaults(c *Config) {
+	for _, d := range []stringDefault{
+		{&c.Features.Setka.Mode, SetkaModeAuto},
+		{&c.Features.Setka.AfterApplyDelay, "30m"},
+		{&c.Features.Setka.ActiveWindow, "12:00-18:00"},
+		{&c.Features.Setka.Classify.Borderline, SetkaBorderlineApply},
+	} {
+		if *d.dst == "" {
+			*d.dst = d.val
+		}
+	}
+	for _, d := range []intDefault{
+		{&c.Features.Setka.MaxDMPerDay, 5},
+		{&c.Features.Setka.MaxDMPerCompany, 2},
+		{&c.Features.Setka.MaxDMPerPerson, 1},
+	} {
+		if *d.dst == 0 {
+			*d.dst = d.val
+		}
+	}
+	for _, d := range []boolPtrDefault{
+		{&c.Features.Setka.RequireCanMessage, true}, // skip hh-ghosts
+		{&c.Features.Setka.NoLinks, true},           // links are a shadow-ban trigger
+	} {
+		if *d.dst == nil {
+			v := d.val
+			*d.dst = &v
+		}
+	}
+	if len(c.Features.Setka.Targets.StatusFilter) == 0 {
+		c.Features.Setka.Targets.StatusFilter = []string{"нанимаю"}
 	}
 }

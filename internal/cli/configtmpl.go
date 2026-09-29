@@ -144,6 +144,36 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 [features.relevance]
 # min_match_score = 60
 
+[features.setka]                        # T61: авто-ЛС сотрудникам компании после отклика (транспорт ждёт живую разведку)
+# enabled = false
+# mode = "auto"                         # auto (отправлять сразу) | approve (парковать в review, отправка = review resolve)
+# after_apply_delay = "30m"             # пауза после отклика перед ЛС
+# active_window = "12:00-18:00"         # окно отправки (локальное время)
+# max_dm_per_day = 5                    # глобальный дневной лимит
+# max_dm_per_company = 2
+# max_dm_per_person = 1
+# require_can_message = true            # «призраков» из hh пропускаем
+# no_links = true                       # ссылка в тексте = валидационная ошибка (теневой бан)
+# blacklist_persons = []
+# blacklist_companies = []
+# [features.setka.endpoints]            # БЕЗ дефолтов: живые контракты Сетки не захвачены (.sdd/research-setka.md §6)
+# search_people = "https://api.setka.ru/…"   # все четыре обязательны, иначе старт = ошибка
+# get_person = "https://api.setka.ru/…"
+# can_message = "https://api.setka.ru/…"
+# send_dm = "https://api.setka.ru/…"
+# [features.setka.targets]
+# status_filter = ["нанимаю"]           # из 12 статусов Сетки
+# headline_include = []                 # подстроки должности (HR, рекрутер, техлид…)
+# headline_exclude = []
+# [features.setka.classify]
+# model_profile = "scorer"              # [ai.models]-профиль задачи setka_classify
+# borderline = "apply"                  # apply | skip — что делать с неуверенным вердиктом
+# prompt_file = ""                      # оверрайд встроенного промпта
+# [features.setka.personalize]
+# model_profile = "scorer"              # задача setka_personalize: полный дамп вакансии + профиль + контекст отклика
+# prompt_file = ""
+# template_fallback = ""                # текст при недоступном ИИ ({{.PersonName}}, {{.VacancyTitle}}, {{.CompanyName}})
+
 [pacing]
 # active_window = "08:00-22:00"
 # mode = "adaptive"                     # adaptive | uniform | burst

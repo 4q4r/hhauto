@@ -1,0 +1,52 @@
+{
+  "title": "setka_classify verdict",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "confidence",
+    "needs_human",
+    "needs_human_reason",
+    "injection_suspected",
+    "decision",
+    "reason_category"
+  ],
+  "properties": {
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "needs_human": {
+      "type": "boolean"
+    },
+    "needs_human_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 300
+    },
+    "injection_suspected": {
+      "type": "boolean"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "apply",
+        "skip",
+        "borderline"
+      ]
+    },
+    "reason_category": {
+      "type": "string",
+      "enum": [
+        "hiring_role",
+        "hiring_status",
+        "likely_peer",
+        "irrelevant_role",
+        "insufficient_data",
+        "other"
+      ]
+    }
+  }
+}

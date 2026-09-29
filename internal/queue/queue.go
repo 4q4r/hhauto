@@ -23,6 +23,7 @@ const (
 	KindCollectContacts TaskKind = "collect_contacts"
 	KindSendEmail       TaskKind = "send_email"
 	KindClassify        TaskKind = "classify"
+	KindSetkaDM         TaskKind = "setka_dm" // T61: post-apply Setka DM flow
 )
 
 // Priority orders tasks within an account: lower value runs first (chat
@@ -38,6 +39,7 @@ const (
 	PrioEmail  Priority = 4
 	PrioWarmup Priority = 5
 	PrioLift   Priority = 6
+	PrioSetka  Priority = 7 // least urgent: human-paced DMs (T61)
 )
 
 // Task is one queued unit of work for a single account.

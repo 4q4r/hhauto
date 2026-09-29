@@ -453,6 +453,26 @@ UA и заголовки, `rps` и `concurrency` — локальные лими
   `submit_policy = "human"`;
 - `chatops`: `auto_reply_enabled`, порог уверенности отказа,
   `auto_leave_rejected = false` (автолив), `qa_base`;
+- `setka` (T61): авто-ЛС сотрудникам компании вакансии после отклика
+  (Сетка — соцсеть hh). Флоу: отклик → пауза `after_apply_delay` →
+  `SearchPeople` по компании → таргет-фильтры (`status_filter` из 12
+  статусов, `headline_include`/`exclude`, чёрные списки персон/компаний,
+  `require_can_message` — «призраков» из hh пропускаем) → ИИ-классификация
+  `setka_classify` (нанимающий для ЭТОЙ вакансии?; неуверенный вердикт
+  `borderline` → `apply`/`skip` по политике) → топ ≤ `max_dm_per_company`
+  → ИИ-персонализация `setka_personalize` (полный дамп вакансии + профиль
+  человека + контекст отклика; `template_fallback` при недоступном ИИ) →
+  `mode = "auto"` (отправка под `max_dm_per_day`/`max_dm_per_company`/
+  `max_dm_per_person` и окном `active_window`) или `mode = "approve"`
+  (ЛС паркуется в review, kind=`setka_dm`; отправка =
+  `hhauto review resolve <id> --decision apply`). `no_links = true` —
+  ссылка в тексте запрещена (теневой бан): валидационная ошибка + review.
+  Идемпотентность: таблица `setka_dms` — повторный прогон не шлёт дважды
+  одному человеку по одной вакансии. ВАЖНО: живые контракты Сетки
+  (api.setka.ru) не захвачены — эндпоинты задаются ТОЛЬКО в
+  `[features.setka.endpoints]` (все четыре обязательны, дефолтов нет;
+  незаданные = fail-fast при старте: «прогони живую разведку»,
+  `.sdd/research-setka.md` §6);
 - `resume_visibility`, `websocket_push` — зарезервированы (websocket — роадмап).
 
 ### `[pacing]`

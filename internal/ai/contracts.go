@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// TaskName enumerates the 9 AI tasks.
+// TaskName enumerates the 11 AI tasks.
 type TaskName string
 
 // The nine task names as they appear in config [ai.tasks] and the
@@ -31,6 +31,14 @@ const (
 	// cache TTL still come from the [ai.tasks.resume_improve] entry the
 	// CLI injects from [features.autoclone.improve].model_profile.
 	TaskResumeImprove TaskName = "resume_improve"
+	// TaskSetkaClassify (T61): is this Setka person the hiring side for
+	// this vacancy? Verdict decision apply|skip|borderline; the feature's
+	// borderline policy decides the unsure case.
+	TaskSetkaClassify TaskName = "setka_classify"
+	// TaskSetkaPersonalize (T61): draft the personalized post-apply DM from
+	// the full vacancy dump, the person's Setka profile and the apply
+	// context. Links in the message are forbidden (shadow-ban trigger).
+	TaskSetkaPersonalize TaskName = "setka_personalize"
 )
 
 // Common fields present in EVERY task schema output.
