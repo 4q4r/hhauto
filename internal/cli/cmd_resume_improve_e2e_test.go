@@ -207,6 +207,11 @@ func TestResumeImproveHappyPathE2E(t *testing.T) {
 		t.Fatalf("dry-run improve: %v\n%s", err, out)
 	}
 	mustContain(t, out, "dry-run", "improved")
+	// T52: the start event is logged once (console handler); a manual
+	// stdout duplicate must not come back.
+	if strings.Contains(out, "resume improve: hash=") {
+		t.Fatalf("duplicated start banner in output:\n%s", out)
+	}
 	if st.title() != "Базовое резюме" {
 		t.Fatalf("dry run mutated the resume: %q", st.title())
 	}
