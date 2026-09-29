@@ -49,6 +49,12 @@ const (
 	epResumeVisibilityHide = "resume_visibility_hide" // POST /profile/shards/resume/visibility/hide
 	epResumeVisibilityShow = "resume_visibility_show" // POST /profile/shards/resume/visibility/show
 	epResumeDelete         = "resume_delete"          // POST /profile/shards/resume/delete
+	// T56 experience delete (UI-captured live 2026-09-29): the editor's
+	// "Удалить" on /profile/edit/experience/{id} replaces the lineage
+	// experience pool — ids missing from the array are deleted. Default
+	// lives on the resume-profile-front service host; overridable via
+	// config like every endpoint.
+	epProfileExperienceUpdate = "profile_experience_update" // POST /profile/shards/profile/update
 )
 
 // endpointSet resolves endpoint URLs from config with defaults and
