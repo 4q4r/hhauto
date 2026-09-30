@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
 )
 
 // Setka DM ledger DAOs (T61). The table is the idempotency record (a repeat
@@ -20,7 +19,7 @@ func (db *DB) SetkaDMCreate(ctx context.Context, dm *SetkaDM) (int64, error) {
 	db.writeMu.Lock()
 	defer db.writeMu.Unlock()
 
-	now := time.Now().UTC()
+	now := db.now().UTC()
 	res, err := db.conn.ExecContext(ctx, `
 		INSERT INTO setka_dms (account_id, application_dedup_key, vacancy_id, employer_id,
 			person_id, person_name, company, mode, status, text, created_at)
@@ -94,7 +93,7 @@ func (db *DB) SetkaDMMarkSent(ctx context.Context, id int64) error {
 	db.writeMu.Lock()
 	defer db.writeMu.Unlock()
 	_, err := db.conn.ExecContext(ctx,
-		"UPDATE setka_dms SET status = 'sent', sent_at = ? WHERE id = ?", fmtTime(time.Now().UTC()), id)
+		"UPDATE setka_dms SET status = 'sent', sent_at = ? WHERE id = ?", fmtTime(db.now().UTC()), id)
 	if err != nil {
 		return fmt.Errorf("store: SetkaDMMarkSent: %w", err)
 	}
