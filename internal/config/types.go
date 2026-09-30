@@ -196,11 +196,37 @@ type AIJev struct {
 	// Enabled gates the whole classifier (default false = LLM-only).
 	Enabled bool `toml:"enabled"`
 	// Endpoint is the Jev-compatible System-One URL; defaults to
-	// https://api.typesafe.ai/v1/systemone. Must be an absolute http(s) URL.
+	// https://api.typesafe.ai/v1/systemone. Must be an absolute http(s)
+	// URL. With wire="openai-chat" no default applies — the chat
+	// endpoint (e.g. OpenRouter https://openrouter.ai/api/v1/chat/completions)
+	// must be set explicitly.
 	Endpoint string `toml:"endpoint"`
-	// APIKeyEnv names the environment variable holding the Bearer key;
-	// required (and resolved fail-fast at startup) when Enabled.
+	// APIKeyEnv names the environment variable holding the Bearer key.
+	// Optional since T74: required only when api_key is empty (resolved
+	// fail-fast at startup when Enabled).
 	APIKeyEnv string `toml:"api_key_env"`
+	// APIKey (T74) carries the literal Bearer key in the config file,
+	// mirroring [ai.providers.*].api_key (T48): it wins over api_key_env
+	// and an enabled classifier with neither is a validation error. The
+	// value is never logged.
+	APIKey string `toml:"api_key"`
+	// Model (T74) is the model name sent with the request. Empty (the
+	// default) keeps the T33 behavior of sending no model field; with
+	// wire="openai-chat" it is required (e.g. "~typesafe/jev-latest").
+	Model string `toml:"model"`
+	// Wire (T74) selects the transport encoding: "" or "systemone" posts
+	// the T33 contract {"state","questions"} directly to the endpoint;
+	// "openai-chat" wraps the same state/questions JSON into an
+	// OpenAI-compatible chat/completions envelope (OpenRouter) and reads
+	// the answers JSON out of choices[0].message.content.
+	Wire string `toml:"wire"`
+	// HTTPReferer (T74, optional) is sent as the OpenRouter HTTP-Referer
+	// header (app attribution) when set; openai-chat wire only.
+	HTTPReferer string `toml:"http_referer"`
+	// Title (T74, optional) is sent as the OpenRouter X-OpenRouter-Title
+	// header (app attribution; the retired legacy name was X-Title) when
+	// set; openai-chat wire only.
+	Title string `toml:"title"`
 	// ConfidenceThreshold gates Jev verdicts: >= threshold is decided by
 	// Jev, below routes to human review; default 0.85, must be in (0,1].
 	ConfidenceThreshold float64 `toml:"confidence_threshold"`

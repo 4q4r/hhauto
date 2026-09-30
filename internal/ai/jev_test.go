@@ -101,7 +101,7 @@ func (f *fakeJev) callCount() int {
 
 func jevSolver(t *testing.T, url string, threshold float64, tasks []TaskName) *JevSolver {
 	t.Helper()
-	s, err := NewJevSolver(NewJevClient(url, "test-key"), threshold, tasks, testLogger())
+	s, err := NewJevSolver(NewJevClient(url, "test-key", JevClientOptions{}), threshold, tasks, testLogger())
 	if err != nil {
 		t.Fatalf("NewJevSolver: %v", err)
 	}
@@ -542,7 +542,7 @@ func TestJevThresholdBoundary(t *testing.T) {
 }
 
 func TestNewJevSolverValidation(t *testing.T) {
-	client := NewJevClient("https://jev.example.com", "k")
+	client := NewJevClient("https://jev.example.com", "k", JevClientOptions{})
 	for _, tc := range []struct {
 		name    string
 		client  *JevClient

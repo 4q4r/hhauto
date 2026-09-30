@@ -136,7 +136,21 @@
 # enabled = false                       # false = классификация на LLM (classifier = "llm")
                                         # true требует classifier = "jev" в [features.multiapply]
 # endpoint = "https://api.typesafe.ai/v1/systemone"  # любой Jev-compatible URL (http/https)
-# api_key_env = "TYPESAFE_API_KEY"      # ключ ТОЛЬКО через переменную окружения (fail-fast на старте)
+# wire = "systemone"                    # T74: провод запроса: systemone | openai-chat
+                                        # systemone (по умолчанию) — тело T33 {state, questions} напрямую;
+                                        # openai-chat — тот же state/questions JSON в обёртке
+                                        # OpenAI-совместимого chat/completions (OpenRouter), ответы
+                                        # читаются из choices[0].message.content
+# model = ""                            # T74: имя модели; пусто = поле не отправляется (как в T33)
+                                        # при wire = "openai-chat" ОБЯЗАТЕЛЬНО (например
+                                        # "~typesafe/jev-latest" — latest-алиас Jev на OpenRouter)
+# api_key = ""                          # T74: ключ прямо в TOML (приоритет, как [ai.providers.*].api_key)
+# api_key_env = "TYPESAFE_API_KEY"      # фолбэк: ключ из переменной окружения; включённый Jev без
+                                        # api_key И api_key_env — fail-fast ошибка валидации
+# http_referer = ""                     # T74, опционально: заголовок HTTP-Referer (атрибуция
+                                        # приложения в рейтингах OpenRouter), только wire="openai-chat"
+# title = ""                            # T74, опционально: заголовок X-OpenRouter-Title (бывший
+                                        # X-Title; атрибуция), только wire="openai-chat"
 # confidence_threshold = 0.85           # (0,1]; >= порога решает Jev, ниже — needs_human на проверку
 # tasks = ["message_classification", "link_detection", "contact_extraction"]
                                         # только эти три задачи Jev-совместимы (классификация без
