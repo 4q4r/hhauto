@@ -152,6 +152,7 @@ func runDaemonMode(ctx context.Context, rt *Runtime, taskType string, o out) err
 		Interval: daemonInterval,
 		Kill:     rt.Kill,
 		Log:      rt.Log,
+		Console:  rt.console,
 		// T71 wake-up: the nearest queued deadline wakes the daemon before
 		// the apply boundary; the wake drains the DUE tasks (the autolift
 		// server_timer passes). Arm re-seeds the ~4h lift chain after each
@@ -174,7 +175,7 @@ func runDaemonMode(ctx context.Context, rt *Runtime, taskType string, o out) err
 		Maintenance: func(ctx context.Context) error {
 			handled, parked := drainDueTasks(ctx, daemonMaintenanceDeps(rt), accounts)
 			if handled > 0 || parked > 0 {
-				rt.Log.Info("daemon: maintenance wake", "handled", handled, "parked", parked)
+				rt.Log.Info("daemon: плановое обслуживание", "handled", handled, "parked", parked)
 			}
 			return nil
 		},

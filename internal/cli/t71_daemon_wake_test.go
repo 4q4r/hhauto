@@ -31,9 +31,9 @@ func t71DaemonDeps(t *testing.T) daemonDeps {
 }
 
 // A maintenance deadline earlier than the apply boundary wakes the daemon
-// twice and the apply cycle never runs (the boundary has not arrived).
-// The daemon resumes mid-interval from a persisted fresh cycle (the restart
-// contract) so the remainder sleep is what the wake-up preempts.
+// for maintenance passes while the apply cycle does not run again: T76
+// runs the startup pass immediately, then the wake preempts the remainder
+// sleep — the 500ms boundary itself never arrives.
 func TestRunDaemonWakesForMaintenanceBeforeCycle(t *testing.T) {
 	d := t71DaemonDeps(t)
 	start := time.Now()
@@ -65,8 +65,8 @@ func TestRunDaemonWakesForMaintenanceBeforeCycle(t *testing.T) {
 	if got := maintenance.Load(); got != 2 {
 		t.Fatalf("maintenance passes = %d, want 2", got)
 	}
-	if got := cycles.Load(); got != 0 {
-		t.Fatalf("apply cycles = %d, want 0 (the 500ms boundary never arrived)", got)
+	if got := cycles.Load(); got != 1 {
+		t.Fatalf("apply cycles = %d, want 1 (the T76 startup pass)", got)
 	}
 	if got := arms.Load(); got < 2 {
 		t.Fatalf("arm calls = %d, want >= 2 (the chain re-arms every iteration)", got)

@@ -120,38 +120,9 @@ func TestRunDaemonTransientBootstrapErrorContinues(t *testing.T) {
 	}
 }
 
-// Restart persistence: with a fresh state file the first cycle runs
-// immediately; after a restart with a RECENT last_cycle_at the daemon
-// sleeps the remainder instead of starting a new cycle.
-func TestRunDaemonResumesFromPersistedState(t *testing.T) {
-	d := daemonTestDeps(t)
-	// Simulate a cycle completed 5ms ago (interval 30ms): the remainder
-	// must be slept, not re-run immediately.
-	if err := saveDaemonState(d.StatePath, daemonState{LastCycleAt: time.Now().Add(-5 * time.Millisecond), Cycles: 7}); err != nil {
-		t.Fatal(err)
-	}
-	var cycles atomic.Int64
-	d.Cycle = func(context.Context) error {
-		cycles.Add(1)
-		d.Kill.Stop()
-		return nil
-	}
-	start := time.Now()
-	if err := runDaemon(context.Background(), d); err != nil {
-		t.Fatalf("runDaemon: %v", err)
-	}
-	if time.Since(start) < 20*time.Millisecond {
-		t.Fatalf("daemon did not sleep the persisted remainder (%v)", time.Since(start))
-	}
-	if got := cycles.Load(); got != 1 {
-		t.Fatalf("cycles after restart = %d, want 1 (the post-sleep cycle)", got)
-	}
-	if st := loadDaemonState(d.StatePath); st.Cycles != 8 {
-		t.Fatalf("cycles counter must continue: %+v", st)
-	}
-}
-
 // A fresh start (no state file) runs the first cycle immediately.
+// T76: a RECENT persisted cycle does not gate the pass either — the
+// startup pass runs regardless (t76_daemon_russian_start_test.go).
 func TestRunDaemonFreshStartRunsImmediately(t *testing.T) {
 	d := daemonTestDeps(t)
 	d.Now = func() time.Time { return time.Now() }

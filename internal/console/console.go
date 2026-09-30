@@ -245,6 +245,45 @@ func (s *Surface) Digest(d DigestLine) {
 	s.render("digest", ansiGreen, d)
 }
 
+// DaemonStart renders the startup banner (green): one fixed line, the
+// daemon's whole contract at a glance (T76 — replaces the English slog
+// banner; one banner per event). Fixed format — daemon lifecycle is not
+// vacancy content, so no [console] template override (the Verdict
+// precedent).
+func (s *Surface) DaemonStart() {
+	s.fixed(ansiGreen, "✓ Демон запущен: отклики раз в 24ч · первый проход сейчас · подъёмы по окнам")
+}
+
+// CycleDone renders the pass-completion lifecycle line (dim). The per-run
+// counters sit in the T69 digest lines printed during the pass; this line
+// closes the cycle without repeating them.
+func (s *Surface) CycleDone() {
+	s.fixed(ansiDim, "· Проход завершён")
+}
+
+// Sleeping renders the pre-sleep line (dim): until when the daemon sleeps
+// and which event it waits for — the apply cadence («отклики») or a
+// nearer maintenance wake («подъём»).
+func (s *Surface) Sleeping(until time.Time, maintenance bool) {
+	nearest := "отклики"
+	if maintenance {
+		nearest = "подъём"
+	}
+	s.fixed(ansiDim, fmt.Sprintf("· Сплю до %s (ближайшее: %s)", until.Format("15:04"), nearest))
+}
+
+// fixed renders one fixed-format lifecycle line in its semantic color
+// (the Verdict rendering pattern).
+func (s *Surface) fixed(color, line string) {
+	if s == nil {
+		return
+	}
+	if s.color && color != "" {
+		line = color + line + ansiReset
+	}
+	_, _ = io.WriteString(s.w, line+"\n")
+}
+
 // vacancyLine builds the template data: vacancy facts, badge labels, the
 // salary text and the resume title (snapshot lookup, short hash fallback).
 func (s *Surface) vacancyLine(accountID, resumeHash string, v hhapi.Vacancy, line VacancyLine) VacancyLine {
