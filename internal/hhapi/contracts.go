@@ -67,6 +67,7 @@ type Vacancy struct {
 	Name           string          `json:"name"`
 	EmployerID     int64           `json:"employer_id"`
 	EmployerName   string          `json:"employer_name"`
+	Badges         []string        `json:"badges,omitempty"` // employer badge labels from the raw (search items: company.badges, T70)
 	Area           string          `json:"area"`
 	Salary         *Salary         `json:"salary,omitempty"`
 	PublishedAt    time.Time       `json:"published_at"`

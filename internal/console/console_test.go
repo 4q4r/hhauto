@@ -42,7 +42,7 @@ func vacancy(badgesRaw string) hhapi.Vacancy {
 		Salary: &hhapi.Salary{From: 150000, To: 250000, Currency: "RUR"},
 	}
 	if badgesRaw != "" {
-		v.Raw = json.RawMessage(badgesRaw)
+		v.Badges = hhapi.Badges(json.RawMessage(badgesRaw))
 	}
 	return v
 }
@@ -227,31 +227,6 @@ func TestLiftLine(t *testing.T) {
 	s2.Lift("acc1", "hash1", "", time.Now())
 	if !strings.Contains(buf2.String(), "«Backend-разработчик»") {
 		t.Fatalf("title lookup ignored: %q", buf2.String())
-	}
-}
-
-// Badges: the flat array, the SSR nesting, the employer nest, unknown
-// types as-is, no payload → empty.
-func TestBadgesShapes(t *testing.T) {
-	cases := []struct {
-		raw  string
-		want string
-	}{
-		{`{"badges":[{"type":"employer-it-accreditation"}]}`, "аккредитованный ИТ"},
-		{`{"badges":{"badge":[{"type":"employer-it-accreditation"}]}}`, "аккредитованный ИТ"},
-		{`{"employer":{"badges":{"badge":[{"type":"employer-it-accreditation"}]}}}`, "аккредитованный ИТ"},
-		{`{"badges":[{"type":"future-unknown-badge"}]}`, "future-unknown-badge"},
-		{`{}`, ""},
-		{`{"badges":[]}`, ""},
-	}
-	for _, tc := range cases {
-		got := strings.Join(Badges(json.RawMessage(tc.raw)), ",")
-		if got != tc.want {
-			t.Fatalf("Badges(%s) = %q, want %q", tc.raw, got, tc.want)
-		}
-	}
-	if Badges(nil) != nil {
-		t.Fatal("nil raw must yield no badges")
 	}
 }
 
