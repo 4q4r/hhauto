@@ -50,3 +50,23 @@ func TestExtendedFiltersReachSearchQuery(t *testing.T) {
 		}
 	}
 }
+
+// T73: an empty (or missing) run search_fields means "all fields" — the
+// search request must carry no search_field narrowing. The AI scorer, not
+// the query, decides relevance (owner ruling: no cheap pre-AI skips).
+func TestEmptySearchFieldsSearchAllFields(t *testing.T) {
+	h := newHarness(t, nil) // baseCfg run1 sets Query but no search_fields
+	h.searchItems = []string{vacItem(777002, "Go Backend", 9001, "Corp LLC", "")}
+	h.searchFound = 1
+
+	h.run(t)
+
+	if len(h.searchQueryLog) == 0 {
+		t.Fatal("no search request captured")
+	}
+	for _, q := range h.searchQueryLog {
+		if strings.Contains(q, "search_field") {
+			t.Fatalf("empty run search_fields must not narrow fields: %q", q)
+		}
+	}
+}
