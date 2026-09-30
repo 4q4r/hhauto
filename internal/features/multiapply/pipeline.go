@@ -53,13 +53,6 @@ func (f *Feature) processVacancy(ctx context.Context, runID string, run config.R
 	// through as audit trail, never as a skip condition).
 	bypass := bypassSet(run.Filters.WhitelistBypass)
 
-	// T71 stack gate: the cheapest deterministic filter runs before
-	// everything — a vacancy naming languages absent from the profile
-	// never reaches the static filters, the AI scorer or the popup.
-	if skip := stackGateSkip(v.Name, prof.ProfileText); skip != "" {
-		return "", skip
-	}
-
 	skip, whitelisted := f.prefilter(ctx, runID, run, accountID, api, resumeHash, v)
 	if skip != "" {
 		return "", skip
