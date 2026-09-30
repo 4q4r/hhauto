@@ -601,6 +601,11 @@ type MultiApply struct {
 	// section is inert: the per-run letter_mode/letter_template behavior is
 	// unchanged.
 	CoverLetter MultiApplyCoverLetter `toml:"cover_letter"`
+	// TestSolveTimeoutSec (T80) bounds one vacancy-test solve (fetch is
+	// gated separately; this covers the AI answer batches). Zero or
+	// negative = the 120s default. A solve that burns the budget falls
+	// back to the test_required skip.
+	TestSolveTimeoutSec int `toml:"testsolve_timeout_sec"`
 }
 
 // MultiApplyCoverLetter is the [features.multiapply.cover_letter] section

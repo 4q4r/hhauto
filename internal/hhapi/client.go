@@ -895,7 +895,8 @@ func (c *Client) ApplyPopup(ctx context.Context, vacancyID int64) (*ApplyMeta, e
 }
 
 // Apply implements hhapi.HHAPI: submits the vacancy response with the
-// idempotency key; AmbiguousError on transport loss after send.
+// idempotency key; AmbiguousError on transport loss after send. A request
+// carrying a solved Test (T80) posts the test fields on the same endpoint.
 func (c *Client) Apply(ctx context.Context, req ApplyRequest) (NegotiationRef, error) {
 	resp, err := c.doMutation(ctx, func() requestSpec {
 		form := url.Values{}
@@ -907,6 +908,13 @@ func (c *Client) Apply(ctx context.Context, req ApplyRequest) (NegotiationRef, e
 		}
 		h := c.xhrHeaders(c.popupReferer(req.VacancyID))
 		h.Set("Content-Type", "application/x-www-form-urlencoded")
+		if req.Test != nil {
+			applyTestForm(form, req.Test)
+			// The site itself answers the test form from the vacancy page
+			// (donor capture); harmless identity for the plain apply.
+			h.Set("X-Hhtmfrom", "vacancy")
+			h.Set("X-Hhtmsource", "vacancy_response")
+		}
 		return requestSpec{
 			kind: kindMutation, operation: "apply",
 			method: http.MethodPost,

@@ -11,21 +11,24 @@ import (
 // Endpoint names — the keys of config.APIEndpoints.Override. Defaults live
 // here; overrides replace the full URL of a named endpoint.
 const (
-	epSettings       = "settings"        // GET  /applicant/settings (SSR: xsrfToken, session)
-	epBootstrap      = "bootstrap"       // GET  /shards/applicant/resumes (JSON: light authed bootstrap)
-	epResumes        = "resumes"         // GET  /shards/applicant/resumes (JSON)
-	epTouch          = "touch"           // POST /applicant/resumes/touch
-	epApplyPopup     = "apply_popup"     // GET  /applicant/vacancy_response/popup?vacancyId=N
-	epApply          = "apply"           // POST /applicant/vacancy_response/popup
-	epNegotiations   = "negotiations"    // GET  /applicant/negotiations (SSR topicList)
-	epVacancyCard    = "vacancy_card"    // GET  /vacancy/{id} (SSR vacancyView)
-	epEmployerCard   = "employer_card"   // GET  /employer/{id} (SSR employerInfo)
-	epEmployerRating = "employer_rating" // GET  /employer_reviews/proxy_components/small_widget?employerId=N
-	epChats          = "chats"           // GET  chatik /chatik/api/chats
-	epChatData       = "chat_data"       // GET  chatik /chatik/api/chat_data?chatId=N
-	epSend           = "send"            // POST chatik /chatik/api/send
-	epChatLeave      = "chat_leave"      // POST chatik /chatik/api/participant_action
-	epCounts         = "counts"          // GET  /shards/vacancy/counts (JSON {"counts":N}) — RULING R15
+	epSettings   = "settings"    // GET  /applicant/settings (SSR: xsrfToken, session)
+	epBootstrap  = "bootstrap"   // GET  /shards/applicant/resumes (JSON: light authed bootstrap)
+	epResumes    = "resumes"     // GET  /shards/applicant/resumes (JSON)
+	epTouch      = "touch"       // POST /applicant/resumes/touch
+	epApplyPopup = "apply_popup" // GET  /applicant/vacancy_response/popup?vacancyId=N
+	epApply      = "apply"       // POST /applicant/vacancy_response/popup
+	// T80 vacancy-test surface: the response page whose embedded state
+	// carries the vacancyTests block (donor-derived contract, fail-closed).
+	epVacancyResponse = "vacancy_response" // GET /applicant/vacancy_response?vacancyId=N
+	epNegotiations    = "negotiations"     // GET  /applicant/negotiations (SSR topicList)
+	epVacancyCard     = "vacancy_card"     // GET  /vacancy/{id} (SSR vacancyView)
+	epEmployerCard    = "employer_card"    // GET  /employer/{id} (SSR employerInfo)
+	epEmployerRating  = "employer_rating"  // GET  /employer_reviews/proxy_components/small_widget?employerId=N
+	epChats           = "chats"            // GET  chatik /chatik/api/chats
+	epChatData        = "chat_data"        // GET  chatik /chatik/api/chat_data?chatId=N
+	epSend            = "send"             // POST chatik /chatik/api/send
+	epChatLeave       = "chat_leave"       // POST chatik /chatik/api/participant_action
+	epCounts          = "counts"           // GET  /shards/vacancy/counts (JSON {"counts":N}) — RULING R15
 	// T27 builder surface (resume-profile; live reads verified). Overridable
 	// via config like every endpoint.
 	epResumeGetByHash = "resume_get_by_hash" // GET  /profile/shards/resume/get_by_hash?resumeHash=
