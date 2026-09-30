@@ -43,6 +43,12 @@ func (f *Feature) processVacancy(ctx context.Context, runID string, run config.R
 	}
 	batch[v.ID] = true
 
+	// T77: a client-side validation failure (hh 400/422) is terminal for
+	// the pass — another run in the same cycle must not re-POST it.
+	if f.terminalFailed(accountID, v.ID) {
+		return "", "apply_failed"
+	}
+
 	// T26 reapply policy (clone runs only): which vacancies may this clone
 	// (re)apply to.
 	if skip := rc.reapplySkip(v); skip != "" {
@@ -157,6 +163,11 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 
 	// Plain failure.
 	_ = featurekit.FinishIntent(ctx, f.opt.DB, claim, err)
+	// T77: hh's 400/422 is a permanent client-side answer — mark the
+	// vacancy terminal so no other run in this pass repeats the POST.
+	if errors.Is(err, hhapi.ErrValidation) {
+		f.markTerminalFailed(accountID, v.ID)
+	}
 	f.createApplication(ctx, runID, accountID, resumeHash, v, "failed", letter, err.Error(), stats)
 	f.incr(ctx, "apply.error")
 	// T69: the console surface renders the failure line; the structured
@@ -171,6 +182,32 @@ func (f *Feature) sendApply(ctx context.Context, api hhapi.HHAPI, v hhapi.Vacanc
 	resumeHash, letter string,
 ) (hhapi.NegotiationRef, error) {
 	return api.Apply(ctx, hhapi.ApplyRequest{VacancyID: v.ID, ResumeHash: resumeHash, Letter: letter})
+}
+
+// markTerminalFailed records a client-side validation failure (hh 400/422)
+// for (account, vacancy): the answer is permanent, so re-POSTing the vacancy
+// within the pass — another run profile, a clone run — only repeats the
+// error (T77). Entries expire after one apply cadence; a later daily pass
+// may retry.
+func (f *Feature) markTerminalFailed(accountID string, vacancyID int64) {
+	f.terminalMu.Lock()
+	defer f.terminalMu.Unlock()
+	now := f.opt.Now()
+	for k, exp := range f.terminal {
+		if exp.Before(now) {
+			delete(f.terminal, k)
+		}
+	}
+	f.terminal[fmt.Sprintf("%s:%d", accountID, vacancyID)] = now.Add(24 * time.Hour)
+}
+
+// terminalFailed reports whether the vacancy failed apply with a client-side
+// validation error during this pass window (T77).
+func (f *Feature) terminalFailed(accountID string, vacancyID int64) bool {
+	f.terminalMu.Lock()
+	defer f.terminalMu.Unlock()
+	exp, ok := f.terminal[fmt.Sprintf("%s:%d", accountID, vacancyID)]
+	return ok && exp.After(f.opt.Now())
 }
 
 // retryApplyOnce re-arms the key and repeats the apply a single time.
@@ -814,6 +851,11 @@ func (f *Feature) popupGate(ctx context.Context, accountID string, api hhapi.HHA
 		// (responseStatus.alreadyApplied) — same skip as the dedup hit,
 		// one request earlier.
 		return "", "already_applied", false
+	}
+	if meta.HasTests {
+		// T77: a vacancy with required tests can never be applied to from
+		// here — skip before the POST (hh answers 400 test-required).
+		return "", "test_required", false
 	}
 	if meta.ChatWritePossibility == "DISABLED" {
 		return "", "chat_disabled", false

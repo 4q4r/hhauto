@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync"
 	"time"
 
 	"hhauto/internal/ai"
@@ -101,6 +102,13 @@ type Feature struct {
 	log     *slog.Logger
 	q       queue.Queue
 	console *console.Surface
+
+	// T77: vacancies whose apply failed with a client-side validation error
+	// (hh 400/422 — permanent). Keyed account:vacancy, entries expire after
+	// one apply cadence. Guarded: passes for different accounts run
+	// concurrently.
+	terminalMu sync.Mutex
+	terminal   map[string]time.Time
 }
 
 // New builds the feature. A nil logger falls back to slog.Default().
@@ -111,7 +119,7 @@ func New(o Options) *Feature {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	return &Feature{opt: o, log: o.Log, console: o.Console}
+	return &Feature{opt: o, log: o.Log, console: o.Console, terminal: map[string]time.Time{}}
 }
 
 // Name implements features.Feature.
