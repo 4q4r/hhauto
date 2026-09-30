@@ -94,13 +94,12 @@ func applyDefaults(c *Config) {
 	}
 
 	// T33: Jev-compatible prefilter defaults (endpoint per the owner's
-	// live contract; threshold 0.85).
-	for _, d := range []stringDefault{
-		{&c.AI.Jev.Endpoint, "https://api.typesafe.ai/v1/systemone"},
-	} {
-		if *d.dst == "" {
-			*d.dst = d.val
-		}
+	// live contract; threshold 0.85). T74: the systemone endpoint default
+	// does not apply to wire="openai-chat" — a chat endpoint (e.g.
+	// OpenRouter) must be configured explicitly and validation reports
+	// the missing endpoint fail-fast.
+	if c.AI.Jev.Wire != "openai-chat" && c.AI.Jev.Endpoint == "" {
+		c.AI.Jev.Endpoint = "https://api.typesafe.ai/v1/systemone"
 	}
 	for _, d := range []floatDefault{
 		{&c.AI.Jev.ConfidenceThreshold, 0.85},

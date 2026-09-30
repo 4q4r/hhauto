@@ -110,20 +110,28 @@ func buildAI(cfg *config.Config, db *store.DB, log *slog.Logger, forceImproveTas
 	// ([features.multiapply] classifier="jev" — an exclusive choice
 	// enforced by config validation). The key is resolved fail-fast like
 	// the provider keys above — a half-configured classifier must not
-	// start.
+	// start. T74: the config-file api_key wins over api_key_env (the
+	// owner runs keyless environments).
 	if cfg.Features.MultiApply.Classifier == config.ClassifierJev && cfg.AI.Jev.Enabled {
-		key := ""
-		if cfg.AI.Jev.APIKeyEnv != "" {
-			key = os.Getenv(cfg.AI.Jev.APIKeyEnv)
+		j := cfg.AI.Jev
+		key := j.APIKey
+		if key == "" && j.APIKeyEnv != "" {
+			key = os.Getenv(j.APIKeyEnv)
 		}
 		if key == "" {
-			return nil, fmt.Errorf("ai: [ai.jev] enabled but api_key_env %s is not set (set the variable or disable ai.jev)", cfg.AI.Jev.APIKeyEnv)
+			return nil, fmt.Errorf("ai: [ai.jev] enabled but neither api_key nor api_key_env resolves to a key (set ai.jev.api_key in the config or export %s)", j.APIKeyEnv)
 		}
-		tasks := make([]ai.TaskName, 0, len(cfg.AI.Jev.Tasks))
-		for _, t := range cfg.AI.Jev.Tasks {
+		tasks := make([]ai.TaskName, 0, len(j.Tasks))
+		for _, t := range j.Tasks {
 			tasks = append(tasks, ai.TaskName(t))
 		}
-		solver, err := ai.NewJevSolver(ai.NewJevClient(cfg.AI.Jev.Endpoint, key), cfg.AI.Jev.ConfidenceThreshold, tasks, log)
+		client := ai.NewJevClient(j.Endpoint, key, ai.JevClientOptions{
+			Wire:        j.Wire,
+			Model:       j.Model,
+			HTTPReferer: j.HTTPReferer,
+			XTitle:      j.Title,
+		})
+		solver, err := ai.NewJevSolver(client, j.ConfidenceThreshold, tasks, log)
 		if err != nil {
 			return nil, fmt.Errorf("ai: jev: %w", err)
 		}

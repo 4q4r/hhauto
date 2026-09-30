@@ -460,10 +460,12 @@ func validateAI(c *Config) error {
 }
 
 // validateJev checks [ai.jev] (T33): the endpoint must be an absolute
-// http(s) URL, an enabled prefilter needs an api_key_env, at least one
-// enrolled task, and only the classification-only tasks may be enrolled;
-// the confidence threshold must lie in (0,1]. A disabled section stays
-// valid with defaults (endpoint and threshold are filled by applyDefaults).
+// http(s) URL, an enabled prefilter needs a key source (api_key inline or
+// api_key_env, T74), at least one enrolled task, and only the
+// classification-only tasks may be enrolled; the confidence threshold must
+// lie in (0,1]. A disabled section stays valid with defaults (endpoint and
+// threshold are filled by applyDefaults). T74: wire selects the transport
+// (systemone | openai-chat) and openai-chat additionally requires model.
 // T46: jev_only_tasks additionally passes validateJevOnlyTasks.
 func validateJev(c *Config) error {
 	j := c.AI.Jev
@@ -487,8 +489,19 @@ func validateJev(c *Config) error {
 	if !j.Enabled {
 		return nil
 	}
-	if j.APIKeyEnv == "" {
-		return fmt.Errorf("ai.jev.api_key_env: required when ai.jev.enabled = true (the key is read from the environment, never from the config file)")
+	switch j.Wire {
+	case "", "systemone", "openai-chat":
+	default:
+		return fmt.Errorf("ai.jev.wire %q: must be one of systemone | openai-chat", j.Wire)
+	}
+	// T74: the key may live inline in the config (api_key, mirroring the
+	// T48 provider pattern) or in the environment (api_key_env); an
+	// enabled classifier with neither must not start.
+	if j.APIKey == "" && j.APIKeyEnv == "" {
+		return fmt.Errorf("ai.jev: either api_key or api_key_env is required when ai.jev.enabled = true (no environment variables by owner decision: prefer api_key)")
+	}
+	if j.Wire == "openai-chat" && j.Model == "" {
+		return fmt.Errorf("ai.jev.model: required when ai.jev.wire = \"openai-chat\" (e.g. \"~typesafe/jev-latest\")")
 	}
 	if len(j.Tasks) == 0 {
 		return fmt.Errorf("ai.jev.tasks: at least one task is required when ai.jev.enabled = true")
