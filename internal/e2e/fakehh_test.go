@@ -37,6 +37,7 @@ const (
 	vacLowRating = int64(103) // F4 employer rating below min
 	vacDup       = int64(104) // F5 live application row seeded by the test
 	vacCaptcha   = int64(105) // F8 apply answers with a captcha challenge
+	vacUnnamed   = int64(106) // T78: data-dummy vacancy (opt-in flag) → ai_needs_human
 
 	employerGood = int64(900) // rating 4.8 (vacClean, vacDup, chats)
 	employerBad  = int64(901) // rating 2.3 (vacLowRating)
@@ -112,6 +113,10 @@ type fakeHH struct {
 	// extraInbound carries messages injected mid-scenario (the dry-run →
 	// real seam: the real pass needs fresh inbound work to classify).
 	extraInbound map[string][]any
+
+	// extraUnnamedVacancy serves one additional data-dummy vacancy (no
+	// title) — the T78 needs_human scenario opt-in (default false).
+	extraUnnamedVacancy bool
 }
 
 // appendInbound makes the fake serve one more inbound message in chatID.
@@ -231,13 +236,20 @@ func (f *fakeHH) vacItem(id int64, name string, employerID int64, employerName s
 }
 
 func (f *fakeHH) suitableVacancies() []any {
-	return []any{
+	items := []any{
 		f.vacItem(vacClean, "Senior Go-разработчик", employerGood, "Хорошие Решения"),
 		f.vacItem(vacExclude, "Менеджер по продажам (входящие заявки)", employerGood, "Хорошие Решения"),
 		f.vacItem(vacLowRating, "Go-разработчик (жёсткий офис)", employerBad, "Плохой Работодатель"),
 		f.vacItem(vacDup, "Go-разработчик (дубль)", employerGood, "Хорошие Решения"),
 		f.vacItem(vacCaptcha, "Go backend-разработчик", employerMid, "Средний Работодатель"),
 	}
+	// T78 scenario opt-in: a data-dummy vacancy (no title) for the
+	// needs_human path. Other e2e scenarios never set the flag, so their
+	// cascade counts stay untouched.
+	if f.extraUnnamedVacancy {
+		items = append(items, f.vacItem(vacUnnamed, "", employerGood, "Хорошие Решения"))
+	}
+	return items
 }
 
 func (f *fakeHH) serveSuitable(w http.ResponseWriter, r *http.Request) {

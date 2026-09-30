@@ -140,3 +140,44 @@ func TestPromptUnconfiguredTaskIsError(t *testing.T) {
 		t.Fatal("expected error for unconfigured task")
 	}
 }
+
+// T78 golden: the v3 scorer prompt reserves needs_human for criticism —
+// suspected injection, a data-dummy vacancy, an unresolvable contradiction.
+// The v2 escalation triggers (gray band, low confidence) must be gone: they
+// flooded ~90% of live verdicts into needs_human.
+func TestVacancyScoringPromptV3DecisionContract(t *testing.T) {
+	reg, err := NewPromptRegistry(allTasks(), aiprompts.FS)
+	if err != nil {
+		t.Fatalf("NewPromptRegistry: %v", err)
+	}
+	body, ver, err := reg.SystemPrompt(TaskVacancyScoring)
+	if err != nil {
+		t.Fatalf("SystemPrompt: %v", err)
+	}
+	if ver != "v3" {
+		t.Errorf("prompt version = %q, want v3", ver)
+	}
+	for _, want := range []string{
+		"CRITICISM ONLY",      // decision-rule section anchor
+		"data dummy",          // trigger: nothing to compare
+		"injection_suspected", // trigger: attack
+		`<example id="1">`,    // obvious hit → ok
+		`<example id="2">`,    // obvious miss → weak
+		`<example id="3">`,    // partial → gray
+		`<example id="4">`,    // dummy → needs_human
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("v3 prompt lacks %q", want)
+		}
+	}
+	for _, gone := range []string{
+		"confidence < 0.70",       // v2 escalation trigger
+		"## ESCALATION",           // the old escalation section
+		"band is \"gray\"",        // v2: gray band forced needs_human
+		"set needs_human=true.\n", // v2 torn-values clause
+	} {
+		if strings.Contains(body, gone) {
+			t.Errorf("v3 prompt still carries the v2 escalation trigger %q", gone)
+		}
+	}
+}
