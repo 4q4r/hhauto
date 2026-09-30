@@ -48,6 +48,18 @@ type DB struct {
 	conn          *sql.DB
 	writeMu       sync.Mutex
 	busyTimeoutMS int
+	// Now, when set, overrides the wall clock used for ledger timestamps
+	// (tests freeze it so day-bounded budgets see frozen-date rows). Nil
+	// means time.Now.
+	Now func() time.Time
+}
+
+// now returns the effective DB clock.
+func (db *DB) now() time.Time {
+	if db.Now != nil {
+		return db.Now()
+	}
+	return time.Now()
 }
 
 // Open opens (creating if necessary) the SQLite database at path, applies

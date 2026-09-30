@@ -247,6 +247,7 @@ func openDB(t *testing.T) *store.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
+	db.Now = func() time.Time { return testNow } // ledger timestamps follow the frozen flow clock
 	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
