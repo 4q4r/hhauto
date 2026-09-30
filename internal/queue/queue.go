@@ -59,6 +59,10 @@ type Queue interface {
 	Enqueue(ctx context.Context, t Task) error // dedup: duplicate DedupKey is a no-op
 	Dequeue(ctx context.Context, accountID string) (Task, bool)
 	Len(accountID string) int
+	// NextDeadline reports the earliest non-zero Deadline queued for the
+	// account (T71: the daemon's maintenance wake-up). Zero-deadline tasks
+	// are ignored; ok=false when none is queued.
+	NextDeadline(accountID string) (time.Time, bool)
 	// Close stops intake and drains up to drainTimeout.
 	Close(ctx context.Context, drainTimeout time.Duration) error
 }

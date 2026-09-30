@@ -52,6 +52,14 @@ func (f *Feature) processVacancy(ctx context.Context, runID string, run config.R
 	// F2-F5: static filters, rating and dedup (the seen row is written
 	// through as audit trail, never as a skip condition).
 	bypass := bypassSet(run.Filters.WhitelistBypass)
+
+	// T71 stack gate: the cheapest deterministic filter runs before
+	// everything — a vacancy naming languages absent from the profile
+	// never reaches the static filters, the AI scorer or the popup.
+	if skip := stackGateSkip(v.Name, prof.ProfileText); skip != "" {
+		return "", skip
+	}
+
 	skip, whitelisted := f.prefilter(ctx, runID, run, accountID, api, resumeHash, v)
 	if skip != "" {
 		return "", skip
@@ -719,31 +727,37 @@ func (f *Feature) aiFilterSkip(ctx context.Context, runID string, run config.Run
 	prof profile.Profile, resumeHash string, v hhapi.Vacancy, whitelisted bool, bypass map[string]bool) string {
 	// F6: AI relevance (threshold bypassed for whitelisted employers
 	// listing "F6_threshold"; needs_human/injection still gate).
-	if f.opt.Config.Features.MultiApply.AIFilter && f.opt.Runner != nil {
-		threshold := run.AIFilterOverrides.MinScore
-		if threshold <= 0 {
-			threshold = f.opt.Config.Features.MultiApply.MinMatchPercent
-		}
-		if threshold <= 0 {
-			threshold = defaultMinMatch
-		}
-		if whitelisted && bypass[stageF6Threshold] {
-			threshold = 0
-		}
-		rules := relevance.Rules{
-			ExcludeWords:      run.Filters.ExcludeWords,
-			TargetRoles:       relevance.RolesFromFacts(prof),
-			ExtraInstructions: run.AIFilterOverrides.ExtraInstructions,
-		}
-		vd, pass, reason := relevance.New(f.opt.Runner, f.opt.DB, accountID, runID, prof, rules, f.log).
-			Pass(ctx, v, resumeHash, threshold)
-		// T69: the classification verdict line (score and apply/skip
-		// outcome) — off by default, the [console].verdicts toggle turns
-		// it on as an alternative to --log-level debug.
-		f.console.Verdict(v, vd.Score, threshold, pass, reason)
-		if !pass {
-			return reason
-		}
+	// T71 fail-closed: ai_filter=true with an unavailable runner skips the
+	// vacancy with a reason — an automation tool never applies unscored.
+	if !f.opt.Config.Features.MultiApply.AIFilter {
+		return ""
+	}
+	if f.opt.Runner == nil {
+		return "ai_unavailable"
+	}
+	threshold := run.AIFilterOverrides.MinScore
+	if threshold <= 0 {
+		threshold = f.opt.Config.Features.MultiApply.MinMatchPercent
+	}
+	if threshold <= 0 {
+		threshold = defaultMinMatch
+	}
+	if whitelisted && bypass[stageF6Threshold] {
+		threshold = 0
+	}
+	rules := relevance.Rules{
+		ExcludeWords:      run.Filters.ExcludeWords,
+		TargetRoles:       relevance.RolesFromFacts(prof),
+		ExtraInstructions: run.AIFilterOverrides.ExtraInstructions,
+	}
+	vd, pass, reason := relevance.New(f.opt.Runner, f.opt.DB, accountID, runID, prof, rules, f.log).
+		Pass(ctx, v, resumeHash, threshold)
+	// T69: the classification verdict line (score and apply/skip
+	// outcome) — off by default, the [console].verdicts toggle turns
+	// it on as an alternative to --log-level debug.
+	f.console.Verdict(v, vd.Score, threshold, pass, reason)
+	if !pass {
+		return reason
 	}
 	return ""
 }

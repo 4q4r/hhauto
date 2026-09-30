@@ -229,6 +229,29 @@ func (q *impl) Len(accountID string) int {
 	return len(a.items)
 }
 
+// NextDeadline reports the earliest non-zero Deadline among the account's
+// queued items (T71). A zero Deadline means "no deadline" and is ignored:
+// such tasks never wake the daemon's maintenance pass.
+func (q *impl) NextDeadline(accountID string) (time.Time, bool) {
+	a := q.lookup(accountID)
+	if a == nil {
+		return time.Time{}, false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var wake time.Time
+	for _, it := range a.items {
+		d := it.task.Deadline
+		if d.IsZero() {
+			continue
+		}
+		if wake.IsZero() || d.Before(wake) {
+			wake = d
+		}
+	}
+	return wake, !wake.IsZero()
+}
+
 // Close stops intake, waits up to drainTimeout (bounded by ctx) for
 // consumers to pull the remaining tasks, then drops whatever is unclaimed —
 // recovery is the scheduler's job, not the queue's. Close is idempotent and

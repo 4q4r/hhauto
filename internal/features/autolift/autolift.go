@@ -120,21 +120,40 @@ type LiftPayload struct {
 func (f *Feature) RegisterTasks(ctx context.Context, q queue.Queue, reg *scheduler.Registry) error {
 	f.q = q
 	cfg := f.opt.Config
-	minJ, maxJ, err := featurekit.ParseJitterRange(cfg.Features.AutoLift.Jitter)
-	if err != nil {
-		return fmt.Errorf("autolift: %w", err)
-	}
 	reg.Add(registryName, scheduler.Spec{
 		TZ:     cfg.General.Timezone,
 		Times:  scheduleTimes(cfg.Features.AutoLift.PerDay),
 		Days:   scheduler.All,
 		Jitter: 0,
 	})
+	return f.armWindow(ctx)
+}
+
+// ArmNext re-seeds one lift task per enabled account (T71): the daemon's
+// wake-up loop calls it to keep the 4h lift chain armed — seeding is
+// dedup-idempotent, so calling it on every loop iteration is safe and the
+// chain never dies after a consumed task. A disabled feature is a no-op.
+func (f *Feature) ArmNext(ctx context.Context) error {
+	if !f.Enabled() {
+		return nil
+	}
+	return f.armWindow(ctx)
+}
+
+// armWindow seeds one lift task per enabled account for the current 4h
+// window with a deadline timer4h+jitter ahead (the shared seeding core of
+// RegisterTasks and ArmNext).
+func (f *Feature) armWindow(ctx context.Context) error {
+	cfg := f.opt.Config
+	minJ, maxJ, err := featurekit.ParseJitterRange(cfg.Features.AutoLift.Jitter)
+	if err != nil {
+		return fmt.Errorf("autolift: %w", err)
+	}
 
 	window := featurekit.LiftWindow(f.opt.Now())
 	jitter := featurekit.JitterDuration(minJ, maxJ, f.opt.Rand)
 	for id := range cfg.Accounts {
-		err := q.Enqueue(ctx, queue.Task{
+		err := f.q.Enqueue(ctx, queue.Task{
 			AccountID: id,
 			Kind:      queue.KindLift,
 			DedupKey:  "lift:" + window,
