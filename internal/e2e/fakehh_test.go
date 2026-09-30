@@ -385,6 +385,9 @@ func (f *fakeHH) serveVacancyCard(w http.ResponseWriter, r *http.Request) {
 	f.track(w, r, false)
 	id, _ := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/vacancy/"), 10, 64)
 	names := map[int64]string{
+		101: "Senior Go-разработчик",
+		104: "Go-разработчик (дубль)",
+		105: "Go backend-разработчик",
 		201: "Go-разработчик (чат)",
 		203: "Go-разработчик (тест)",
 		204: "Go-разработчик (отказ)",
@@ -396,6 +399,9 @@ func (f *fakeHH) serveVacancyCard(w http.ResponseWriter, r *http.Request) {
 		"name":      names[id],
 		"employer":  map[string]any{"id": employerGood, "name": "Хорошие Решения"},
 		"area":      map[string]any{"name": "Москва"},
+		// T79: live cards always carry the publication date (the
+		// publicationTimeIso key the letter path parses).
+		"publicationTimeIso": "2026-09-30T09:00:00+03:00",
 	}}))
 }
 

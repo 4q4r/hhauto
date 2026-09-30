@@ -593,7 +593,7 @@ func vacancyFromItem(raw json.RawMessage) Vacancy {
 		EmployerID:   int64(num(employer, "id")),
 		EmployerName: str(employer, "name"),
 		Area:         str(area, "name"),
-		PublishedAt:  timeFrom(m, "publishedAt", "published_at", "createDateTime"),
+		PublishedAt:  timeFrom(m, "publishedAt", "published_at", "createDateTime", "publicationTimeIso"),
 		Description:  str(m, "description", "descriptionText"),
 		AlternateURL: firstNonEmpty(str(m, "alternate_url", "alternateURL"), str(obj(obj(m["links"])["desktop"]), "alternate_url")),
 		AcceptTemp:   boolv(m, "acceptTemporary", "accept_temp"),
@@ -729,6 +729,13 @@ func (c *Client) VacancyCard(ctx context.Context, id int64) (*Vacancy, error) {
 	view := obj(state["vacancyView"])
 	if view == nil {
 		return nil, fmt.Errorf("hhapi: vacancy_card %d: %w (vacancyView)", id, errNilState)
+	}
+	// T79: the card content lives in vacancyView.vacancyFull.vacancy
+	// (live-probed 2026-09-30: every /vacancy/{id} state nests the payload
+	// there while the flat vacancyView carries none of it); the legacy
+	// flat shape still parses when the inner block is absent.
+	if full := obj(obj(view["vacancyFull"])["vacancy"]); full != nil {
+		view = full
 	}
 	vb, jerr := json.Marshal(view)
 	if jerr != nil {
