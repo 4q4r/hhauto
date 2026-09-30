@@ -181,9 +181,25 @@ func (f *fakeAI) verdictFor(task string, input map[string]any) map[string]any {
 		v["used_facts"] = []any{}
 		return v
 	case "vacancy_scoring":
+		// T78: an obvious hit decides into the band (ok, needs_human=false);
+		// a data-dummy vacancy (no title) is legitimate needs_human.
+		if vac, _ := input["vacancy"].(map[string]any); vac != nil {
+			if name, _ := vac["name"].(string); strings.TrimSpace(name) == "" {
+				v := e2eCommon(1.0)
+				v["needs_human"] = true
+				v["needs_human_reason"] = "В вакансии нет названия и описания: данных для оценки физически нет"
+				v["score"] = 0
+				v["band"] = "weak"
+				v["target_role_match"] = false
+				v["reasons"] = []string{"В вакансии нет названия и описания — сравнивать не с чем"}
+				v["red_flags"] = []any{}
+				v["missing_data"] = []any{}
+				return v
+			}
+		}
 		v := e2eCommon(0.9)
-		v["score"] = 90
-		v["band"] = "strong"
+		v["score"] = 72
+		v["band"] = "ok"
 		v["target_role_match"] = true
 		v["reasons"] = []string{"требования вакансии покрывают подтверждённый опыт"}
 		v["red_flags"] = []any{}

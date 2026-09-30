@@ -366,20 +366,22 @@ func TestRunLevelAIScoreOverride(t *testing.T) {
 
 func TestAINeedsHumanAndInjectionRouteToReview(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		verdict string
-		metric  string
+		name        string
+		vacancyName string
+		verdict     string
+		metric      string
 	}{
-		// T75: band=ok — a needs_human verdict outside the gray zone still
-		// parks (the gray zone itself responds by default, see
-		// t75_gray_band_test.go).
-		{"needs_human", scoringVerdict(80, "ok", true, false), "apply.skip.ai_needs_human"},
-		{"injection", scoringVerdict(95, "strong", false, true), "apply.skip.ai_injection"},
+		// T78: needs_human is criticism only — this case is legitimate
+		// because the vacancy is a data dummy (no title to compare). A
+		// drift case (named vacancy) is demoted to the gray band instead,
+		// see internal/features/relevance t78 tests.
+		{"needs_human", "", scoringVerdict(80, "ok", true, false), "apply.skip.ai_needs_human"},
+		{"injection", "Go Dev", scoringVerdict(95, "strong", false, true), "apply.skip.ai_injection"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, nil)
 			h.runner.scoring = tc.verdict
-			h.searchItems = []string{vacItem(777013, "Go Dev", 9001, "Corp LLC", "")}
+			h.searchItems = []string{vacItem(777013, tc.vacancyName, 9001, "Corp LLC", "")}
 			h.ratings[9001] = hhRating(4.5, 4.7, 100)
 			h.run(t)
 			if len(h.applyCalls) != 0 {

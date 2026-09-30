@@ -129,6 +129,8 @@ func (f *Filter) Pass(ctx context.Context, v hhapi.Vacancy, resumeID string, thr
 		return Verdict{}, false, "ai_error"
 	}
 
+	f.enforceNeedsHumanPolicy(&verdict, v)
+
 	f.cacheVerdict(ctx, v.ID, resumeID, verdict)
 
 	pass, reason := f.route(verdict, threshold)
@@ -194,9 +196,36 @@ func critical(v Verdict) bool {
 	return v.Injection || len(v.RedFlags) > 0
 }
 
-// cacheKey namespaces the verdict cache: vacancy_id + resume_id.
+// enforceNeedsHumanPolicy is the T78 post-check on the schema-validated
+// verdict (prompt-drift guard): needs_human=true is reserved for criticism —
+// suspected prompt injection or a data-dummy vacancy. A vacancy is a dummy
+// when its title is empty: there is physically nothing to compare (the
+// search surface carries no description field, so an empty description is
+// structural there, not a dummy marker). Any other escalation is drift: the
+// verdict is demoted to the gray band whose fate the gray-band config
+// decides (T75) — needs_human stays the routing carrier into that policy.
+// Verdicts without a band are runner synthetics (budget exhausted,
+// schema-invalid); they are never demoted and keep the fail-closed skip.
+func (f *Filter) enforceNeedsHumanPolicy(v *Verdict, vac hhapi.Vacancy) {
+	if !v.NeedsHuman || v.Injection || v.Band == "" || v.Band == BandGray {
+		return
+	}
+	if strings.TrimSpace(vac.Name) == "" {
+		return
+	}
+	f.log.Warn("relevance: needs_human without criticism demoted to gray band (T78 drift guard)",
+		"vacancy", vac.ID, "score", v.Score, "band_was", v.Band)
+	v.Band = BandGray
+}
+
+// cacheKey namespaces the verdict cache: policy version + vacancy_id +
+// resume_id. The version (T78) orphans pre-T78 entries: the flooded v2
+// night would otherwise route needs_human from cache forever
+// (feature_state has no TTL) instead of being re-scored under v3.
+const verdictCacheVer = "v3"
+
 func cacheKey(vacancyID int64, resumeID string) string {
-	return strconv.FormatInt(vacancyID, 10) + ":" + resumeID
+	return verdictCacheVer + ":" + strconv.FormatInt(vacancyID, 10) + ":" + resumeID
 }
 
 func (f *Filter) cachedVerdict(ctx context.Context, vacancyID int64, resumeID string) (Verdict, bool) {

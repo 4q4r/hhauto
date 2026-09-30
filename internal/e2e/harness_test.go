@@ -59,6 +59,7 @@ type e2eEnv struct {
 type envOptions struct {
 	dryRun        bool
 	chatsOff      bool  // disable chatops (kill-switch scenario: the only mutations are applies)
+	aiFilter      bool  // enable the AI relevance filter (T78 scoring scenario)
 	warmupSilence int   // hours; 0 → default 10000 (never due)
 	warmupLadder  []int // 0 → default [8, 16]
 	extraTOML     string
@@ -104,7 +105,7 @@ daily_apply_cap = 200
 
 [features.multiapply]
 enabled = true
-ai_filter = false
+ai_filter = %t
 min_match_percent = 60
 
 [features.chatops]
@@ -166,6 +167,7 @@ model_profile = "fast"
 		o.dryRun,
 		filepath.ToSlash(filepath.Join(dir, "hhauto.db")),
 		hh.URL(), hh.URL(), hh.URL(),
+		o.aiFilter,
 		!o.chatsOff,
 		o.warmupSilence, intsCSV(o.warmupLadder), e2ePing,
 		resumeID,

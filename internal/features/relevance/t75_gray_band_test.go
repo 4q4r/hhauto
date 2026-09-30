@@ -4,6 +4,8 @@ package relevance
 // [features.multiapply].gray_band: apply (the default) responds anyway,
 // needs_human keeps the parking skip, skip drops the vacancy silently.
 // Suspected injection and red flags always park regardless of the policy.
+// (T78 later added the drift guard: needs_human without criticism on a
+// named vacancy is demoted to the gray band — t78_needs_human_policy_test.go.)
 
 import (
 	"context"
@@ -116,19 +118,5 @@ func TestRedFlagsOverrideGrayBandApply(t *testing.T) {
 	}
 	if !strings.Contains(open[0].Reason, "обход платформы") {
 		t.Fatalf("review detail must carry the red flag: %+v", open[0])
-	}
-}
-
-func TestNonGrayNeedsHumanStillParks(t *testing.T) {
-	db := testDB(t)
-	runner := &fakeRunner{verdict: scoringVerdict(80, "ok", true, false)}
-	f := newGrayFilter(t, db, runner, config.GrayBandApply)
-
-	_, pass, reason := f.Pass(context.Background(), vacancy(790, "OkBand"), "hash1", 60)
-	if pass || reason != "ai_needs_human" {
-		t.Fatalf("pass=%v reason=%q, want false/ai_needs_human (policy covers band=gray only)", pass, reason)
-	}
-	if open, _ := db.ReviewItemsOpen(context.Background(), "acc", 10); len(open) != 1 {
-		t.Fatalf("open review items = %d, want 1", len(open))
 	}
 }

@@ -113,13 +113,16 @@ func TestConsoleSkipModesEndToEnd(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, nil)
 			buf := h.withConsole(t, func(c *config.Console) { c.Skips = tc.modes })
-			h.runner.scoring = scoringVerdict(80, "ok", true, false) // ai_needs_human: interesting
-			h.searchItems = []string{vacItem(777042, "Go Dev", 9001, "Corp LLC", "")}
+			// T78: needs_human stands only for criticism — the fixture
+			// vacancy is a data dummy (no title), so the verdict still
+			// lands as ai_needs_human (interesting).
+			h.runner.scoring = scoringVerdict(80, "ok", true, false)
+			h.searchItems = []string{vacItem(777042, "", 9001, "Corp LLC", "")}
 
 			h.run(t)
 
 			out := buf.String()
-			if got := strings.Contains(out, "· Пропущен: «Go Dev» — Corp LLC: ai_needs_human"); got != tc.wantLine {
+			if got := strings.Contains(out, "· Пропущен: «» — Corp LLC: ai_needs_human"); got != tc.wantLine {
 				t.Fatalf("skip line shown = %t, want %t (modes %s): %q", got, tc.wantLine, tc.modes, out)
 			}
 			if !strings.Contains(out, "пропущено 1 (ИИ 1)") {
