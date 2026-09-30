@@ -903,6 +903,13 @@ func (f *Feature) prepareLetter(ctx context.Context, runID string, run config.Ru
 		f.log.Warn("multiapply: vacancy card failed", "vacancy", v.ID, "err", err)
 		return "", "vacancy_card_failed"
 	}
+	// T79: a still-empty card (no title or no publication date even after
+	// the vacancyFull unwrap) cannot feed a letter — skip before spending
+	// the AI call, fail-closed like the fetch failure above.
+	if full.Name == "" || full.PublishedAt.IsZero() {
+		f.log.Warn("multiapply: vacancy card empty", "vacancy", v.ID)
+		return "", "vacancy_card_failed"
+	}
 	details := buildVacancyDetails(*full)
 	letter, err := f.buildLetter(ctx, runID, mode, tmpl, run.AIFilterOverrides.ExtraInstructions,
 		accountID, prof, full, details, stats)
