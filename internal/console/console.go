@@ -38,7 +38,7 @@ const (
 // silently; the applied verb flips to «Откликнулся бы» in dry-run and the
 // digest parens vanish when no vacancy was skipped.
 const (
-	defaultAppliedTmpl = `✓ {{if .Dry}}Откликнулся бы{{else}}Откликнулся{{end}}: «{{.VacancyTitle}}» — {{.Employer}}{{if .Badges}} [{{.Badges}}]{{end}}{{if .Area}} · {{.Area}}{{end}}{{if .Salary}} · {{.Salary}}{{end}} · резюме «{{.ResumeTitle}}»`
+	defaultAppliedTmpl = `✓ {{if .Dry}}Откликнулся бы{{else}}Откликнулся{{end}}{{if .Note}} ({{.Note}}){{end}}: «{{.VacancyTitle}}» — {{.Employer}}{{if .Badges}} [{{.Badges}}]{{end}}{{if .Area}} · {{.Area}}{{end}}{{if .Salary}} · {{.Salary}}{{end}} · резюме «{{.ResumeTitle}}»`
 	defaultSkipTmpl    = `· Пропущен: «{{.VacancyTitle}}» — {{.Employer}}: {{.Reason}}`
 	defaultErrorTmpl   = `✗ Ошибка отклика: «{{.VacancyTitle}}» — {{.Employer}}: {{.Reason}}`
 	defaultLetterTmpl  = `? Письмо на проверку: «{{.VacancyTitle}}» — {{.Employer}}`
@@ -58,6 +58,7 @@ type VacancyLine struct {
 	Salary       string
 	ResumeTitle  string // store snapshot title, short hash as the fallback
 	Reason       string
+	Note         string // applied-line suffix, e.g. "gray 50" (T75 gray-band origin)
 }
 
 // DigestLine is the template data for the end-of-pass digest. Skipped and
@@ -173,12 +174,13 @@ func (s *Surface) render(name, color string, data any) {
 }
 
 // Applied renders the apply success line (green): «Откликнулся» or, in
-// dry-run, «Откликнулся бы».
-func (s *Surface) Applied(dry bool, accountID, resumeHash string, v hhapi.Vacancy) {
+// dry-run, «Откликнулся бы». An empty note renders no suffix; the gray-band
+// origin passes "gray N" (T75).
+func (s *Surface) Applied(dry bool, accountID, resumeHash string, v hhapi.Vacancy, note string) {
 	if s == nil || !boolOn(s.cfg.Applied) {
 		return
 	}
-	s.render("applied", ansiGreen, s.vacancyLine(accountID, resumeHash, v, VacancyLine{Dry: dry}))
+	s.render("applied", ansiGreen, s.vacancyLine(accountID, resumeHash, v, VacancyLine{Dry: dry, Note: note}))
 }
 
 // Skip renders one individual skip line (dim) when the configured mode and

@@ -76,7 +76,8 @@ func applyDefaults(c *Config) {
 		{&c.Features.AutoClone.CloneOriginalAction, CloneActionKeep},
 		{&c.Features.AutoClone.Improve.Editor.BaseURL, "https://hh.ru"},
 		{&c.Features.AutoClone.Improve.Editor.CookieDomain, ".hh.ru"},
-		{&c.Console.Skips, "interesting,aggregate"}, // T69: interesting skip lines + digest breakdown
+		{&c.Features.MultiApply.GrayBand, GrayBandApply}, // T75: gray zone responds by default
+		{&c.Console.Skips, "interesting,aggregate"},      // T69: interesting skip lines + digest breakdown
 	} {
 		if *d.dst == "" {
 			*d.dst = d.val

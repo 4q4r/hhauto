@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"hhauto/internal/ai"
+	"hhauto/internal/config"
 	"hhauto/internal/features/featurekit"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/profile"
@@ -31,7 +32,15 @@ type Verdict struct {
 	Injection  bool     `json:"injection_suspected"`
 	Confidence float64  `json:"confidence"`
 	Reasons    []string `json:"reasons,omitempty"`
+	RedFlags   []string `json:"red_flags,omitempty"`
 }
+
+// GrayBandReason is the Pass reason for a gray-band verdict that the
+// gray-band policy routed to apply (pass=true; never a skip reason).
+const GrayBandReason = "gray_band"
+
+// BandGray is the scorer's borderline band (score 40–60).
+const BandGray = "gray"
 
 // Rules carries the run-level instruction context for the scorer.
 type Rules struct {
@@ -60,16 +69,22 @@ type Filter struct {
 	rules     Rules
 	log       *slog.Logger
 	now       func() time.Time
+	// grayBand is the [features.multiapply].gray_band policy (T75): the
+	// route for a gray-band needs_human verdict. Empty = apply, the
+	// documented default.
+	grayBand string
 }
 
-// New builds the filter. A nil logger falls back to slog.Default().
-func New(runner ai.Runner, db *store.DB, accountID, runID string, prof profile.Profile, rules Rules, log *slog.Logger) *Filter {
+// New builds the filter. A nil logger falls back to slog.Default();
+// grayBand is the config.GrayBand vocabulary ("" = apply).
+func New(runner ai.Runner, db *store.DB, accountID, runID string, prof profile.Profile, rules Rules, log *slog.Logger, grayBand string) *Filter {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Filter{
 		runner: runner, db: db, accountID: accountID, runID: runID,
 		prof: prof, rules: rules, log: log, now: time.Now,
+		grayBand: grayBand,
 	}
 }
 
@@ -79,6 +94,8 @@ func New(runner ai.Runner, db *store.DB, accountID, runID string, prof profile.P
 //	score_below_threshold — score below the configured minimum;
 //	ai_needs_human        — the verdict demands a human (review item added);
 //	ai_injection          — prompt injection suspected (review item added);
+//	gray_band             — a gray-band needs_human verdict the gray-band
+//	                        policy routed to apply (T75, pass=true);
 //	ai_error              — the runner failed: fail-closed (an automation
 //	                        tool must not apply to unscored vacancies; a
 //	                        budget hard-stop therefore pauses the pipeline).
@@ -87,7 +104,8 @@ func New(runner ai.Runner, db *store.DB, accountID, runID string, prof profile.P
 // skips the runner and never duplicates review items.
 func (f *Filter) Pass(ctx context.Context, v hhapi.Vacancy, resumeID string, threshold int) (Verdict, bool, string) {
 	if cached, ok := f.cachedVerdict(ctx, v.ID, resumeID); ok {
-		return cached, decide(cached, threshold), cachedReason(cached, threshold)
+		pass, reason := f.route(cached, threshold)
+		return cached, pass, reason
 	}
 
 	raw, _, err := f.runner.Run(ctx, f.accountID, "vacancy", strconv.FormatInt(v.ID, 10), f.runID,
@@ -113,46 +131,67 @@ func (f *Filter) Pass(ctx context.Context, v hhapi.Vacancy, resumeID string, thr
 
 	f.cacheVerdict(ctx, v.ID, resumeID, verdict)
 
-	if verdict.NeedsHuman || verdict.Injection {
-		kind, reason := "ai_needs_human", "ai_needs_human"
+	pass, reason := f.route(verdict, threshold)
+	if f.parks(verdict) {
+		detail := strings.Join(append(append([]string{}, verdict.Reasons...), verdict.RedFlags...), "; ")
+		kind := "ai_needs_human"
 		if verdict.Injection {
-			kind, reason = "ai_injection", "ai_injection"
-		}
-		detail := ""
-		if len(verdict.Reasons) > 0 {
-			detail = strings.Join(verdict.Reasons, "; ")
+			kind = "ai_injection"
 		}
 		if _, err := f.db.ReviewItemsAdd(ctx, f.accountID, kind, detail,
 			fmt.Sprintf(`{"vacancy_id":%d,"resume_id":%q,"score":%d,"band":%q}`, v.ID, resumeID, verdict.Score, verdict.Band)); err != nil {
 			f.log.Error("relevance: review item add failed", "err", err)
 		}
-		return verdict, false, reason
 	}
-	return verdict, decide(verdict, threshold), cachedReason(verdict, threshold)
+	return verdict, pass, reason
 }
 
-// decide applies the threshold to a verdict.
-func decide(v Verdict, threshold int) bool {
-	if v.NeedsHuman || v.Injection {
-		return false
+// route resolves a verdict against the threshold and the gray-band policy
+// (T75): a gray-band needs_human verdict follows the configured policy —
+// apply (the default) responds anyway, needs_human and skip refuse; every
+// other needs_human/injection verdict refuses as before.
+func (f *Filter) route(v Verdict, threshold int) (bool, string) {
+	if v.Injection {
+		return false, "ai_injection"
+	}
+	if v.NeedsHuman {
+		if v.Band == BandGray && !critical(v) &&
+			f.grayBand != config.GrayBandNeedsHuman && f.grayBand != config.GrayBandSkip {
+			return true, GrayBandReason
+		}
+		return false, "ai_needs_human"
 	}
 	if threshold <= 0 {
-		return true
+		return true, "relevance_ok"
 	}
-	return v.Score >= threshold
+	if v.Score < threshold {
+		return false, "score_below_threshold"
+	}
+	return true, "relevance_ok"
 }
 
-func cachedReason(v Verdict, threshold int) string {
+// parks reports whether the verdict must land in the review queue (fresh
+// verdicts only — a cache hit never re-parks): the gray-band policy parks
+// a gray verdict only in the needs_human mode; injection and red flags
+// park regardless of the policy (safety is inseparable).
+func (f *Filter) parks(v Verdict) bool {
+	if critical(v) {
+		return true
+	}
 	if v.NeedsHuman {
-		return "ai_needs_human"
+		if v.Band == BandGray {
+			return f.grayBand == config.GrayBandNeedsHuman
+		}
+		return true
 	}
-	if v.Injection {
-		return "ai_injection"
-	}
-	if threshold > 0 && v.Score < threshold {
-		return "score_below_threshold"
-	}
-	return "relevance_ok"
+	return false
+}
+
+// critical reports the safety-critical verdict signals (T75): suspected
+// prompt injection or explicit red flags. The gray-band policy never
+// overrides them.
+func critical(v Verdict) bool {
+	return v.Injection || len(v.RedFlags) > 0
 }
 
 // cacheKey namespaces the verdict cache: vacancy_id + resume_id.

@@ -173,7 +173,7 @@ func screenVacancyAI(ctx context.Context, rt *Runtime, run config.Run, runID str
 			ExcludeWords:      run.Filters.ExcludeWords,
 			TargetRoles:       relevance.RolesFromFacts(prof),
 			ExtraInstructions: run.AIFilterOverrides.ExtraInstructions,
-		}, rt.Log).Pass(ctx, v, resumeHash, threshold)
+		}, rt.Log, rt.Cfg.Features.MultiApply.GrayBand).Pass(ctx, v, resumeHash, threshold)
 		row.Score, row.Band = verdict.Score, verdict.Band
 		if !pass {
 			row.SkipReason = reason

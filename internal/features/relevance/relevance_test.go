@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"hhauto/internal/ai"
+	"hhauto/internal/config"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/profile"
 	"hhauto/internal/store"
@@ -67,7 +68,7 @@ func newFilter(t *testing.T, db *store.DB, runner ai.Runner) *Filter {
 		Facts:        map[string]string{"target_roles": "Go-разработчик, Backend"},
 	}
 	return New(runner, db, "acc", "run1", prof,
-		Rules{ExcludeWords: []string{"стажировка"}, TargetRoles: RolesFromFacts(prof)}, nil)
+		Rules{ExcludeWords: []string{"стажировка"}, TargetRoles: RolesFromFacts(prof)}, nil, config.GrayBandApply)
 }
 
 func TestScoreAboveThresholdPasses(t *testing.T) {
@@ -98,10 +99,13 @@ func TestScoreBelowThresholdSkips(t *testing.T) {
 	}
 }
 
+// T75: gray-band parking is the needs_human policy route now; the default
+// (apply) is covered by t75_gray_band_test.go.
 func TestNeedsHumanSkipsWithReviewItem(t *testing.T) {
 	db := testDB(t)
 	runner := &fakeRunner{verdict: scoringVerdict(50, "gray", true, false)}
 	f := newFilter(t, db, runner)
+	f.grayBand = config.GrayBandNeedsHuman
 
 	_, pass, reason := f.Pass(context.Background(), vacancy(779, "Gray"), "hash1", 60)
 	if pass || reason != "ai_needs_human" {
@@ -147,10 +151,13 @@ func TestVerdictCachedByVacancyAndResume(t *testing.T) {
 	}
 }
 
+// T75: cached gray verdicts under the needs_human policy keep the old
+// skip-without-duplicate-parking behavior.
 func TestCachedNeedsHumanSkipsWithoutDuplicateReview(t *testing.T) {
 	db := testDB(t)
 	runner := &fakeRunner{verdict: scoringVerdict(45, "gray", true, false)}
 	f := newFilter(t, db, runner)
+	f.grayBand = config.GrayBandNeedsHuman
 
 	_, p1, _ := f.Pass(context.Background(), vacancy(782, "G"), "hash1", 60)
 	_, p2, _ := f.Pass(context.Background(), vacancy(782, "G"), "hash1", 60)

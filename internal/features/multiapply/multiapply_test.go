@@ -370,7 +370,10 @@ func TestAINeedsHumanAndInjectionRouteToReview(t *testing.T) {
 		verdict string
 		metric  string
 	}{
-		{"needs_human", scoringVerdict(50, "gray", true, false), "apply.skip.ai_needs_human"},
+		// T75: band=ok — a needs_human verdict outside the gray zone still
+		// parks (the gray zone itself responds by default, see
+		// t75_gray_band_test.go).
+		{"needs_human", scoringVerdict(80, "ok", true, false), "apply.skip.ai_needs_human"},
 		{"injection", scoringVerdict(95, "strong", false, true), "apply.skip.ai_injection"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
