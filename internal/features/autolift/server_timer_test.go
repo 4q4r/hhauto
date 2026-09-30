@@ -44,6 +44,7 @@ func (q *captureQueue) Dequeue(context.Context, string) (queue.Task, bool) {
 	return queue.Task{}, false
 }
 func (q *captureQueue) Len(string) int                             { return 0 }
+func (q *captureQueue) NextDeadline(string) (time.Time, bool)      { return time.Time{}, false }
 func (q *captureQueue) Close(context.Context, time.Duration) error { return nil }
 
 // stFeature builds the feature with a captured arm callback, a capture

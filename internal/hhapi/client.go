@@ -576,6 +576,14 @@ func vacancyFromItem(raw json.RawMessage) Vacancy {
 		return Vacancy{}
 	}
 	employer := obj(m["employer"])
+	if employer == nil {
+		// T71: the SSR search item names the employer block "company"
+		// (live-probed 2026-09-30); the legacy "employer" shape still
+		// surfaces on some pages. Without the fallback every search
+		// vacancy parsed EmployerID=0 and collapsed the per-employer
+		// daily quota into one shared bucket.
+		employer = obj(m["company"])
+	}
 	area := obj(m["area"])
 	comp := obj(m["compensation"])
 	manager := obj(m["employerManager"])

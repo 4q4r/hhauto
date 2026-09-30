@@ -161,15 +161,15 @@ func (db *DB) ApplicationsCountTodayInclDryRun(ctx context.Context, accountID, r
 	return n, nil
 }
 
-// ApplicationsGetByDedupKeyLive behaves like ApplicationsGetByDedupKey but
-// ignores dry_run survey rows: a dry-run record must never block a real
-// application (Wave 3 review, T10). Returns nil (no error) when the only
-// record is a dry_run row or nothing exists.
+// ApplicationsGetByDedupKeyLive returns only an APPLIED record for the key
+// (T71 owner ruling): drafts (dry_run), failures and intermediate statuses
+// never block a real application. Returns nil (no error) when no applied
+// record exists.
 func (db *DB) ApplicationsGetByDedupKeyLive(ctx context.Context, dedupKey string) (*Application, error) {
 	rs := db.conn.QueryRowContext(ctx, `
 		SELECT id, account_id, run_id, hh_resume_id, vacancy_id, employer_id,
 		       dedup_key, status, letter, fail_reason, correlation_id, created_at, applied_at
-		FROM applications WHERE dedup_key = ? AND status != 'dry_run'`, dedupKey)
+		FROM applications WHERE dedup_key = ? AND status = 'applied'`, dedupKey)
 	a, err := scanApplication(rs)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

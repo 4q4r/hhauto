@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"os"
 	"sort"
@@ -17,6 +18,7 @@ import (
 
 	"hhauto/internal/audit"
 	"hhauto/internal/engine"
+	"hhauto/internal/features/autolift"
 	"hhauto/internal/features/multiapply"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/queue"
@@ -150,6 +152,32 @@ func runDaemonMode(ctx context.Context, rt *Runtime, taskType string, o out) err
 		Interval: daemonInterval,
 		Kill:     rt.Kill,
 		Log:      rt.Log,
+		// T71 wake-up: the nearest queued deadline wakes the daemon before
+		// the apply boundary; the wake drains the DUE tasks (the autolift
+		// server_timer passes). Arm re-seeds the ~4h lift chain after each
+		// consumed task (dedup-idempotent, nil when autolift is off).
+		Arm: func(ctx context.Context) error {
+			if lift := autoliftFeature(rt); lift != nil {
+				return lift.ArmNext(ctx)
+			}
+			return nil
+		},
+		Wake: func(_ context.Context) (time.Time, bool) {
+			wake := time.Time{}
+			for _, id := range accounts {
+				if w, ok := rt.Queue.NextDeadline(id); ok && (wake.IsZero() || w.Before(wake)) {
+					wake = w
+				}
+			}
+			return wake, !wake.IsZero()
+		},
+		Maintenance: func(ctx context.Context) error {
+			handled, parked := drainDueTasks(ctx, daemonMaintenanceDeps(rt), accounts)
+			if handled > 0 || parked > 0 {
+				rt.Log.Info("daemon: maintenance wake", "handled", handled, "parked", parked)
+			}
+			return nil
+		},
 		Bootstrap: func(ctx context.Context) error {
 			for _, id := range accounts {
 				api, err := rt.APIFor(id)
@@ -170,6 +198,87 @@ func runDaemonMode(ctx context.Context, rt *Runtime, taskType string, o out) err
 		},
 	}
 	return runDaemon(ctx, deps)
+}
+
+// autoliftFeature resolves the constructed autolift feature (the wake-up
+// chain arm) from the registry; nil when the feature is off.
+func autoliftFeature(rt *Runtime) *autolift.Feature {
+	for _, f := range rt.Feats.All() {
+		if f.Name() == "autolift" {
+			if a, ok := f.(*autolift.Feature); ok {
+				return a
+			}
+		}
+	}
+	return nil
+}
+
+// T71 daemon maintenance: between apply cycles the daemon wakes at the
+// nearest queued deadline and drains the DUE tasks (non-zero elapsed
+// Deadline — the autolift server_timer shape). Future and zero-deadline
+// tasks park back untouched; the apply pass stays the daemon's Cycle.
+type maintenanceHandler func(ctx context.Context, accountID string, task queue.Task) error
+
+type maintenanceDeps struct {
+	Queue    queue.Queue
+	Handlers map[queue.TaskKind]maintenanceHandler
+	Stopped  func(ctx context.Context) bool
+	Log      *slog.Logger
+}
+
+// daemonMaintenanceDeps adapts the runtime's handlers onto the maintenance
+// drain: each dispatched task gets a fresh task context (the engine's
+// per-task bootstrap semantics).
+func daemonMaintenanceDeps(rt *Runtime) maintenanceDeps {
+	handlers := make(map[queue.TaskKind]maintenanceHandler, len(rt.Handlers()))
+	for kind, h := range rt.Handlers() {
+		kind, h := kind, h
+		handlers[kind] = func(ctx context.Context, accountID string, task queue.Task) error {
+			tc, err := rt.TaskContext(accountID)
+			if err != nil {
+				return err
+			}
+			return h(ctx, tc, task)
+		}
+	}
+	return maintenanceDeps{Queue: rt.Queue, Handlers: handlers, Stopped: rt.Kill.Tripped, Log: rt.Log}
+}
+
+// drainDueTasks dequeues at most one pass over each account's queued tasks
+// and dispatches the due ones. A failed handler drops the task (logged):
+// the next arm re-seeds the chain. Future/zero-deadline tasks park back for
+// their real deadline. Returns the handled and parked counts.
+func drainDueTasks(ctx context.Context, m maintenanceDeps, accounts []string) (handled, parked int) {
+	for _, id := range accounts {
+		if m.Stopped != nil && m.Stopped(ctx) {
+			return handled, parked
+		}
+		n := m.Queue.Len(id)
+		for k := 0; k < n; k++ {
+			task, ok := m.Queue.Dequeue(ctx, id)
+			if !ok {
+				break
+			}
+			if task.Deadline.IsZero() || task.Deadline.After(time.Now()) {
+				if err := m.Queue.Enqueue(ctx, task); err != nil {
+					m.Log.Warn("daemon: maintenance park failed", "task", task.ID, "err", err)
+				}
+				parked++
+				continue
+			}
+			h, known := m.Handlers[task.Kind]
+			if !known {
+				m.Log.Warn("daemon: maintenance task has no handler; dropped", "kind", task.Kind, "task", task.ID)
+				handled++
+				continue
+			}
+			if err := h(ctx, id, task); err != nil {
+				m.Log.Warn("daemon: maintenance task failed", "account", id, "kind", task.Kind, "task", task.ID, "err", err)
+			}
+			handled++
+		}
+	}
+	return handled, parked
 }
 
 // multiapplyFeature resolves the constructed multiapply feature (the

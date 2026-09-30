@@ -93,13 +93,16 @@ func TestE2E1ApplyHappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	cancel2, done2 := env.runEngine()
-	waitUntil(t, 30*time.Second, "second run re-skips all vacancies", func() bool {
-		// 101 + 104 (applied rows) and 105 (failed row is live for
-		// ApplicationsGetByDedupKeyLive) all land in already_applied.
-		return env.metricValue("apply.skip.already_applied") == 3
+	waitUntil(t, 30*time.Second, "second run re-skips the applied vacancies", func() bool {
+		// T71 owner ruling: only APPLIED rows block the live dedup —
+		// 101 + 104 land in already_applied; the failed 105 is retried.
+		return env.metricValue("apply.skip.already_applied") == 2
 	})
 	env.stopEngine(cancel2, done2)
 
+	// The retried 105 is stopped by the DAY captcha breaker (tripped in
+	// run #1, no provider chain) — no new wire attempt, and the failed row
+	// did not block via dedup: already_applied counted only 101 + 104.
 	if posts := env.hh.applyPostsSnapshot(); len(posts) != 3 {
 		t.Fatalf("second run mutated hh: %d apply posts, want the original 3", len(posts))
 	}
@@ -113,7 +116,7 @@ func TestE2E1ApplyHappyPath(t *testing.T) {
 		t.Fatalf("second run created new applications: %d → %d", appliedBefore, appliedAfter)
 	}
 	if got := env.hh.applyTryCount(vacCaptcha); got != 1 {
-		t.Fatalf("captcha vacancy apply attempts = %d, want 1 (no repeat)", got)
+		t.Fatalf("captcha vacancy apply attempts = %d, want 1 (stopped by the day breaker, not dedup)", got)
 	}
 }
 

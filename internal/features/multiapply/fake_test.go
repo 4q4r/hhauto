@@ -599,6 +599,9 @@ type harness struct {
 	reg     *scheduler.Registry
 	noChain bool             // build the feature without a captcha chain
 	console *console.Surface // T69 console surface under test; nil = silent
+	// noRunner builds the feature with a nil AI runner (the wiring
+	// contradiction: ai_filter=true, scorer unavailable).
+	noRunner bool
 }
 
 func newHarness(t *testing.T, mutate func(*config.Config)) *harness {
@@ -629,12 +632,16 @@ func (h *harness) feature(t *testing.T) *Feature {
 	if h.noChain {
 		chainFor = nil
 	}
+	var runner ai.Runner
+	if !h.noRunner {
+		runner = h.runner
+	}
 	return New(Options{
 		Config:   h.cfg,
 		DB:       h.db,
 		APIFor:   func(string) (hhapi.HHAPI, error) { return h.api, nil },
 		ChainFor: chainFor,
-		Runner:   h.runner,
+		Runner:   runner,
 		ProfileFor: func(context.Context, string) (profile.Profile, error) {
 			return h.profile, nil
 		},
