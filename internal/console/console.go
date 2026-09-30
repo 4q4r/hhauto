@@ -10,7 +10,6 @@
 package console
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -54,7 +53,7 @@ type VacancyLine struct {
 	Dry          bool
 	VacancyTitle string
 	Employer     string
-	Badges       string // labels joined with ", "; empty when the raw carries none
+	Badges       string // labels joined with ", "; empty when the vacancy carries none
 	Area         string
 	Salary       string
 	ResumeTitle  string // store snapshot title, short hash as the fallback
@@ -249,7 +248,7 @@ func (s *Surface) Digest(d DigestLine) {
 func (s *Surface) vacancyLine(accountID, resumeHash string, v hhapi.Vacancy, line VacancyLine) VacancyLine {
 	line.VacancyTitle = v.Name
 	line.Employer = v.EmployerName
-	line.Badges = strings.Join(Badges(v.Raw), ", ")
+	line.Badges = strings.Join(v.Badges, ", ")
 	line.Area = v.Area
 	line.Salary = SalaryText(v.Salary)
 	if resumeHash != "" {
@@ -350,89 +349,6 @@ func shortHash(hash string) string {
 		return hash[:8]
 	}
 	return hash
-}
-
-// badge is one entry of the raw badges payload (both the flat array and
-// the SSR nested {badge: [...]} shape).
-type badge struct {
-	Type string `json:"type"`
-}
-
-// badgeLabels maps the badge types known from the live fixtures onto
-// Russian labels (T69). Unknown types render as-is.
-var badgeLabels = map[string]string{
-	"employer-it-accreditation": "аккредитованный ИТ", // popup shortVacancy.employer.badges (live fixture)
-	"accredited_it_employer":    "аккредитованный ИТ", // JSON-API spelling of the same fact
-	"employer-hh-rating":        "рейтинг hh",         // employer badges (chats-list fixture)
-}
-
-// Badges extracts the badge labels from a vacancy raw payload — data the
-// daemon already holds, no new network calls. Checked shapes: a top-level
-// badges array, its SSR nesting {badge: [...]} and the same two shapes
-// under employer. The SSR search item carries no badges at all
-// (fixture-verified 2026-09-29), so lines rendered from search results
-// show the segment only when a badges-bearing raw is present.
-func Badges(raw json.RawMessage) []string {
-	if len(raw) == 0 {
-		return nil
-	}
-	var doc struct {
-		Badges   json.RawMessage `json:"badges"`
-		Employer struct {
-			Badges json.RawMessage `json:"badges"`
-		} `json:"employer"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return nil
-	}
-	for _, field := range []json.RawMessage{doc.Badges, doc.Employer.Badges} {
-		if labels := badgeList(field); len(labels) > 0 {
-			return labels
-		}
-	}
-	return nil
-}
-
-// badgeList parses one badges field: a flat array first, then the SSR
-// {badge: [...]} nesting.
-func badgeList(field json.RawMessage) []string {
-	if len(field) == 0 {
-		return nil
-	}
-	var flat []badge
-	if err := json.Unmarshal(field, &flat); err == nil {
-		return labelBadges(flat)
-	}
-	var nested struct {
-		Badge []badge `json:"badge"`
-	}
-	if err := json.Unmarshal(field, &nested); err == nil {
-		return labelBadges(nested.Badge)
-	}
-	return nil
-}
-
-// labelBadges maps badge types onto labels; unknown types pass through
-// as-is.
-func labelBadges(list []badge) []string {
-	if len(list) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(list))
-	for _, b := range list {
-		if b.Type == "" {
-			continue
-		}
-		if label, ok := badgeLabels[b.Type]; ok {
-			out = append(out, label)
-			continue
-		}
-		out = append(out, b.Type)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 // SalaryText renders the compensation segment: «150000–250000 RUR»,

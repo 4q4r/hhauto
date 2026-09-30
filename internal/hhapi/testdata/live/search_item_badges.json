@@ -1,0 +1,333 @@
+{
+ "@workSchedule": "remote",
+ "@showContact": false,
+ "@responseLetterRequired": true,
+ "vacancyId": 712345678,
+ "name": "DevOps-инженер",
+ "company": {
+  "@showSimilarVacancies": true,
+  "@trusted": true,
+  "@category": "COMPANY",
+  "@countryId": 1,
+  "@employerWithSpecificCountryLaws": false,
+  "@state": "APPROVED",
+  "id": 100200300,
+  "name": "ИТ-Компания",
+  "visibleName": "ИТ-Компания",
+  "logos": {
+   "logo": [
+    {
+     "@type": "ORIGINAL",
+     "@url": "/employer-logo-round/0.png"
+    },
+    {
+     "@type": "employerPage",
+     "@url": "/employer-logo-round/0.png"
+    },
+    {
+     "@type": "searchResultsPage",
+     "@url": "/employer-logo-round/0.png"
+    },
+    {
+     "@type": "small",
+     "@url": "/employer-logo-round/0.png"
+    },
+    {
+     "@type": "vacancyPage",
+     "@url": "/employer-logo-round/0.png"
+    },
+    {
+     "@type": "medium",
+     "@url": "/employer-logo-round/0.png"
+    }
+   ],
+   "@showInSearch": true
+  },
+  "badges": {
+   "badge": [
+    {
+     "type": "employer-hh-rating",
+     "description": "Топ-200 в Рейтинге работодателей России (средние компании)",
+     "url": "https://rating.hh.ru/history/rating2025",
+     "position": "112",
+     "year": 2025
+    },
+    {
+     "type": "employer-it-accreditation",
+     "description": "Работодатель указал, что аккредитован как ИТ-компания",
+     "url": "https://feedback.hh.ru/knowledge-base/article/00038?search=a072cc087d3a0544c6f4ff80394005d5"
+    }
+   ]
+  },
+  "companySiteUrl": "https://example.com",
+  "accreditedITEmployer": true,
+  "employerOnAdditionalCheck": false,
+  "employerReviews": {
+   "totalRating": "4.4",
+   "reviewsCount": 156
+  }
+ },
+ "compensation": {
+  "noCompensation": {}
+ },
+ "publicationTime": {
+  "@timestamp": 1790692242,
+  "$": "2026-09-29T17:30:42.186+03:00"
+ },
+ "area": {
+  "@id": 1,
+  "name": "Москва",
+  "path": ".113.232.1."
+ },
+ "acceptTemporary": true,
+ "address": {
+  "@id": 0,
+  "@disabled": false,
+  "@wrong": false,
+  "city": "Москва",
+  "displayName": "Москва"
+ },
+ "template": "makeup:0",
+ "creationSite": "hh.ru",
+ "creationSiteId": 0,
+ "displayHost": "hh.ru",
+ "lastChangeTime": {
+  "@timestamp": 1790692372,
+  "$": "2026-09-29T17:32:52.436+03:00"
+ },
+ "creationTime": "2026-09-29T17:30:42.186+03:00",
+ "canBeShared": true,
+ "employerManager": {
+  "latestActivity": "online"
+ },
+ "inboxPossibility": true,
+ "chatWritePossibility": "ENABLED_AFTER_INVITATION",
+ "notify": false,
+ "links": {
+  "desktop": "https://hh.ru/vacancy/712345678",
+  "mobile": "https://m.hh.ru/vacancy/712345678"
+ },
+ "acceptIncompleteResumes": false,
+ "driverLicenseTypes": [
+  {}
+ ],
+ "languages": [
+  {}
+ ],
+ "workingDays": [
+  {}
+ ],
+ "workingTimeIntervals": [
+  {}
+ ],
+ "workingTimeModes": [
+  {}
+ ],
+ "vacancyProperties": {
+  "properties": [
+   {
+    "property": [
+     {
+      "id": 709533501,
+      "propertyType": "HH_STANDARD",
+      "defining": true,
+      "classifying": true,
+      "bundle": "HH",
+      "propertyWeight": 400,
+      "parameters": [
+       {
+        "parameter": [
+         {
+          "key": "packageName",
+          "value": "VP"
+         },
+         {
+          "key": "serviceId",
+          "value": "65240550"
+         }
+        ]
+       }
+      ],
+      "startTimeIso": "2026-09-29T17:30:42.186+03:00",
+      "endTimeIso": "2026-10-29T17:30:42.186+03:00"
+     },
+     {
+      "id": 709533500,
+      "propertyType": "HH_RESUME_GIFTS",
+      "bundle": "HH",
+      "propertyWeight": 400,
+      "parameters": [
+       {
+        "parameter": [
+         {
+          "key": "giftsCount",
+          "value": "15"
+         },
+         {
+          "key": "packageName",
+          "value": "VP"
+         },
+         {
+          "key": "serviceId",
+          "value": "65240550"
+         }
+        ]
+       }
+      ],
+      "startTimeIso": "2026-09-29T17:30:42.186+03:00",
+      "endTimeIso": "2026-10-29T17:30:42.186+03:00"
+     },
+     {
+      "id": 709533502,
+      "propertyType": "HH_SEARCH_RESULTS_NORMAL_POSITION",
+      "bundle": "HH",
+      "propertyWeight": 400,
+      "parameters": [
+       {
+        "parameter": [
+         {
+          "key": "packageName",
+          "value": "VP"
+         },
+         {
+          "key": "serviceId",
+          "value": "65240550"
+         }
+        ]
+       }
+      ],
+      "startTimeIso": "2026-09-29T17:30:42.186+03:00",
+      "endTimeIso": "2026-10-29T17:30:42.186+03:00"
+     }
+    ]
+   }
+  ],
+  "calculatedStates": {
+   "HH": {
+    "advertising": false,
+    "anonymous": false,
+    "filteredPropertyNames": [
+     "HH_STANDARD",
+     "HH_RESUME_GIFTS",
+     "HH_SEARCH_RESULTS_NORMAL_POSITION"
+    ],
+    "free": false,
+    "inPlatformCommunication": false,
+    "optimum": false,
+    "optionPremium": false,
+    "payForPerformance": false,
+    "premium": false,
+    "standard": true,
+    "standardPlus": false,
+    "translationKeys": [
+     "employer.VacancyCreate.PublicationType.STANDARD"
+    ],
+    "virtualRecruiter": false,
+    "translation": "Стандарт"
+   }
+  }
+ },
+ "vacancyPlatforms": [
+  "HH"
+ ],
+ "professionalRoleIds": [
+  {
+   "professionalRoleId": [
+    160
+   ]
+  }
+ ],
+ "workExperience": "noExperience",
+ "employment": {
+  "@type": "FULL"
+ },
+ "closedForApplicants": false,
+ "userTestPresent": false,
+ "employmentForm": "FULL",
+ "flyInFlyOutDurations": [
+  {}
+ ],
+ "internship": false,
+ "nightShifts": false,
+ "workFormats": [
+  {
+   "workFormatsElement": [
+    "ON_SITE",
+    "REMOTE",
+    "HYBRID"
+   ]
+  }
+ ],
+ "workScheduleByDays": [
+  {
+   "workScheduleByDaysElement": [
+    "FIVE_ON_TWO_OFF"
+   ]
+  }
+ ],
+ "workingHours": [
+  {
+   "workingHoursElement": [
+    "HOURS_8"
+   ]
+  }
+ ],
+ "experimentalModes": [
+  {
+   "experimentalMode": [
+    "newContractFields",
+    "newEmploymentTerms",
+    "usingNewInclusivenessFields",
+    "newCompensationModes"
+   ]
+  }
+ ],
+ "acceptLaborContract": true,
+ "civilLawContracts": [
+  {
+   "civilLawContractsElement": [
+    "SELF_EMPLOYED",
+    "INDIVIDUAL_ENTREPRENEUR",
+    "INDIVIDUAL_PERSON"
+   ]
+  }
+ ],
+ "autoResponse": {
+  "acceptAutoResponse": false
+ },
+ "inclusivenessTypes": [
+  {}
+ ],
+ "contactInfo": null,
+ "branding": {
+  "type": "MAKEUP"
+ },
+ "userLabels": [],
+ "snippet": {
+  "req": "Опыт автоматизации инфраструктуры и внимательность к деталям.",
+  "resp": "Автоматизация сборки и доставки приложений, поддержка пайплайнов.",
+  "cond": "Работа в стабильной и динамично развивающейся ИТ- компании ИТ-Компания. График работы с 9:00 до 18:00 (гибкое начало рабочего...",
+  "skill": "Bitbucket, Jenkins, Kubernetes, Docker, Apache Maven, Nexus, PostgreSQL, Nginx",
+  "desc": null
+ },
+ "responsesCount": 10,
+ "totalResponsesCount": 700,
+ "online_users_count": 129,
+ "show_question_input": true,
+ "allowChatWithManager": false,
+ "tags": [
+  {
+   "id": "vacancy-serp__vacancy-work-experience-noExperience",
+   "text": "Без опыта",
+   "icon": "BriefcaseOutlinedSize16"
+  },
+  {
+   "id": "vacancy-label-work-schedule-remote",
+   "text": "Можно удалённо"
+  }
+ ],
+ "labels": [],
+ "extraLabels": [],
+ "searchRid": "t70fixturescrubbed000000000000000000",
+ "positionInRequest": 1
+}
