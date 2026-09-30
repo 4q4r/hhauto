@@ -118,6 +118,8 @@ type Runtime struct {
 	schedules []schedBinding
 	handlers  map[queue.TaskKind]engine.TaskHandler
 
+	console *console.Surface // T69/T76: the one process console surface
+
 	apis    map[string]hhapi.HHAPI
 	apisOne sync.Once
 	apisErr error
@@ -354,6 +356,7 @@ func (rt *Runtime) buildFeatures() error {
 	if err != nil {
 		return err
 	}
+	rt.console = surf
 	lift := autolift.New(autolift.Options{
 		Config: *cfg, DB: rt.DB, APIFor: apiFor, ChainFor: chainFor,
 		Pacer: rt.Pacer, Log: rt.Log, Queue: rt.Queue, Console: surf,

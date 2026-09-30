@@ -4,8 +4,10 @@ package cli
 // deliberately NOT the scheduler: one bootstrap check → one apply pass →
 // persist state → sleep EXACTLY the interval from the cycle completion →
 // repeat, until the kill switch (STOP file / signal / Stop()) or a lost
-// session. The state file makes restarts continue the cycle instead of
-// re-running immediately.
+// session. T76: the first pass runs immediately at startup — the
+// persisted cadence never gates it, the state file only carries the
+// counters and the stamp re-anchors from each actual pass (the
+// applied-dedup protects against repeats).
 //
 // Exit contract: nil = clean stop (exit 0); *ExitError{2} = the session
 // died (403 on bootstrap): the account is marked logged_out, a review item
@@ -22,6 +24,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"hhauto/internal/console"
 	"hhauto/internal/engine"
 	"hhauto/internal/hhapi"
 )
@@ -98,6 +101,10 @@ type daemonDeps struct {
 	Arm  func(ctx context.Context) error
 	Kill engine.KillSwitch
 	Log  *slog.Logger
+	// Console renders the lifecycle lines (T76: the russian start banner,
+	// the pass-completion line, the pre-sleep line). nil = silent (unit
+	// tests without a surface).
+	Console *console.Surface
 	// StatePath overrides the default daemonStatePath (tests).
 	StatePath string
 	Now       func() time.Time
@@ -126,12 +133,15 @@ func runDaemon(ctx context.Context, d daemonDeps) error {
 		statePath = daemonStatePath(d.DataDir, d.TaskType)
 	}
 	state := loadDaemonState(statePath)
-	d.Log.Info("daemon: started", "task_type", d.TaskType, "interval", d.Interval,
-		"completed_cycles", state.Cycles, "last_cycle", state.LastCycleAt.Format(time.RFC3339))
+	d.Console.DaemonStart()
 
+	// T76: the first pass runs immediately — the persisted cadence never
+	// gates the startup pass; the cycle stamp re-anchors from it (the
+	// applied-dedup protects against repeats).
+	first := true
 	for {
 		if d.Kill.Tripped(ctx) {
-			d.Log.Info("daemon: stop requested, exiting", "cycles", state.Cycles)
+			d.Log.Info("daemon: запрошена остановка, выхожу", "cycles", state.Cycles)
 			return nil
 		}
 		// T71: keep the maintenance chain armed (dedup-idempotent — a no-op
@@ -143,15 +153,16 @@ func runDaemon(ctx context.Context, d daemonDeps) error {
 			}
 		}
 		next := state.LastCycleAt.Add(d.Interval)
-		if d.Now().Before(next) {
-			// Restart contract + T71: a persisted recent cycle sleeps out
-			// its remainder, waking early for a nearer maintenance deadline.
+		if !first && d.Now().Before(next) {
+			// T71: between passes the daemon sleeps out the remainder,
+			// waking early for a nearer maintenance deadline.
 			if !d.sleepRemainder(ctx, next) {
-				d.Log.Info("daemon: stop requested during sleep", "cycles", state.Cycles)
+				d.Log.Info("daemon: запрошена остановка во время сна", "cycles", state.Cycles)
 				return nil
 			}
 			continue
 		}
+		first = false
 		if err := d.applyPass(ctx, &state, statePath); err != nil {
 			return err
 		}
@@ -165,22 +176,21 @@ func (d daemonDeps) applyPass(ctx context.Context, state *daemonState, statePath
 	if d.Bootstrap != nil {
 		if err := d.Bootstrap(ctx); err != nil {
 			if errors.Is(err, hhapi.ErrLoggedOut) {
-				d.Log.Error("daemon: session lost; exiting for cookie rotation", "err", err)
+				d.Log.Error("daemon: сессия слетела; выхожу для ротации кук", "err", err)
 				return &ExitError{Code: 2, Err: fmt.Errorf("daemon: сессия слетела (403): %w", err)}
 			}
-			d.Log.Warn("daemon: bootstrap failed; proceeding to the cycle", "err", err)
+			d.Log.Warn("daemon: bootstrap не удался; продолжаю цикл", "err", err)
 		}
 	}
 	if err := d.Cycle(ctx); err != nil {
-		d.Log.Warn("daemon: cycle finished with failures; the next cycle retries", "err", err)
+		d.Log.Warn("daemon: цикл завершился с ошибками; повтор на следующем проходе", "err", err)
 	}
 	state.LastCycleAt = d.Now()
 	state.Cycles++
 	if err := saveDaemonState(statePath, *state); err != nil {
 		d.Log.Error("daemon: persist state", "path", statePath, "err", err)
 	}
-	d.Log.Info("daemon: cycle done; sleeping", "cycles", state.Cycles,
-		"next", state.LastCycleAt.Add(d.Interval).Format(time.RFC3339))
+	d.Console.CycleDone()
 	return nil
 }
 
@@ -190,11 +200,14 @@ func (d daemonDeps) applyPass(ctx context.Context, state *daemonState, statePath
 // pass. Reports whether the loop continues (false = stop requested).
 func (d daemonDeps) sleepRemainder(ctx context.Context, next time.Time) bool {
 	wake := next
+	maintenance := false
 	if d.Wake != nil {
 		if w, ok := d.Wake(ctx); ok && w.Before(next) {
 			wake = w
+			maintenance = true
 		}
 	}
+	d.Console.Sleeping(wake, maintenance)
 	if !daemonSleep(ctx, d, wake) {
 		return false
 	}
