@@ -130,6 +130,10 @@ type ApplyRequest struct {
 	VacancyID  int64
 	ResumeHash string
 	Letter     string
+	// Test (T80) carries the solved vacancy test: when set, the apply POST
+	// includes the test submission fields (the same /applicant/vacancy_response/popup
+	// endpoint answers test-gated vacancies).
+	Test *ApplyTest
 }
 
 // NegotiationRef is the handle returned right after an apply.
@@ -252,6 +256,10 @@ type HHAPI interface {
 	EmployerCard(ctx context.Context, id int64) (*Employer, error)
 	EmployerRating(ctx context.Context, id int64) (*EmployerRating, error)
 	ApplyPopup(ctx context.Context, vacancyID int64) (*ApplyMeta, error)
+	// VacancyTests (T80) reads the obligatory test attached to a vacancy
+	// from the response page state. ErrVacancyTestUnavailable (or a captcha
+	// StatusError) means the test cannot be solved — callers skip.
+	VacancyTests(ctx context.Context, vacancyID int64) (*VacancyTest, error)
 	Apply(ctx context.Context, req ApplyRequest) (NegotiationRef, error)
 	Negotiations(ctx context.Context, page int) ([]Negotiation, error)
 	ListChats(ctx context.Context, page int) ([]Chat, error)
