@@ -23,6 +23,7 @@ import (
 	"hhauto/internal/config"
 	"hhauto/internal/console"
 	"hhauto/internal/features/autoclone"
+	"hhauto/internal/features/relevance"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/profile"
 	"hhauto/internal/store"
@@ -116,6 +117,10 @@ type passStats struct {
 	letters int
 	errors  int
 	skips   map[string]int
+	// gray is the current vacancy's gray-band verdict (T75): set when the
+	// gray-band policy routed a needs_human verdict to apply, consumed by
+	// the apply-record points (console note + ledger origin flag).
+	gray *relevance.Verdict
 }
 
 func newPassStats() *passStats {

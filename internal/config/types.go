@@ -567,6 +567,17 @@ const (
 	CoverLetterModeOff      = "off"
 )
 
+// Gray-band policy vocabulary for [features.multiapply].gray_band (T75
+// owner decision): the route for a gray-band needs_human verdict of the
+// AI scorer. apply responds anyway (the default — a live run must not
+// stall on borderline vacancies), needs_human keeps the parking skip,
+// skip drops the vacancy silently.
+const (
+	GrayBandApply      = "apply"
+	GrayBandNeedsHuman = "needs_human"
+	GrayBandSkip       = "skip"
+)
+
 // MultiApply configures the apply pipeline.
 type MultiApply struct {
 	Enabled            bool `toml:"enabled"`
@@ -580,6 +591,12 @@ type MultiApply struct {
 	// outcomes route to human review, never to the LLM), "llm" keeps the
 	// LLM-only pipeline and forbids [ai.jev]. Unset behaves as "llm".
 	Classifier string `toml:"classifier"`
+	// GrayBand (T75) routes a gray-band needs_human verdict of the AI
+	// scorer: apply responds anyway (the default), needs_human parks the
+	// vacancy in review as before, skip drops it silently. Suspected
+	// injection and red-flag verdicts always park regardless of this
+	// setting.
+	GrayBand string `toml:"gray_band"`
 	// CoverLetter (T60) configures the outgoing cover letter. A disabled
 	// section is inert: the per-run letter_mode/letter_template behavior is
 	// unchanged.

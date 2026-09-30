@@ -125,6 +125,7 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # exclude_agencies_default = true
 # prioritize_online_hr = true
 # dedup_native_autoresponse = true
+# gray_band = "apply"                   # T75: apply|needs_human|skip — что делать с needs_human/band=gray (критичные причины — всегда needs_human)
 [features.autoclone]                    # T26: автоклонирование резюме (hh не отдаёт parentResumeId — lineage хранится локально)
 # enabled = false
 # max_clones_per_resume = 2             # прямые клоны на одно резюме

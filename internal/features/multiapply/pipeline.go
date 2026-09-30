@@ -60,7 +60,9 @@ func (f *Feature) processVacancy(ctx context.Context, runID string, run config.R
 
 	// F6: AI relevance (threshold bypassed for whitelisted employers
 	// listing "F6_threshold"; needs_human/injection still gate).
-	if skip := f.aiFilterSkip(ctx, runID, run, accountID, prof, resumeHash, v, whitelisted, bypass); skip != "" {
+	skip, gray := f.aiFilterSkip(ctx, runID, run, accountID, prof, resumeHash, v, whitelisted, bypass)
+	stats.gray = gray // fresh per vacancy: nil unless a gray-band apply
+	if skip != "" {
 		return "", skip
 	}
 
@@ -239,7 +241,7 @@ func (f *Feature) createApplication(ctx context.Context, runID, accountID, resum
 	switch status {
 	case "applied":
 		stats.applied++
-		f.console.Applied(false, accountID, resumeHash, v)
+		f.console.Applied(false, accountID, resumeHash, v, grayNote(stats))
 	case "failed":
 		stats.errors++
 		f.console.Error(accountID, v, failReason)
@@ -262,6 +264,12 @@ func (f *Feature) createApplication(ctx context.Context, runID, accountID, resum
 		DedupKey: appKey,
 		Status:   status,
 		Letter:   strPtr(letter),
+	}
+	if stats.gray != nil {
+		// T75: the ledger row marks a gray-band origin so the owner can
+		// tell which responses came from the borderline zone. The flag
+		// survives the dry_run→applied upgrade (COALESCE keeps it).
+		app.FailReason = strPtr(grayBandFlag)
 	}
 	if status == "applied" {
 		t := f.opt.Now()
@@ -715,18 +723,21 @@ func (f *Feature) prefilter(ctx context.Context, runID string, run config.Run, a
 }
 
 // aiFilterSkip is gate F6: AI relevance with the whitelisted threshold
-// bypass; needs_human and injection verdicts still gate.
+// bypass; needs_human and injection verdicts still gate. A gray-band
+// verdict the gray-band policy routed to apply (T75) returns the verdict
+// as the second value so the apply-record points can mark the origin.
 func (f *Feature) aiFilterSkip(ctx context.Context, runID string, run config.Run, accountID string,
-	prof profile.Profile, resumeHash string, v hhapi.Vacancy, whitelisted bool, bypass map[string]bool) string {
+	prof profile.Profile, resumeHash string, v hhapi.Vacancy, whitelisted bool, bypass map[string]bool,
+) (string, *relevance.Verdict) {
 	// F6: AI relevance (threshold bypassed for whitelisted employers
 	// listing "F6_threshold"; needs_human/injection still gate).
 	// T71 fail-closed: ai_filter=true with an unavailable runner skips the
 	// vacancy with a reason — an automation tool never applies unscored.
 	if !f.opt.Config.Features.MultiApply.AIFilter {
-		return ""
+		return "", nil
 	}
 	if f.opt.Runner == nil {
-		return "ai_unavailable"
+		return "ai_unavailable", nil
 	}
 	threshold := run.AIFilterOverrides.MinScore
 	if threshold <= 0 {
@@ -743,16 +754,20 @@ func (f *Feature) aiFilterSkip(ctx context.Context, runID string, run config.Run
 		TargetRoles:       relevance.RolesFromFacts(prof),
 		ExtraInstructions: run.AIFilterOverrides.ExtraInstructions,
 	}
-	vd, pass, reason := relevance.New(f.opt.Runner, f.opt.DB, accountID, runID, prof, rules, f.log).
+	vd, pass, reason := relevance.New(f.opt.Runner, f.opt.DB, accountID, runID, prof, rules, f.log,
+		f.opt.Config.Features.MultiApply.GrayBand).
 		Pass(ctx, v, resumeHash, threshold)
 	// T69: the classification verdict line (score and apply/skip
 	// outcome) — off by default, the [console].verdicts toggle turns
 	// it on as an alternative to --log-level debug.
 	f.console.Verdict(v, vd.Score, threshold, pass, reason)
-	if !pass {
-		return reason
+	if reason == relevance.GrayBandReason {
+		return "", &vd
 	}
-	return ""
+	if !pass {
+		return reason, nil
+	}
+	return "", nil
 }
 
 // quotaCheck is gate F7: run, account and per-employer daily caps. A stop
@@ -879,9 +894,9 @@ func (f *Feature) dryRunApply(ctx context.Context, runID string, accountID strin
 	// the structured record stays visible at debug level (one banner per
 	// event — T52).
 	stats.applied++
-	f.console.Applied(true, accountID, resumeHash, v)
+	f.console.Applied(true, accountID, resumeHash, v, grayNote(stats))
 	f.log.Debug("multiapply: dry-run apply", "account", accountID, "vacancy", v.ID, "run", runID)
-	if err := f.opt.DB.ApplicationsCreate(ctx, &store.Application{
+	app := store.Application{
 		AccountID: accountID, RunID: runID, HhResumeID: resumeHash,
 		VacancyID: v.ID, EmployerID: v.EmployerID,
 		DedupKey: featurekit.DedupKey(accountID, resumeHash, v.ID),
@@ -890,11 +905,29 @@ func (f *Feature) dryRunApply(ctx context.Context, runID string, accountID strin
 		// The feature clock stamps the survey time: the dry-run quota view
 		// counts today's survey rows by created_at (T68).
 		CreatedAt: f.opt.Now(),
-	}); err != nil {
+	}
+	if stats.gray != nil {
+		// T75: the survey row carries the gray-band origin flag like a
+		// live apply.
+		app.FailReason = strPtr(grayBandFlag)
+	}
+	if err := f.opt.DB.ApplicationsCreate(ctx, &app); err != nil {
 		f.log.Error("multiapply: dry-run application record failed", "err", err)
 	}
 	f.incr(ctx, "apply.dry_run")
 	return true
+}
+
+// grayBandFlag is the applications.fail_reason marker (T75): the apply came
+// from a gray-band verdict the gray-band policy routed to apply.
+const grayBandFlag = "gray_band"
+
+// grayNote renders the applied-line gray-band marker: "gray 50".
+func grayNote(stats *passStats) string {
+	if stats.gray == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s %d", stats.gray.Band, stats.gray.Score)
 }
 
 // sendWithCaptcha sends the apply once and, on a captcha challenge, honors

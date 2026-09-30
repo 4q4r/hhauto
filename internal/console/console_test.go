@@ -51,7 +51,7 @@ func vacancy(badgesRaw string) hhapi.Vacancy {
 func TestAppliedLineSegments(t *testing.T) {
 	s, buf := newTestSurface(t, false, testCfg(nil))
 	s.Applied(false, "acc1", "fe31e03eff110666c30039ed1f4f5a59327851",
-		vacancy(`{"badges":{"badge":[{"type":"employer-it-accreditation"}]}}`))
+		vacancy(`{"badges":{"badge":[{"type":"employer-it-accreditation"}]}}`), "")
 	out := buf.String()
 	for _, want := range []string{
 		"✓ Откликнулся:", "«Backend-разработчик (Go)»", "Corp LLC",
@@ -66,7 +66,7 @@ func TestAppliedLineSegments(t *testing.T) {
 // Empty segments (badges, area, salary) disappear silently.
 func TestAppliedLineEmptySegmentsVanish(t *testing.T) {
 	s, buf := newTestSurface(t, false, testCfg(nil))
-	s.Applied(false, "acc1", "hash1", hhapi.Vacancy{ID: 1, Name: "Go Dev", EmployerName: "Corp LLC"})
+	s.Applied(false, "acc1", "hash1", hhapi.Vacancy{ID: 1, Name: "Go Dev", EmployerName: "Corp LLC"}, "")
 	out := buf.String()
 	if strings.Contains(out, "[]") || strings.Contains(out, " ·  ") || strings.Contains(out, "резюме «»") {
 		t.Fatalf("empty segments leaked: %q", out)
@@ -76,10 +76,19 @@ func TestAppliedLineEmptySegmentsVanish(t *testing.T) {
 	}
 }
 
+// T75: the gray-band origin renders as "(gray N)" right after the verb.
+func TestAppliedLineGrayNote(t *testing.T) {
+	s, buf := newTestSurface(t, false, testCfg(nil))
+	s.Applied(false, "acc1", "hash1", hhapi.Vacancy{ID: 1, Name: "Go Dev", EmployerName: "Corp LLC"}, "gray 50")
+	if !strings.Contains(buf.String(), "✓ Откликнулся (gray 50): «Go Dev» — Corp LLC") {
+		t.Fatalf("gray note missing: %q", buf.String())
+	}
+}
+
 // Dry-run flips the verb to «Откликнулся бы».
 func TestAppliedDryRunVerb(t *testing.T) {
 	s, buf := newTestSurface(t, false, testCfg(nil))
-	s.Applied(true, "acc1", "hash1", hhapi.Vacancy{ID: 1, Name: "Go Dev", EmployerName: "Corp LLC"})
+	s.Applied(true, "acc1", "hash1", hhapi.Vacancy{ID: 1, Name: "Go Dev", EmployerName: "Corp LLC"}, "")
 	if !strings.Contains(buf.String(), "✓ Откликнулся бы: «Go Dev»") {
 		t.Fatalf("dry-run verb missing: %q", buf.String())
 	}
@@ -137,7 +146,7 @@ func TestTemplateOverride(t *testing.T) {
 	s, buf := newTestSurface(t, false, testCfg(func(c *config.Console) {
 		c.TemplateApplied = `MROW {{.VacancyTitle}} @ {{.Employer}}{{if .Badges}} b:{{.Badges}}{{end}}`
 	}))
-	s.Applied(false, "acc1", "hash1", vacancy(`{"badges":[{"type":"employer-hh-rating"}]}`))
+	s.Applied(false, "acc1", "hash1", vacancy(`{"badges":[{"type":"employer-hh-rating"}]}`), "")
 	want := "MROW Backend-разработчик (Go) @ Corp LLC b:рейтинг hh\n"
 	if buf.String() != want {
 		t.Fatalf("override render = %q, want %q", buf.String(), want)
@@ -256,7 +265,7 @@ func TestTogglesOff(t *testing.T) {
 		c.Applied, c.Errors, c.Letters, c.Lift = &off, &off, &off, &off
 	}))
 	v := hhapi.Vacancy{ID: 1, Name: "Go Dev", EmployerName: "Corp LLC"}
-	s.Applied(false, "acc1", "hash1", v)
+	s.Applied(false, "acc1", "hash1", v, "")
 	s.Error("acc1", v, "boom")
 	s.Letter("acc1", v)
 	s.Lift("acc1", "hash1", "t", time.Now())
@@ -269,7 +278,7 @@ func TestTogglesOff(t *testing.T) {
 func TestNilSurfaceSilent(_ *testing.T) {
 	var s *Surface
 	v := hhapi.Vacancy{ID: 1, Name: "Go Dev", EmployerName: "Corp LLC"}
-	s.Applied(false, "acc1", "hash1", v)
+	s.Applied(false, "acc1", "hash1", v, "")
 	s.Skip("acc1", "ai_needs_human", v)
 	s.Error("acc1", v, "boom")
 	s.Letter("acc1", v)

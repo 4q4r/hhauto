@@ -108,6 +108,11 @@ func validateMultiApply(c *Config) error {
 	default:
 		return fmt.Errorf("features.multiapply.classifier %q: must be one of jev | llm", c.Features.MultiApply.Classifier)
 	}
+	switch c.Features.MultiApply.GrayBand {
+	case "", GrayBandApply, GrayBandNeedsHuman, GrayBandSkip:
+	default:
+		return fmt.Errorf("features.multiapply.gray_band %q: must be one of apply | needs_human | skip", c.Features.MultiApply.GrayBand)
+	}
 	jevOn := c.AI.Jev.Enabled
 	switch {
 	case c.Features.MultiApply.Classifier == ClassifierJev && !jevOn:
