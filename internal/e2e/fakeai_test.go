@@ -25,7 +25,8 @@ const e2eModel = "e2e-fake-model"
 type fakeAI struct {
 	srv   *httptest.Server
 	mu    sync.Mutex
-	calls []string // task names, in call order
+	calls []string         // task names, in call order
+	vacs  []map[string]any // vacancy blocks seen by vacancy_scoring (T81)
 }
 
 func newFakeAI(t *testing.T) *fakeAI {
@@ -39,6 +40,16 @@ func newFakeAI(t *testing.T) *fakeAI {
 }
 
 func (f *fakeAI) URL() string { return f.srv.URL }
+
+// scoringVacancyInputs returns the vacancy blocks the scorer received, in
+// call order (T81: the fake must be able to prove what the model saw).
+func (f *fakeAI) scoringVacancyInputs() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]map[string]any, len(f.vacs))
+	copy(out, f.vacs)
+	return out
+}
 
 func (f *fakeAI) callCount(task string) int {
 	f.mu.Lock()
@@ -89,9 +100,15 @@ func (f *fakeAI) serveChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	verdict := f.verdictFor(task, extractInputJSON(user))
+	inputMap := extractInputJSON(user)
 
 	f.mu.Lock()
 	f.calls = append(f.calls, task)
+	if task == "vacancy_scoring" {
+		if vac, _ := inputMap["vacancy"].(map[string]any); vac != nil {
+			f.vacs = append(f.vacs, vac)
+		}
+	}
 	f.mu.Unlock()
 
 	content, err := json.Marshal(verdict)

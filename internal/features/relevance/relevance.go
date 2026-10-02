@@ -108,9 +108,14 @@ func (f *Filter) Pass(ctx context.Context, v hhapi.Vacancy, resumeID string, thr
 		return cached, pass, reason
 	}
 
+	// T81: Raw must not ride — the raw search item duplicates the typed
+	// snippet fields (and drags decorative payload into the model) for the
+	// same reason the cover-letter input strips it.
+	in := v
+	in.Raw = nil
 	raw, _, err := f.runner.Run(ctx, f.accountID, "vacancy", strconv.FormatInt(v.ID, 10), f.runID,
 		ai.TaskVacancyScoring, scoringInput{
-			Vacancy:      v,
+			Vacancy:      in,
 			ResumeDigest: f.prof.ResumeDigest,
 			ProfileText:  f.prof.ProfileText,
 			Facts:        f.prof.Facts,
@@ -219,10 +224,11 @@ func (f *Filter) enforceNeedsHumanPolicy(v *Verdict, vac hhapi.Vacancy) {
 }
 
 // cacheKey namespaces the verdict cache: policy version + vacancy_id +
-// resume_id. The version (T78) orphans pre-T78 entries: the flooded v2
-// night would otherwise route needs_human from cache forever
-// (feature_state has no TTL) instead of being re-scored under v3.
-const verdictCacheVer = "v3"
+// resume_id. The version (T78, T81) orphans entries scored under an older
+// input contract — the flooded v2 night, then the snippet-less verdicts —
+// which would otherwise route from cache forever (feature_state has no TTL)
+// instead of being re-scored under the current prompt.
+const verdictCacheVer = "v4"
 
 func cacheKey(vacancyID int64, resumeID string) string {
 	return verdictCacheVer + ":" + strconv.FormatInt(vacancyID, 10) + ":" + resumeID
