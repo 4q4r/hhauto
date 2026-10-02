@@ -51,7 +51,11 @@ const (
 	// hh.ru site host; overridable via config like every endpoint.
 	epResumeVisibilityHide = "resume_visibility_hide" // POST /profile/shards/resume/visibility/hide
 	epResumeVisibilityShow = "resume_visibility_show" // POST /profile/shards/resume/visibility/show
-	epResumeDelete         = "resume_delete"          // POST /profile/shards/resume/delete
+	epResumeDelete         = "resume_delete"          // POST resume-profile-front /profile/shards/resume/delete (T47: the site-host twin is edge-faked)
+	// T47 resume creation: POST resume-profile-front /profile/shards/resume/create
+	// (live-verified 2026-09-28 — the ONLY live create route; see
+	// internal/hhapi/resume_create.go).
+	epResumeCreate = "resume_create"
 	// T56 experience delete (UI-captured live 2026-09-29): the editor's
 	// "Удалить" on /profile/edit/experience/{id} replaces the lineage
 	// experience pool — ids missing from the array are deleted. Default

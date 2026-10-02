@@ -427,8 +427,8 @@ func acceptsAutoResponse(raw json.RawMessage) (accepts, found bool) {
 }
 
 func newResumeCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "resume", Short: "Resume operations (list | lift | improve | sync-lineage)"}
-	cmd.AddCommand(newResumeListCmd(), newResumeLiftCmd(), newResumeImproveCmd(), newResumeLineageSyncCmd())
+	cmd := &cobra.Command{Use: "resume", Short: "Resume operations (list | lift | improve | create | sync-lineage)"}
+	cmd.AddCommand(newResumeListCmd(), newResumeLiftCmd(), newResumeImproveCmd(), newResumeCreateCmd(), newResumeLineageSyncCmd())
 	return cmd
 }
 
@@ -528,6 +528,109 @@ func syncLineageEdges(ctx context.Context, db *store.DB, accountID string,
 		}
 	}
 	return registered, tracked, conflicts, nil
+}
+
+// newResumeCreateCmd builds `hhauto resume create` (T47): creates a fresh
+// resume through the live create endpoint and verifies it in the shard.
+// hh accepts content only through the wizard, so a --title request is
+// forwarded but the verified shell starts untitled — the command says so
+// instead of pretending the title landed.
+func newResumeCreateCmd() *cobra.Command {
+	var (
+		title   string
+		account string
+	)
+	cmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create a new resume (empty shell; title/roles are filled later through the wizard)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			opts := buildOpts()
+			opts.Account = account
+			ctx := cmd.Context()
+			rt, err := Build(ctx, opts)
+			if err != nil {
+				return exitErr("wiring: %v", err)
+			}
+			defer func() { _ = rt.Close() }() // command teardown
+			target, err := resolveCreateAccount(rt, account)
+			if err != nil {
+				return exitErr("%v", err)
+			}
+			api, err := rt.APIFor(target)
+			if err != nil {
+				return exitErr("api: %v", err)
+			}
+			o := outFor(cmd)
+			if rt.Cfg.General.DryRun {
+				o.printf("dry-run: создание резюме пропущено (мутация не выполнялась)\n")
+				return nil
+			}
+			if err := rt.Pacer.Wait(ctx, target); err != nil {
+				return exitErr("pacer: %v", err)
+			}
+			hash, err := api.CreateResume(ctx, title, nil)
+			if err != nil {
+				return exitErr("create: %v", err)
+			}
+			return printCreateVerdict(ctx, o, api, target, title, hash)
+		},
+	}
+	cmd.Flags().StringVar(&title, "title", "", "requested resume title (hh applies content only through the wizard — the shell starts untitled)")
+	cmd.Flags().StringVar(&account, "account", "", "account id (required when several are configured)")
+	return cmd
+}
+
+// resolveCreateAccount picks the target account: the flag wins; with one
+// configured account it is the unambiguous default; anything else is an
+// error (a creation mutation must never depend on map iteration order).
+func resolveCreateAccount(rt *Runtime, account string) (string, error) {
+	if account != "" {
+		if _, ok := rt.Cfg.Accounts[account]; !ok {
+			return "", fmt.Errorf("аккаунт %q не сконфигурирован", account)
+		}
+		return account, nil
+	}
+	if len(rt.Cfg.Accounts) == 1 {
+		for id := range rt.Cfg.Accounts {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("укажите --account: сконфигурировано %d аккаунтов", len(rt.Cfg.Accounts))
+}
+
+// printCreateVerdict renders the shard-verified creation result: the new
+// hash plus its live shard row (the verify gate the task requires), with
+// an explicit note when a requested title did not land (hh owns content
+// through the wizard).
+func printCreateVerdict(ctx context.Context, o out, api hhapi.HHAPI, account, requestedTitle, hash string) error {
+	verdict := struct {
+		Account string `json:"account"`
+		Hash    string `json:"hash"`
+		Title   string `json:"title"`
+		Status  string `json:"status"`
+		Note    string `json:"note,omitempty"`
+	}{Account: account, Hash: hash}
+	resumes, err := api.ListResumes(ctx)
+	if err != nil {
+		return exitErr("verify: %v", err)
+	}
+	for _, r := range resumes {
+		if r.HHID == hash {
+			verdict.Title, verdict.Status = r.Title, r.Status
+			break
+		}
+	}
+	if requestedTitle != "" && verdict.Title != requestedTitle {
+		verdict.Note = "hh применяет контент только через визард (редактор или `hhauto resume improve`) — оболочка создана без титула"
+	}
+	if flags.json {
+		return o.printJSON(verdict)
+	}
+	o.printf("Резюме создано: %s (аккаунт %s, статус %s, титул %q)\n", hash, account, verdict.Status, verdict.Title)
+	if verdict.Note != "" {
+		o.println(verdict.Note)
+	}
+	return nil
 }
 
 func newResumeListCmd() *cobra.Command {
