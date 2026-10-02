@@ -58,6 +58,11 @@ type applyEnv struct {
 	ratingReqs     map[int64]int
 	popupReqs      map[int64]int
 
+	// T80 vacancy-test surface: the /applicant/vacancy_response document
+	// per vacancy (its embedded vacancyTests state) and the fetch counter.
+	testsByVac map[int64]string
+	testsReqs  map[int64]int
+
 	// T60 vacancy-card surface: full vacancyView bodies served by
 	// GET /vacancy/{id} (default: the rich fixture below).
 	cardByVac map[int64]string
@@ -103,6 +108,8 @@ func newApplyEnv(t *testing.T) *applyEnv {
 		db:          db,
 		popupByVac:  map[int64]string{},
 		popupErr:    map[int64]int{},
+		testsByVac:  map[int64]string{},
+		testsReqs:   map[int64]int{},
 		ratings:     map[int64]*hhapi.EmployerRating{},
 		ratingErr:   map[int64]error{},
 		ratingReqs:  map[int64]int{},
@@ -318,6 +325,18 @@ func newApplyEnv(t *testing.T) *applyEnv {
 			}
 		}
 		_, _ = io.WriteString(w, fmt.Sprintf(`{"success":true,"topic_id":%d}`, 555000+vid))
+	})
+	mux.HandleFunc("GET /applicant/vacancy_response", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := strconv.ParseInt(r.URL.Query().Get("vacancyId"), 10, 64)
+		e.mu.Lock()
+		e.testsReqs[id]++
+		body, has := e.testsByVac[id]
+		e.mu.Unlock()
+		if !has {
+			http.Error(w, "no vacancy response page", http.StatusNotFound)
+			return
+		}
+		_, _ = io.WriteString(w, body)
 	})
 	mux.HandleFunc("GET /applicant/negotiations", func(w http.ResponseWriter, r *http.Request) {
 		e.mu.Lock()
@@ -550,9 +569,14 @@ type fakeAIRunner struct {
 	err     error
 	calls   []ai.TaskName
 	inputs  []string
+	// T80 test-answer surface: the scripted test_answer verdict; when
+	// blockTestAnswer is set the call parks until the context is done
+	// (the solve-budget probe).
+	testAnswers     string
+	blockTestAnswer bool
 }
 
-func (r *fakeAIRunner) Run(_ context.Context, _ string, _ string, _ string, _ string,
+func (r *fakeAIRunner) Run(ctx context.Context, _ string, _ string, _ string, _ string,
 	task ai.TaskName, input any) (json.RawMessage, ai.Decision, error) {
 	r.calls = append(r.calls, task)
 	b, _ := json.Marshal(input)
@@ -562,6 +586,15 @@ func (r *fakeAIRunner) Run(_ context.Context, _ string, _ string, _ string, _ st
 	}
 	if task == ai.TaskCoverLetter {
 		return json.RawMessage(r.letter), ai.Decision{}, nil
+	}
+	if task == ai.TaskTestAnswer {
+		if r.blockTestAnswer {
+			<-ctx.Done()
+			return nil, ai.Decision{}, ctx.Err()
+		}
+		if r.testAnswers != "" {
+			return json.RawMessage(r.testAnswers), ai.Decision{}, nil
+		}
 	}
 	return json.RawMessage(r.scoring), ai.Decision{}, nil
 }

@@ -82,6 +82,11 @@ type Options struct {
 	// error/letter/verdict lines and the end-of-pass digest). nil = silent
 	// (unwired tests, disabled console).
 	Console *console.Surface
+
+	// T80: solve-budget override for the vacancy-test solve (tests).
+	// Zero = derive from [features.multiapply].testsolve_timeout_sec,
+	// then the 120s default.
+	TestSolveTimeout time.Duration
 }
 
 // AutoCloneImprover is the improve seam (implemented by the autoclone

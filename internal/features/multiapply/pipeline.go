@@ -78,21 +78,25 @@ func (f *Feature) processVacancy(ctx context.Context, runID string, run config.R
 		return stop, skip
 	}
 
-	// F6.5: feasibility from the apply popup.
-	stop, skip, letterRequired := f.popupGate(ctx, accountID, api, v)
+	// F6.5: feasibility from the apply popup (T80: a vacancy with tests
+	// also yields its fetched VacancyTest — nil means none or unreadable).
+	stop, skip, letterRequired, tests := f.popupGate(ctx, accountID, api, v)
 	if stop != "" || skip != "" {
 		return stop, skip
 	}
 
 	// F8: apply.
-	return f.applyOne(ctx, runID, run, accountID, api, prof, resumeHash, v, letterRequired, rc, stats)
+	return f.applyOne(ctx, runID, run, accountID, api, prof, resumeHash, v, letterRequired, tests, rc, stats)
 }
 
 // applyOne performs the mutation with intent, letter, captcha retry and
 // ambiguous reconcile. rc (clone run state) scopes the intent fence and the
-// retry path to the clone resume.
+// retry path to the clone resume. tests (T80) is the fetched vacancy test:
+// non-nil means the apply must carry the AI-solved answers, and any solve
+// failure falls back to the T77 test_required skip.
 func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, accountID string,
-	api hhapi.HHAPI, prof profile.Profile, resumeHash string, v hhapi.Vacancy, letterRequired bool, rc *cloneRunState,
+	api hhapi.HHAPI, prof profile.Profile, resumeHash string, v hhapi.Vacancy, letterRequired bool,
+	tests *hhapi.VacancyTest, rc *cloneRunState,
 	stats *passStats,
 ) (stop, skip string) {
 	// Cover letter: required by the popup or configured by the run.
@@ -125,12 +129,32 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 		return "", "intent_done"
 	}
 
-	skip, err = f.sendWithCaptcha(ctx, accountID, api, v, resumeHash, letter, claim)
+	// T80: solve the test inside the intent fence (the letter is already
+	// built and rides the same POST). Any solve failure abandons the fence
+	// and falls back to the T77 skip — the vacancy is never half-submitted.
+	var applyTest *hhapi.ApplyTest
+	if tests != nil {
+		solveCtx, cancel := f.solveContext(ctx)
+		applyTest = f.solveTest(solveCtx, runID, accountID, v, tests, prof)
+		cancel()
+		if applyTest == nil {
+			serr := errors.New("multiapply: vacancy test could not be solved honestly")
+			_ = featurekit.FinishIntent(ctx, f.opt.DB, claim, serr)
+			f.log.Warn("multiapply: test solve failed — falling back to test_required", "vacancy", v.ID)
+			return "", "test_required"
+		}
+	}
+
+	skip, err = f.sendWithCaptcha(ctx, accountID, api, v, resumeHash, letter, applyTest, claim)
 	if skip != "" {
 		return "", skip
 	}
 	if err == nil {
-		f.recordApplied(ctx, runID, accountID, resumeHash, v, claim, letter, "apply.ok", stats)
+		metric := "apply.ok"
+		if applyTest != nil {
+			metric = "apply.test_solved"
+		}
+		f.recordApplied(ctx, runID, accountID, resumeHash, v, claim, letter, metric, stats)
 		return "", ""
 	}
 
@@ -155,7 +179,7 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 	// reading, never by repeating.
 	var amb *hhapi.AmbiguousError
 	if errors.As(err, &amb) {
-		handled, _ := f.resolveAmbiguous(ctx, runID, accountID, api, resumeHash, v, letter, claim, err, rc, stats)
+		handled, _ := f.resolveAmbiguous(ctx, runID, accountID, api, resumeHash, v, letter, applyTest, claim, err, rc, stats)
 		if handled {
 			return "", ""
 		}
@@ -177,11 +201,12 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 	return "", ""
 }
 
-// sendApply performs one Apply round trip.
+// sendApply performs one Apply round trip; applyTest (T80, may be nil)
+// carries the solved vacancy test.
 func (f *Feature) sendApply(ctx context.Context, api hhapi.HHAPI, v hhapi.Vacancy,
-	resumeHash, letter string,
+	resumeHash, letter string, applyTest *hhapi.ApplyTest,
 ) (hhapi.NegotiationRef, error) {
-	return api.Apply(ctx, hhapi.ApplyRequest{VacancyID: v.ID, ResumeHash: resumeHash, Letter: letter})
+	return api.Apply(ctx, hhapi.ApplyRequest{VacancyID: v.ID, ResumeHash: resumeHash, Letter: letter, Test: applyTest})
 }
 
 // markTerminalFailed records a client-side validation failure (hh 400/422)
@@ -210,9 +235,11 @@ func (f *Feature) terminalFailed(accountID string, vacancyID int64) bool {
 	return ok && exp.After(f.opt.Now())
 }
 
-// retryApplyOnce re-arms the key and repeats the apply a single time.
+// retryApplyOnce re-arms the key and repeats the apply a single time (the
+// test payload rides along: a retried test apply must replay the same
+// answers, never an untested plain POST).
 func (f *Feature) retryApplyOnce(ctx context.Context, runID, accountID string, api hhapi.HHAPI,
-	v hhapi.Vacancy, resumeHash, letter string, rc *cloneRunState,
+	v hhapi.Vacancy, resumeHash, letter string, applyTest *hhapi.ApplyTest, rc *cloneRunState,
 ) (featurekit.IntentClaim, error) {
 	claim, err := featurekit.BeginIntent(ctx, f.opt.DB,
 		rc.intentKey(accountID, v.ID),
@@ -223,7 +250,7 @@ func (f *Feature) retryApplyOnce(ctx context.Context, runID, accountID string, a
 	if claim.Step != featurekit.IntentProceed {
 		return claim, fmt.Errorf("multiapply: re-arm intent blocked (step %d)", claim.Step)
 	}
-	ref, err := f.sendApply(ctx, api, v, resumeHash, letter)
+	ref, err := f.sendApply(ctx, api, v, resumeHash, letter, applyTest)
 	_ = ref
 	return claim, err
 }
@@ -826,41 +853,70 @@ func (f *Feature) quotaCheck(ctx context.Context, runID string, run config.Run, 
 
 // popupGate is F6.5: the apply-popup feasibility probe (logged-out stops
 // the account; inconsistencies, already-applied, disabled chat skip).
+// T80: a vacancy with tests additionally yields its fetched VacancyTest
+// (nil when the test cannot be read — the caller then skips).
 func (f *Feature) popupGate(ctx context.Context, accountID string, api hhapi.HHAPI,
-	v hhapi.Vacancy) (string, string, bool) {
+	v hhapi.Vacancy) (string, string, bool, *hhapi.VacancyTest) {
 	// F6.5: feasibility from the apply popup.
 	meta, err := api.ApplyPopup(ctx, v.ID)
 	if err != nil {
 		if errors.Is(err, hhapi.ErrLoggedOut) {
 			f.stopAccount(ctx, accountID, "apply_popup: "+err.Error())
-			return stopLoggedOut, "", false
+			return stopLoggedOut, "", false, nil
 		}
 		if errors.Is(err, hhapi.ErrRateLimited) {
-			return "", "hh_limit", false
+			return "", "hh_limit", false, nil
 		}
 		f.log.Warn("multiapply: popup failed", "vacancy", v.ID, "err", err)
-		return "", "popup_failed", false
+		return "", "popup_failed", false, nil
 	}
 	if len(meta.ResumeInconsistencies) > 0 {
 		f.log.Info("multiapply: resume inconsistencies", "vacancy", v.ID,
 			"inconsistencies", strings.Join(meta.ResumeInconsistencies, "; "))
-		return "", "inconsistencies", false
+		return "", "inconsistencies", false, nil
 	}
 	if meta.AlreadyApplied {
 		// Live popup surfaces the structural alreadyApplied flag upfront
 		// (responseStatus.alreadyApplied) — same skip as the dedup hit,
 		// one request earlier.
-		return "", "already_applied", false
+		return "", "already_applied", false, nil
 	}
 	if meta.HasTests {
-		// T77: a vacancy with required tests can never be applied to from
-		// here — skip before the POST (hh answers 400 test-required).
-		return "", "test_required", false
+		stop, skip, tests := f.fetchVacancyTests(ctx, accountID, api, v)
+		if stop != "" || skip != "" {
+			return stop, skip, false, nil
+		}
+		return "", "", meta.LetterRequired, tests
 	}
 	if meta.ChatWritePossibility == "DISABLED" {
-		return "", "chat_disabled", false
+		return "", "chat_disabled", false, nil
 	}
-	return "", "", meta.LetterRequired
+	return "", "", meta.LetterRequired, nil
+}
+
+// fetchVacancyTests reads the vacancy's test for the solve step. A non-empty
+// stop/skip reason means the vacancy is settled (the caller returns it
+// verbatim); tests != nil means the solve may proceed. Anything unreadable
+// (captcha has no solver — owner decision; contract deviations are
+// fail-closed) becomes the T77 test_required skip.
+func (f *Feature) fetchVacancyTests(ctx context.Context, accountID string, api hhapi.HHAPI,
+	v hhapi.Vacancy) (string, string, *hhapi.VacancyTest) {
+	tests, err := api.VacancyTests(ctx, v.ID)
+	if err == nil {
+		if len(tests.Tasks) == 0 {
+			return "", "test_required", nil
+		}
+		return "", "", tests
+	}
+	if errors.Is(err, hhapi.ErrLoggedOut) {
+		f.stopAccount(ctx, accountID, "vacancy_tests: "+err.Error())
+		return stopLoggedOut, "", nil
+	}
+	if errors.Is(err, hhapi.ErrRateLimited) {
+		return "", "hh_limit", nil
+	}
+	f.log.Warn("multiapply: vacancy test unavailable", "vacancy", v.ID, "err", err)
+	return "", "test_required", nil
 }
 
 // prepareLetter builds the cover letter when the popup requires one, the
@@ -901,6 +957,13 @@ func (f *Feature) prepareLetter(ctx context.Context, runID string, run config.Ru
 	full, err := api.VacancyCard(ctx, v.ID)
 	if err != nil {
 		f.log.Warn("multiapply: vacancy card failed", "vacancy", v.ID, "err", err)
+		return "", "vacancy_card_failed"
+	}
+	// T79: a still-empty card (no title or no publication date even after
+	// the vacancyFull unwrap) cannot feed a letter — skip before spending
+	// the AI call, fail-closed like the fetch failure above.
+	if full.Name == "" || full.PublishedAt.IsZero() {
+		f.log.Warn("multiapply: vacancy card empty", "vacancy", v.ID)
 		return "", "vacancy_card_failed"
 	}
 	details := buildVacancyDetails(*full)
@@ -976,14 +1039,14 @@ func grayNote(stats *passStats) string {
 // the circuit breaker or solves and retries exactly once. skip is set when
 // the vacancy is skipped without an error (captcha breaker open).
 func (f *Feature) sendWithCaptcha(ctx context.Context, accountID string, api hhapi.HHAPI, v hhapi.Vacancy,
-	resumeHash, letter string, claim featurekit.IntentClaim) (string, error) {
-	_, err := f.sendApply(ctx, api, v, resumeHash, letter)
+	resumeHash, letter string, applyTest *hhapi.ApplyTest, claim featurekit.IntentClaim) (string, error) {
+	_, err := f.sendApply(ctx, api, v, resumeHash, letter, applyTest)
 	if errors.Is(err, hhapi.ErrCaptcha) {
 		if f.captchaExhausted(ctx, accountID) {
 			return f.captchaBreakerSkip(ctx, claim), nil
 		}
 		if f.solveCaptchaOrBreak(ctx, accountID) {
-			_, err = f.sendApply(ctx, api, v, resumeHash, letter)
+			_, err = f.sendApply(ctx, api, v, resumeHash, letter, applyTest)
 		}
 	}
 	return "", err
@@ -1025,7 +1088,7 @@ func (f *Feature) solveCaptchaOrBreak(ctx context.Context, accountID string) boo
 // found → applied; not found → the single sanctioned retry; unreadable →
 // park for a human. handled=true means applyOne returns cleanly.
 func (f *Feature) resolveAmbiguous(ctx context.Context, runID string, accountID string, api hhapi.HHAPI,
-	resumeHash string, v hhapi.Vacancy, letter string, claim featurekit.IntentClaim, _ error, rc *cloneRunState,
+	resumeHash string, v hhapi.Vacancy, letter string, applyTest *hhapi.ApplyTest, claim featurekit.IntentClaim, _ error, rc *cloneRunState,
 	stats *passStats,
 ) (bool, error) {
 	found, rerr := f.reconcileNegotiations(ctx, api, v.ID)
@@ -1039,9 +1102,13 @@ func (f *Feature) resolveAmbiguous(ctx context.Context, runID string, accountID 
 		if aerr := featurekit.AbandonIntent(ctx, f.opt.DB, claim); aerr != nil {
 			f.log.Error("multiapply: intent abandon failed", "err", aerr)
 		}
-		claim2, retryErr := f.retryApplyOnce(ctx, runID, accountID, api, v, resumeHash, letter, rc)
+		claim2, retryErr := f.retryApplyOnce(ctx, runID, accountID, api, v, resumeHash, letter, applyTest, rc)
 		if retryErr == nil {
-			f.recordApplied(ctx, runID, accountID, resumeHash, v, claim2, letter, "apply.ok", stats)
+			metric := "apply.ok"
+			if applyTest != nil {
+				metric = "apply.test_solved"
+			}
+			f.recordApplied(ctx, runID, accountID, resumeHash, v, claim2, letter, metric, stats)
 			return true, nil
 		}
 		// A second ambiguity inside the sanctioned retry is handled

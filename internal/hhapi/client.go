@@ -594,7 +594,7 @@ func vacancyFromItem(raw json.RawMessage) Vacancy {
 		EmployerID:            int64(num(employer, "id")),
 		EmployerName:          str(employer, "name"),
 		Area:                  str(area, "name"),
-		PublishedAt:           timeFrom(m, "publishedAt", "published_at", "createDateTime"),
+		PublishedAt:           timeFrom(m, "publishedAt", "published_at", "createDateTime", "publicationTimeIso"),
 		Description:           str(m, "description", "descriptionText"),
 		SnippetResponsibility: snippetText(snippet, "resp"),
 		SnippetRequirement:    snippetText(snippet, "req"),
@@ -733,6 +733,13 @@ func (c *Client) VacancyCard(ctx context.Context, id int64) (*Vacancy, error) {
 	view := obj(state["vacancyView"])
 	if view == nil {
 		return nil, fmt.Errorf("hhapi: vacancy_card %d: %w (vacancyView)", id, errNilState)
+	}
+	// T79: the card content lives in vacancyView.vacancyFull.vacancy
+	// (live-probed 2026-09-30: every /vacancy/{id} state nests the payload
+	// there while the flat vacancyView carries none of it); the legacy
+	// flat shape still parses when the inner block is absent.
+	if full := obj(obj(view["vacancyFull"])["vacancy"]); full != nil {
+		view = full
 	}
 	vb, jerr := json.Marshal(view)
 	if jerr != nil {
@@ -892,7 +899,8 @@ func (c *Client) ApplyPopup(ctx context.Context, vacancyID int64) (*ApplyMeta, e
 }
 
 // Apply implements hhapi.HHAPI: submits the vacancy response with the
-// idempotency key; AmbiguousError on transport loss after send.
+// idempotency key; AmbiguousError on transport loss after send. A request
+// carrying a solved Test (T80) posts the test fields on the same endpoint.
 func (c *Client) Apply(ctx context.Context, req ApplyRequest) (NegotiationRef, error) {
 	resp, err := c.doMutation(ctx, func() requestSpec {
 		form := url.Values{}
@@ -904,6 +912,13 @@ func (c *Client) Apply(ctx context.Context, req ApplyRequest) (NegotiationRef, e
 		}
 		h := c.xhrHeaders(c.popupReferer(req.VacancyID))
 		h.Set("Content-Type", "application/x-www-form-urlencoded")
+		if req.Test != nil {
+			applyTestForm(form, req.Test)
+			// The site itself answers the test form from the vacancy page
+			// (donor capture); harmless identity for the plain apply.
+			h.Set("X-Hhtmfrom", "vacancy")
+			h.Set("X-Hhtmsource", "vacancy_response")
+		}
 		return requestSpec{
 			kind: kindMutation, operation: "apply",
 			method: http.MethodPost,
