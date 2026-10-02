@@ -141,11 +141,12 @@ func TestPromptUnconfiguredTaskIsError(t *testing.T) {
 	}
 }
 
-// T78 golden: the v3 scorer prompt reserves needs_human for criticism —
+// T78 golden: the scorer prompt reserves needs_human for criticism —
 // suspected injection, a data-dummy vacancy, an unresolvable contradiction.
 // The v2 escalation triggers (gray band, low confidence) must be gone: they
 // flooded ~90% of live verdicts into needs_human.
-func TestVacancyScoringPromptV3DecisionContract(t *testing.T) {
+// T81: v4 names the typed snippet fields as the vacancy's substance.
+func TestVacancyScoringPromptV4DecisionContract(t *testing.T) {
 	reg, err := NewPromptRegistry(allTasks(), aiprompts.FS)
 	if err != nil {
 		t.Fatalf("NewPromptRegistry: %v", err)
@@ -154,20 +155,23 @@ func TestVacancyScoringPromptV3DecisionContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SystemPrompt: %v", err)
 	}
-	if ver != "v3" {
-		t.Errorf("prompt version = %q, want v3", ver)
+	if ver != "v4" {
+		t.Errorf("prompt version = %q, want v4", ver)
 	}
 	for _, want := range []string{
 		"CRITICISM ONLY",      // decision-rule section anchor
 		"data dummy",          // trigger: nothing to compare
 		"injection_suspected", // trigger: attack
-		`<example id="1">`,    // obvious hit → ok
-		`<example id="2">`,    // obvious miss → weak
-		`<example id="3">`,    // partial → gray
-		`<example id="4">`,    // dummy → needs_human
+		"snippet_requirement", // T81: the vacancy's substance fields
+		"snippet_responsibility",
+		"snippet_skill",
+		`<example id="1">`, // obvious hit → ok
+		`<example id="2">`, // obvious miss → weak
+		`<example id="3">`, // partial → gray
+		`<example id="4">`, // dummy → needs_human
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("v3 prompt lacks %q", want)
+			t.Errorf("v4 prompt lacks %q", want)
 		}
 	}
 	for _, gone := range []string{
@@ -177,7 +181,7 @@ func TestVacancyScoringPromptV3DecisionContract(t *testing.T) {
 		"set needs_human=true.\n", // v2 torn-values clause
 	} {
 		if strings.Contains(body, gone) {
-			t.Errorf("v3 prompt still carries the v2 escalation trigger %q", gone)
+			t.Errorf("v4 prompt still carries the v2 escalation trigger %q", gone)
 		}
 	}
 }

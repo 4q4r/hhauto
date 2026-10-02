@@ -587,19 +587,23 @@ func vacancyFromItem(raw json.RawMessage) Vacancy {
 	area := obj(m["area"])
 	comp := obj(m["compensation"])
 	manager := obj(m["employerManager"])
+	snippet := obj(m["snippet"])
 	v := Vacancy{
-		ID:           int64(num(m, "vacancyId", "id")),
-		Name:         str(m, "name"),
-		EmployerID:   int64(num(employer, "id")),
-		EmployerName: str(employer, "name"),
-		Area:         str(area, "name"),
-		PublishedAt:  timeFrom(m, "publishedAt", "published_at", "createDateTime", "publicationTimeIso"),
-		Description:  str(m, "description", "descriptionText"),
-		AlternateURL: firstNonEmpty(str(m, "alternate_url", "alternateURL"), str(obj(obj(m["links"])["desktop"]), "alternate_url")),
-		AcceptTemp:   boolv(m, "acceptTemporary", "accept_temp"),
-		HasTests:     boolv(m, "hasTest", "hasTests", "has_test"),
-		Badges:       Badges(raw),
-		Raw:          raw,
+		ID:                    int64(num(m, "vacancyId", "id")),
+		Name:                  str(m, "name"),
+		EmployerID:            int64(num(employer, "id")),
+		EmployerName:          str(employer, "name"),
+		Area:                  str(area, "name"),
+		PublishedAt:           timeFrom(m, "publishedAt", "published_at", "createDateTime", "publicationTimeIso"),
+		Description:           str(m, "description", "descriptionText"),
+		SnippetResponsibility: snippetText(snippet, "resp"),
+		SnippetRequirement:    snippetText(snippet, "req"),
+		SnippetSkill:          snippetText(snippet, "skill"),
+		AlternateURL:          firstNonEmpty(str(m, "alternate_url", "alternateURL"), str(obj(obj(m["links"])["desktop"]), "alternate_url")),
+		AcceptTemp:            boolv(m, "acceptTemporary", "accept_temp"),
+		HasTests:              boolv(m, "hasTest", "hasTests", "has_test"),
+		Badges:                Badges(raw),
+		Raw:                   raw,
 	}
 	if comp != nil {
 		sal := &Salary{

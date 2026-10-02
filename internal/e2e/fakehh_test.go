@@ -232,6 +232,12 @@ func (f *fakeHH) vacItem(id int64, name string, employerID int64, employerName s
 		"description":   "Продуктовая команда, современный стек.",
 		"alternate_url": f.srv.URL + "/vacancy/" + strconv.FormatInt(id, 10),
 		"compensation":  map[string]any{"from": 250000, "currencyCode": "RUR"},
+		// T81: the scorer must see the search snippets in its input.
+		"snippet": map[string]any{
+			"req":   "Опыт работы с Go и PostgreSQL от 3 лет.",
+			"resp":  "Разработка бэкенд-сервисов, поддержка CI/CD.",
+			"skill": "Go, PostgreSQL, Docker, Kubernetes",
+		},
 	}
 }
 

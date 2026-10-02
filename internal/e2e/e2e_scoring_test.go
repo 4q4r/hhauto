@@ -7,6 +7,7 @@ package e2e
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -55,5 +56,18 @@ func TestE2E3ScoringNeedsHumanPolicy(t *testing.T) {
 	// The scorer saw exactly the vacancies that reached F6 (101, 104, 105, 106).
 	if got := env.ai.callCount("vacancy_scoring"); got != 4 {
 		t.Fatalf("vacancy_scoring calls = %d, want 4", got)
+	}
+	// T81: every scoring input carries the typed snippets and no raw item blob.
+	seen := 0
+	for _, vac := range env.ai.scoringVacancyInputs() {
+		if req, _ := vac["snippet_requirement"].(string); strings.Contains(req, "Go и PostgreSQL") {
+			seen++
+		}
+		if _, has := vac["raw"]; has {
+			t.Fatalf("scoring input drags the raw item blob: %v", vac)
+		}
+	}
+	if seen != 4 {
+		t.Fatalf("scoring inputs with snippets = %d, want 4 (%+v)", seen, env.ai.scoringVacancyInputs())
 	}
 }

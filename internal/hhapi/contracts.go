@@ -63,20 +63,25 @@ type Salary struct {
 
 // Vacancy is one vacancy card as parsed from card or search payloads.
 type Vacancy struct {
-	ID             int64           `json:"id"`
-	Name           string          `json:"name"`
-	EmployerID     int64           `json:"employer_id"`
-	EmployerName   string          `json:"employer_name"`
-	Badges         []string        `json:"badges,omitempty"` // employer badge labels from the raw (search items: company.badges, T70)
-	Area           string          `json:"area"`
-	Salary         *Salary         `json:"salary,omitempty"`
-	PublishedAt    time.Time       `json:"published_at"`
-	Description    string          `json:"description,omitempty"`
-	AlternateURL   string          `json:"alternate_url,omitempty"`
-	EmployerOnline bool            `json:"employer_online,omitempty"` // manager activity (SSR)
-	AcceptTemp     bool            `json:"accept_temp,omitempty"`
-	HasTests       bool            `json:"has_tests,omitempty"`
-	Raw            json.RawMessage `json:"raw,omitempty"`
+	ID           int64     `json:"id"`
+	Name         string    `json:"name"`
+	EmployerID   int64     `json:"employer_id"`
+	EmployerName string    `json:"employer_name"`
+	Badges       []string  `json:"badges,omitempty"` // employer badge labels from the raw (search items: company.badges, T70)
+	Area         string    `json:"area"`
+	Salary       *Salary   `json:"salary,omitempty"`
+	PublishedAt  time.Time `json:"published_at"`
+	Description  string    `json:"description,omitempty"`
+	// Search-snippet substance (T81): filled by vacancyFromItem from the
+	// SSR search item's snippet node; the scorer decides on these.
+	SnippetResponsibility string          `json:"snippet_responsibility,omitempty"`
+	SnippetRequirement    string          `json:"snippet_requirement,omitempty"`
+	SnippetSkill          string          `json:"snippet_skill,omitempty"`
+	AlternateURL          string          `json:"alternate_url,omitempty"`
+	EmployerOnline        bool            `json:"employer_online,omitempty"` // manager activity (SSR)
+	AcceptTemp            bool            `json:"accept_temp,omitempty"`
+	HasTests              bool            `json:"has_tests,omitempty"`
+	Raw                   json.RawMessage `json:"raw,omitempty"`
 }
 
 // VacancyPage is one search result page.

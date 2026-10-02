@@ -78,7 +78,7 @@ func TestRunHappyPathAndLedgerRecord(t *testing.T) {
 	if dec.Task != TaskVacancyScoring || dec.Model != "m1" || dec.EntityID != "42" || dec.RunID != "run1" {
 		t.Errorf("decision = %+v", dec)
 	}
-	if dec.PromptVer != "v3" {
+	if dec.PromptVer != "v4" {
 		t.Errorf("prompt ver = %q", dec.PromptVer)
 	}
 	if dec.Confidence != 0.9 || dec.Score != 72 || dec.NeedsHuman {
