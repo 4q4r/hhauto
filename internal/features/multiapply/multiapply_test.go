@@ -60,10 +60,12 @@ func TestKillSwitchStopsVacancyBatch(t *testing.T) {
 	if err := f.RegisterTasks(t.Context(), h.q, h.reg); err != nil {
 		t.Fatal(err)
 	}
-	seen := 0
+	// T84 consults the switch in both pass phases (evaluate and apply);
+	// trip on the settled first vacancy (its recorded apply), not on a
+	// call count tied to the old single-loop shape.
 	f.opt.Stopped = func(context.Context) bool {
-		seen++
-		return seen > 1 // trips after the first vacancy has settled
+		n, _ := h.db.ApplicationsCountToday(t.Context(), "acc1", "run1", featurekit.DayUTC(now))
+		return n > 0
 	}
 	if err := f.RunProfile(t.Context(), "run1"); err != nil {
 		t.Fatal(err)

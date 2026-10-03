@@ -156,6 +156,11 @@ func (f *Feature) runPass(ctx context.Context, runID string, run config.Run, acc
 
 	batch := map[int64]bool{}
 	stats := newPassStats()
+
+	// Phase 1 (T84): F2-F6 for the whole pool — every surviving vacancy
+	// carries its scorer verdict before anything is applied, so the apply
+	// queue can be ordered best-first.
+	cands := make([]candidate, 0, len(vacancies))
 	for _, v := range vacancies {
 		if f.opt.Stopped != nil && f.opt.Stopped(ctx) {
 			// Kill switch: the vacancy processed last has fully settled
@@ -165,7 +170,31 @@ func (f *Feature) runPass(ctx context.Context, runID string, run config.Run, acc
 				"run", runID, "account", accountID)
 			return vacancies, true, nil
 		}
-		stop, skip := f.processVacancy(ctx, runID, run, accountID, api, prof, resumeHash, v, batch, rc, stats)
+		skip, cand := f.evaluateVacancy(ctx, runID, run, accountID, api, prof, resumeHash, v, batch, rc)
+		if skip != "" {
+			f.incr(ctx, "apply.skip."+skip)
+			stats.skips[skip]++
+			f.console.Skip(accountID, skip, v)
+			continue
+		}
+		cands = append(cands, *cand)
+	}
+
+	// T84: best-first queue — score desc, deterministic ties (see
+	// sortByScoreDesc). The quota cut then lands on the least probable
+	// candidates instead of whatever the search order surfaced first; the
+	// cut tail stays unapplied and remains a candidate for the next cycle.
+	sortByScoreDesc(cands, cfg.Features.MultiApply.PrioritizeOnlineHR)
+
+	// Phase 2: F7-F8 in queue order; a stop (quota exhausted, logout)
+	// settles the pass exactly as before.
+	for _, cand := range cands {
+		if f.opt.Stopped != nil && f.opt.Stopped(ctx) {
+			f.log.Info("multiapply: kill switch tripped — stopping the vacancy batch",
+				"run", runID, "account", accountID)
+			return vacancies, true, nil
+		}
+		stop, skip := f.applyCandidate(ctx, runID, run, accountID, api, prof, resumeHash, &cand, rc, stats)
 		switch {
 		case stop != "":
 			f.incr(ctx, "apply.stop."+stop)
@@ -182,7 +211,7 @@ func (f *Feature) runPass(ctx context.Context, runID string, run config.Run, acc
 		case skip != "":
 			f.incr(ctx, "apply.skip."+skip)
 			stats.skips[skip]++
-			f.console.Skip(accountID, skip, v)
+			f.console.Skip(accountID, skip, cand.v)
 		}
 	}
 	f.console.Digest(console.DigestLine{

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,65 +29,124 @@ const (
 	maxReconcilePages = 3
 )
 
-// processVacancy runs the F2..F8 cascade for one vacancy.
-// stop is a non-empty stop reason (profile ends; rescheduled unless it is
-// stopLoggedOut); skip is a non-empty per-vacancy skip reason.
-// rc != nil marks a clone run: the reapply policy gates the vacancy and the
-// intent fence is scoped to the clone resume.
+// candidate is a vacancy that survived F2-F6 (static filters + scoring)
+// and is queued for the apply phase. verdict is nil only when the AI
+// filter is disabled — nothing in the pass was scored, so the queue keeps
+// pool order (T84); gray marks a verdict the gray-band policy routed to
+// apply (T75).
+type candidate struct {
+	v       hhapi.Vacancy
+	verdict *relevance.Verdict
+	gray    bool
+}
+
+// processVacancy runs the F2..F8 cascade for one vacancy: evaluate then
+// apply back to back. runPass splits the two halves around the T84
+// best-first sort; this composition keeps the per-vacancy cascade in one
+// place (and serves the benchmark).
 func (f *Feature) processVacancy(ctx context.Context, runID string, run config.Run, accountID string,
 	api hhapi.HHAPI, prof profile.Profile, resumeHash string, v hhapi.Vacancy, batch map[int64]bool, rc *cloneRunState,
 	stats *passStats,
 ) (stop, skip string) {
+	skip, cand := f.evaluateVacancy(ctx, runID, run, accountID, api, prof, resumeHash, v, batch, rc)
+	if skip != "" {
+		return "", skip
+	}
+	return f.applyCandidate(ctx, runID, run, accountID, api, prof, resumeHash, cand, rc, stats)
+}
+
+// evaluateVacancy is the read-only half of the cascade: in-batch dedup,
+// the T77 terminal registry, the reapply policy, F2-F5 static filters and
+// the F6 AI relevance gate. A non-empty skip settles the vacancy without
+// an apply attempt; otherwise the scored candidate joins the T84 queue.
+func (f *Feature) evaluateVacancy(ctx context.Context, runID string, run config.Run, accountID string,
+	api hhapi.HHAPI, prof profile.Profile, resumeHash string, v hhapi.Vacancy, batch map[int64]bool, rc *cloneRunState,
+) (skip string, cand *candidate) {
 	// In-batch dedup: the same vacancy from two sources is processed once.
 	if batch[v.ID] {
-		return "", "dup_batch"
+		return "dup_batch", nil
 	}
 	batch[v.ID] = true
 
 	// T77: a client-side validation failure (hh 400/422) is terminal for
 	// the pass — another run in the same cycle must not re-POST it.
 	if f.terminalFailed(accountID, v.ID) {
-		return "", "apply_failed"
+		return "apply_failed", nil
 	}
 
 	// T26 reapply policy (clone runs only): which vacancies may this clone
 	// (re)apply to.
 	if skip := rc.reapplySkip(v); skip != "" {
-		return "", skip
+		return skip, nil
 	}
 
 	// F2-F5: static filters, rating and dedup (the seen row is written
 	// through as audit trail, never as a skip condition).
-	bypass := bypassSet(run.Filters.WhitelistBypass)
-
 	skip, whitelisted := f.prefilter(ctx, runID, run, accountID, api, resumeHash, v)
 	if skip != "" {
-		return "", skip
+		return skip, nil
 	}
 
 	// F6: AI relevance (threshold bypassed for whitelisted employers
 	// listing "F6_threshold"; needs_human/injection still gate).
-	skip, gray := f.aiFilterSkip(ctx, runID, run, accountID, prof, resumeHash, v, whitelisted, bypass)
-	stats.gray = gray // fresh per vacancy: nil unless a gray-band apply
-	if skip != "" {
-		return "", skip
+	return f.aiFilterSkip(ctx, runID, run, accountID, prof, resumeHash, v, whitelisted,
+		bypassSet(run.Filters.WhitelistBypass))
+}
+
+// applyCandidate is the mutating half of the cascade: F7 daily quotas,
+// the F6.5 popup feasibility probe and the F8 apply with letter, captcha
+// retry and ambiguous reconcile. The gray-band verdict (T75) rides the
+// pass stats from here to the apply-record points.
+func (f *Feature) applyCandidate(ctx context.Context, runID string, run config.Run, accountID string,
+	api hhapi.HHAPI, prof profile.Profile, resumeHash string, cand *candidate, rc *cloneRunState,
+	stats *passStats,
+) (stop, skip string) {
+	if cand.gray {
+		stats.gray = cand.verdict
 	}
 
 	// F7: daily quotas — cheap DB checks run BEFORE the expensive popup
 	// request (Wave 3 review fix 1).
-	if stop, skip := f.quotaCheck(ctx, runID, run, accountID, v); stop != "" || skip != "" {
+	if stop, skip := f.quotaCheck(ctx, runID, run, accountID, cand.v); stop != "" || skip != "" {
 		return stop, skip
 	}
 
 	// F6.5: feasibility from the apply popup (T80: a vacancy with tests
 	// also yields its fetched VacancyTest — nil means none or unreadable).
-	stop, skip, letterRequired, tests := f.popupGate(ctx, accountID, api, v)
+	stop, skip, letterRequired, tests := f.popupGate(ctx, accountID, api, cand.v)
 	if stop != "" || skip != "" {
 		return stop, skip
 	}
 
 	// F8: apply.
-	return f.applyOne(ctx, runID, run, accountID, api, prof, resumeHash, v, letterRequired, tests, rc, stats)
+	return f.applyOne(ctx, runID, run, accountID, api, prof, resumeHash, cand.v, letterRequired, tests, rc, stats)
+}
+
+// sortByScoreDesc is the T84 apply queue, best-first: score descending
+// (the scorer's verdict); within one score tier the prioritize_online_hr
+// preference holds (gated on the config flag — EmployerOnline parses from
+// the search item regardless of it); vacancy id ascending closes the
+// order into a total deterministic sequence. Candidates without a verdict
+// (AI filter off — nothing was scored) have no score to rank by: they
+// keep pool order after the scored ones.
+func sortByScoreDesc(cands []candidate, online bool) {
+	sort.SliceStable(cands, func(i, j int) bool {
+		a, b := &cands[i], &cands[j]
+		switch {
+		case a.verdict == nil && b.verdict == nil:
+			return false
+		case a.verdict == nil:
+			return false // b (scored) first
+		case b.verdict == nil:
+			return true // a (scored) first
+		case a.verdict.Score != b.verdict.Score:
+			return a.verdict.Score > b.verdict.Score
+		case online && a.v.EmployerOnline != b.v.EmployerOnline:
+			return a.v.EmployerOnline
+		default:
+			return a.v.ID < b.v.ID
+		}
+	})
 }
 
 // applyOne performs the mutation with intent, letter, captcha retry and
@@ -815,18 +875,20 @@ func (f *Feature) prefilter(ctx context.Context, runID string, run config.Run, a
 }
 
 // aiFilterSkip is gate F6: AI relevance with the whitelisted threshold
-// bypass; needs_human and injection verdicts still gate. A gray-band
-// verdict the gray-band policy routed to apply (T75) returns the verdict
-// as the second value so the apply-record points can mark the origin.
+// bypass; needs_human and injection verdicts still gate. Every passing
+// verdict returns its scored candidate for the T84 queue; gray marks the
+// gray-band policy route (T75) so the apply record can mark its origin.
 func (f *Feature) aiFilterSkip(ctx context.Context, runID string, run config.Run, accountID string,
 	prof profile.Profile, resumeHash string, v hhapi.Vacancy, whitelisted bool, bypass map[string]bool,
-) (string, *relevance.Verdict) {
+) (string, *candidate) {
 	// F6: AI relevance (threshold bypassed for whitelisted employers
 	// listing "F6_threshold"; needs_human/injection still gate).
 	// T71 fail-closed: ai_filter=true with an unavailable runner skips the
 	// vacancy with a reason — an automation tool never applies unscored.
 	if !f.opt.Config.Features.MultiApply.AIFilter {
-		return "", nil
+		// No scoring configured: the candidate joins the queue with no
+		// verdict and sorts to the unscored tail (T84).
+		return "", &candidate{v: v}
 	}
 	if f.opt.Runner == nil {
 		return "ai_unavailable", nil
@@ -853,13 +915,10 @@ func (f *Feature) aiFilterSkip(ctx context.Context, runID string, run config.Run
 	// outcome) — off by default, the [console].verdicts toggle turns
 	// it on as an alternative to --log-level debug.
 	f.console.Verdict(v, vd.Score, threshold, pass, reason)
-	if reason == relevance.GrayBandReason {
-		return "", &vd
-	}
 	if !pass {
 		return reason, nil
 	}
-	return "", nil
+	return "", &candidate{v: v, verdict: &vd, gray: reason == relevance.GrayBandReason}
 }
 
 // quotaCheck is gate F7: run, account and per-employer daily caps. A stop
