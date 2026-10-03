@@ -47,6 +47,40 @@ func TestVacancyTestsParse(t *testing.T) {
 	}
 }
 
+// T83 live form (2026-10-03 capture): the real response page embeds the
+// whole state HTML-escaped — every quote is &#34;, so the literal-key
+// search misses it and the vacancy slipped to a 400 test-required apply.
+// Fixture anonymized: ids → 777/uid-777, texts → neutral wording.
+const vacancyTestsPageEscaped = `<html><head><title>Отклик</title></head><body>
+<script type="text/json" id="HH-Lux-InitialState">{&#34;vacancyTests&#34;:{&#34;777&#34;:{&#34;uidPk&#34;:&#34;uid-777&#34;,&#34;guid&#34;:&#34;guid-777&#34;,&#34;startTime&#34;:&#34;1791000000&#34;,&#34;required&#34;:true,&#34;name&#34;:&#34;Вопросы к соискателю&#34;,&#34;description&#34;:&#34;Просим ответить на вопросы:&#34;,&#34;tasks&#34;:[{&#34;id&#34;:&#34;t1&#34;,&#34;description&#34;:&#34;Опишите ваш опыт.&#34;,&#34;open&#34;:true,&#34;multiple&#34;:false,&#34;candidateSolutions&#34;:[]},{&#34;id&#34;:&#34;t2&#34;,&#34;description&#34;:&#34;Перечислите знакомые вам технологии.&#34;,&#34;open&#34;:true,&#34;multiple&#34;:false,&#34;candidateSolutions&#34;:[]}]}}}</script>
+</body></html>`
+
+func TestVacancyTestsEscapedState(t *testing.T) {
+	env := newTestEnv(t)
+	env.serve(env.mux1, "1", "GET", "/applicant/vacancy_response", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("vacancyId") != "777" {
+			t.Errorf("query = %s", r.URL.RawQuery)
+		}
+		_, _ = io.WriteString(w, vacancyTestsPageEscaped)
+	})
+	c := env.client()
+	ctx, cancel := ctxb(t)
+	defer cancel()
+	vt, err := c.VacancyTests(ctx, 777)
+	if err != nil {
+		t.Fatalf("VacancyTests: %v (the escaped live form must parse)", err)
+	}
+	if vt.UIDPk != "uid-777" || vt.GUID != "guid-777" || vt.StartTime != "1791000000" || !vt.Required {
+		t.Fatalf("coordinates = %+v", vt)
+	}
+	if len(vt.Tasks) != 2 {
+		t.Fatalf("tasks = %+v, want 2", vt.Tasks)
+	}
+	if vt.Tasks[0].ID != "t1" || len(vt.Tasks[0].Solutions) != 0 {
+		t.Fatalf("t1 = %+v, want an open task", vt.Tasks[0])
+	}
+}
+
 func TestVacancyTestsMissingState(t *testing.T) {
 	env := newTestEnv(t)
 	env.serve(env.mux1, "1", "GET", "/applicant/vacancy_response", func(w http.ResponseWriter, _ *http.Request) {
