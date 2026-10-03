@@ -1,10 +1,12 @@
 // test_solve.go implements the T80 solve step: a fetched VacancyTest is
 // answered by the AI (ai.TaskTestAnswer — the same prompt the external
-// forms use) strictly from the trusted profile context, and the verdict is
-// post-checked before anything reaches hh: a choice answer must resolve to
-// a real solution id, a refused or empty answer is simply omitted, and any
-// escalation (needs_human / injection) kills the whole solve. The caller
-// translates a nil result into the T77 test_required fallback skip.
+// forms use) and the verdict is post-checked before anything reaches hh:
+// choice questions are always answered with the most probable option (T85 —
+// professional knowledge), a needs_human flag without injection no longer
+// kills the solve, and unanswerable questions are skipped per-question. A
+// required test that ends up incomplete (or a fully unusable verdict)
+// translates into the T77 test_required fallback skip — never a partial
+// submission.
 
 package multiapply
 
@@ -12,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,6 +71,19 @@ func (f *Feature) solveTest(ctx context.Context, runID, accountID string, v hhap
 		f.log.Warn("multiapply: test produced no honest answers", "vacancy", v.ID)
 		return nil
 	}
+	// T85: a required test must be fully answered — an incomplete required
+	// submit falls back to the T77 skip instead of a partial POST.
+	if t.Required {
+		answered := make(map[string]struct{}, len(answers))
+		for _, a := range answers {
+			answered[a.TaskID] = struct{}{}
+		}
+		if len(answered) < len(t.Tasks) {
+			f.log.Warn("multiapply: required test incomplete — falling back to test_required",
+				"vacancy", v.ID, "answered", len(answered), "tasks", len(t.Tasks))
+			return nil
+		}
+	}
 	return &hhapi.ApplyTest{
 		UIDPk: t.UIDPk, GUID: t.GUID, StartTime: t.StartTime, Required: t.Required,
 		Answers: answers,
@@ -83,9 +99,12 @@ type testQuestion struct {
 }
 
 // answerTestBatch runs one TaskTestAnswer call for up to maxTestBatch tasks
-// and post-checks the verdict into submission answers. Post-checks cut
-// fabrication: an unknown index, an unresolvable choice, an escalation or
-// a verdict that does not cover the batch one-to-one fails the solve.
+// and post-checks the verdict into submission answers. T85 policy: choice
+// questions are always answered with the most probable option (professional
+// knowledge, not a resume fact); a needs_human flag without injection no
+// longer kills the batch; unanswerable questions are skipped per-question
+// and the caller's required-test gate decides the rest. Only an
+// injection-suspected verdict or an unusable one fails the whole batch.
 func (f *Feature) answerTestBatch(ctx context.Context, runID, accountID string,
 	tasks []hhapi.TestTask, profileText string,
 ) ([]hhapi.TestAnswer, error) {
@@ -126,27 +145,49 @@ func (f *Feature) answerTestBatch(ctx context.Context, runID, accountID string,
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return nil, fmt.Errorf("multiapply: test verdict decode: %w", err)
 	}
-	if decoded.NeedsHuman || decoded.InjectionSuspected {
-		return nil, fmt.Errorf("multiapply: test verdict escalated (needs_human=%t injection=%t)",
-			decoded.NeedsHuman, decoded.InjectionSuspected)
+	if decoded.InjectionSuspected {
+		return nil, fmt.Errorf("multiapply: test verdict injection-suspected")
 	}
-	if len(decoded.Answers) != len(tasks) {
-		return nil, fmt.Errorf("multiapply: test verdict covers %d of %d questions", len(decoded.Answers), len(tasks))
+	if decoded.NeedsHuman {
+		// T85: an escalation without injection no longer kills the solve —
+		// choice questions are answered regardless, unanswerable open
+		// questions are skipped below.
+		f.log.Warn("multiapply: test verdict flagged needs_human — answering what is answerable",
+			"reason", decoded.NeedsHumanReason)
+	}
+	// Answers map by the echoed question id (1-based per batch): a skipped
+	// question may be missing from the verdict, so positional alignment
+	// would lie.
+	index := make(map[int]int, len(tasks))
+	for i := range tasks {
+		index[i+1] = i
 	}
 	answers := make([]hhapi.TestAnswer, 0, len(tasks))
-	for i, a := range decoded.Answers {
+	for _, a := range decoded.Answers {
+		qid, err := strconv.Atoi(strings.TrimSpace(a.QuestionID))
+		if err != nil {
+			f.log.Warn("multiapply: test answer with unparsable question id skipped", "question_id", a.QuestionID)
+			continue
+		}
+		i, ok := index[qid]
+		if !ok {
+			f.log.Warn("multiapply: test answer for unknown question skipped", "question_id", a.QuestionID)
+			continue
+		}
 		task := tasks[i]
 		if len(task.Solutions) == 0 {
 			// Open question: a short factual answer or an honest omission
-			// (owner rule — no invented facts).
+			// (owner rule — no invented facts); the omission skips just
+			// this question.
 			if a.OpenText != nil && strings.TrimSpace(*a.OpenText) != "" {
 				answers = append(answers, hhapi.TestAnswer{TaskID: task.ID, Text: strings.TrimSpace(*a.OpenText)})
 			}
 			continue
 		}
-		// Choice question: exactly one real solution, no guessing.
-		if len(a.ChoiceIndices) != 1 || a.ChoiceIndices[0] < 0 || a.ChoiceIndices[0] >= len(task.Solutions) {
-			return nil, fmt.Errorf("multiapply: test task %s: no valid choice (indices %v)", task.ID, a.ChoiceIndices)
+		// Choice question: answer with the most probable option (T85).
+		if len(a.ChoiceIndices) == 0 || a.ChoiceIndices[0] < 0 || a.ChoiceIndices[0] >= len(task.Solutions) {
+			f.log.Warn("multiapply: test choice skipped — no valid option", "task", task.ID, "indices", a.ChoiceIndices)
+			continue
 		}
 		answers = append(answers, hhapi.TestAnswer{TaskID: task.ID, SolutionID: task.Solutions[a.ChoiceIndices[0]].ID})
 	}
