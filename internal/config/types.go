@@ -154,9 +154,13 @@ type Proxy struct {
 
 // Account is one hh.ru account: identity, transport and rate knobs.
 type Account struct {
-	DisplayName   string            `toml:"display_name"`
-	CookieFile    string            `toml:"cookie_file"`
-	ProxyRef      string            `toml:"proxy_ref"` // "" = direct (explicitly allowed)
+	DisplayName string `toml:"display_name"`
+	CookieFile  string `toml:"cookie_file"`
+	ProxyRef    string `toml:"proxy_ref"` // "" = direct (explicitly allowed)
+	// UserAgent is inert since T82 (kept for backwards compatibility):
+	// the wire UA comes from the captured browser spec (the stealth
+	// profile's own identity) on every lane — this field is never read
+	// for requests; see docs/CONFIGURATION.md.
 	UserAgent     string            `toml:"user_agent"`
 	Headers       map[string]string `toml:"headers"`
 	Concurrency   int               `toml:"concurrency"`

@@ -117,8 +117,9 @@ Chrome — фича opt-in), santhosh-tekuri/jsonschema/v6, agnivade/levenshtein
   аккаунт: `captcha_chain = ["cap1","cap2"]` (failover по порядку; провайдеры шарятся)
 - `[proxy.<id>]` type socks5|http|https, host, port, user, pass_env (пароли — только env/vault);
   аккаунт `proxy_ref` опционален, шаринг разрешён
-- `[accounts.<id>]` display_name, cookie_file, proxy_ref?, user_agent, headers, rps,
-  daily_apply_cap (дефолт 200), captcha_chain, profile_file? (override), concurrency
+- `[accounts.<id>]` display_name, cookie_file, proxy_ref?, headers, rps,
+  daily_apply_cap (дефолт 200), captcha_chain, profile_file? (override), concurrency;
+  `user_agent` — inert с T82 (UA = захваченный стелс-профиль браузера, см. docs/CONFIGURATION.md)
 - `[ai]` daily_budget (0=безлимит); `[ai.providers.<id>]` dialect="openai-chat"|"openai-responses"|"anthropic-messages", base_url, key_env;
   `[ai.models.<id>]` model, reasoning_effort, max_output_tokens, temperature, fallback;
   `[ai.tasks.<task>]` model_profile, prompt: inline|file, cache_ttl; `[ai.pricing]` (опц.)

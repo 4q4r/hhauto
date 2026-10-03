@@ -94,6 +94,7 @@
 # [accounts.main]
 # display_name = "Primary"
 # user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+#                                       # НЕ ИСПОЛЬЗУЕТСЯ (T82): UA берётся из захваченного стелс-профиля браузера
 # proxy_ref = "socks5-1"                # "" = direct
 # rps = 0.5                             # per-account request rate cap
 # concurrency = 2
@@ -403,7 +404,13 @@
 `firefox_*`), старший профиль с версией ≤ версии UA (Chrome/138 → `chrome_133`,
 Firefox/155 → `firefox_148`). Точного совпадения мажора в библиотеке нет —
 WARN в лог при старте; неизвестное семейство UA → дефолтный профиль
-библиотеки + WARN. Поведение (куки/персистентность, retry/backoff,
+библиотеки + WARN.
+
+**T82:** конфиговый `user_agent` аккаунта НЕ ИСПОЛЬЗУЕТСЯ (inert): на всех
+дорогах — API (tls-client), браузерный редактор, testsolve, capture — уходит
+ровно UA захваченного стелс-профиля браузера из
+`data_dir/browser/tls_spec.json` (поле оставлено для обратной совместимости).
+Спека — единый источник правды: UA и JA3 описывают один и тот же браузер. Поведение (куки/персистентность, retry/backoff,
 rate-лимит, редиректы с региональным пиннингом и хоп-куками, прокси из
 `[proxy.*]` через `SetProxy` — socks5/http/https с кредами в userinfo,
 таймаут 30 с на хоп) сохранено; редиректы водятся вручную — у tls-client нет

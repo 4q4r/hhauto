@@ -77,6 +77,8 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # [accounts.main]
 # display_name = "Primary"
 # user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+#                                       # НЕ ИСПОЛЬЗУЕТСЯ (T82): UA берётся из захваченного стелс-профиля
+#                                       # браузера (data_dir/browser/tls_spec.json) на всех дорогах
 # proxy_ref = "socks5-1"                # "" = direct
 # rps = 0.5                             # per-account request rate cap
 # concurrency = 2
