@@ -120,7 +120,11 @@ type EmployerRating struct {
 // alreadyApplied / responseImpossible) plus `responsePopup` — see
 // testdata/live/popup.json.
 type ApplyMeta struct {
-	HasTests              bool     `json:"has_tests"`
+	HasTests bool `json:"has_tests"`
+	// TestRequired is hh's own popup refusal {"type":"test-required"} —
+	// the T83 live form of a test-gated vacancy (no responseStatus modal
+	// at all). Same handling as HasTests.
+	TestRequired          bool     `json:"test_required,omitempty"`
 	LetterRequired        bool     `json:"letter_required"` // shortVacancy.@responseLetterRequired
 	ResumeInconsistencies []string `json:"resume_inconsistencies,omitempty"`
 	AcceptAutoResponse    bool     `json:"accept_auto_response,omitempty"`   // shortVacancy.autoResponse

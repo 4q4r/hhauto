@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"net/url"
 	"strconv"
 )
@@ -107,12 +108,23 @@ func (c *Client) VacancyTests(ctx context.Context, vacancyID int64) (*VacancyTes
 // extractVacancyTests locates the vacancyTests key anywhere in the document
 // (the state rides an inline script whose exact container is unstable) and
 // decodes the value as {vacancyID: envelope}. Tolerant to number/string
-// key drift via json.RawMessage.
+// key drift via json.RawMessage. T83 live form: the whole state may be
+// HTML-escaped (every quote is &#34;) — the escaped key is located and the
+// remainder unescaped before decoding.
 func extractVacancyTests(body []byte) (map[string]json.RawMessage, bool) {
 	const key = `"vacancyTests"`
 	i := bytes.Index(body, []byte(key))
 	if i < 0 {
-		return nil, false
+		const escKey = "&#34;vacancyTests&#34;"
+		j := bytes.Index(body, []byte(escKey))
+		if j < 0 {
+			return nil, false
+		}
+		body = []byte(html.UnescapeString(string(body[j:])))
+		i = bytes.Index(body, []byte(key))
+		if i < 0 {
+			return nil, false
+		}
 	}
 	j := i + len(key)
 	for j < len(body) && (body[j] == ' ' || body[j] == ':' || body[j] == '\n' || body[j] == '\r' || body[j] == '\t') {

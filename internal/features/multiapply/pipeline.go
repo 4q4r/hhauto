@@ -187,10 +187,28 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 
 	// Plain failure.
 	_ = featurekit.FinishIntent(ctx, f.opt.DB, claim, err)
+	if skip := f.failApply(ctx, runID, accountID, resumeHash, v, letter, err, stats); skip != "" {
+		return "", skip
+	}
+	return "", ""
+}
+
+// failApply records a plain (non-ambiguous, non-stopping) apply failure:
+// the T77 terminal registry, the failed ledger row, the apply.error metric
+// and the T69 console line. Returns a skip reason when the failure settles
+// the vacancy as a skip instead — the T83 last line: hh itself refusing
+// with test-required (the popup detection missed the flag) is the T77
+// terminal skip, never the console error line, never an apply.error metric.
+func (f *Feature) failApply(ctx context.Context, runID, accountID, resumeHash string,
+	v hhapi.Vacancy, letter string, err error, stats *passStats,
+) string {
 	// T77: hh's 400/422 is a permanent client-side answer — mark the
 	// vacancy terminal so no other run in this pass repeats the POST.
 	if errors.Is(err, hhapi.ErrValidation) {
 		f.markTerminalFailed(accountID, v.ID)
+		if testRequiredMarker(err) {
+			return "test_required"
+		}
 	}
 	f.createApplication(ctx, runID, accountID, resumeHash, v, "failed", letter, err.Error(), stats)
 	f.incr(ctx, "apply.error")
@@ -198,7 +216,7 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 	// record stays visible at debug level (one banner per event on the
 	// default console — T52).
 	f.log.Debug("multiapply: apply failed", "vacancy", v.ID, "err", err)
-	return "", ""
+	return ""
 }
 
 // sendApply performs one Apply round trip; applyTest (T80, may be nil)
@@ -529,6 +547,16 @@ func alreadyMarker(err error) bool {
 	}
 	body := strings.ToLower(se.BodySnippet)
 	return strings.Contains(body, "уже") || strings.Contains(body, "already")
+}
+
+// testRequiredMarker reports hh's structured test-required refusal on the
+// apply POST (the T83 live form: {"error":"test-required"}).
+func testRequiredMarker(err error) bool {
+	var se *hhapi.StatusError
+	if !errors.As(err, &se) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(se.BodySnippet), "test-required")
 }
 
 // countToday counts today's applications for account+run. Live mode counts
@@ -881,7 +909,7 @@ func (f *Feature) popupGate(ctx context.Context, accountID string, api hhapi.HHA
 		// one request earlier.
 		return "", "already_applied", false, nil
 	}
-	if meta.HasTests {
+	if meta.HasTests || meta.TestRequired {
 		stop, skip, tests := f.fetchVacancyTests(ctx, accountID, api, v)
 		if stop != "" || skip != "" {
 			return stop, skip, false, nil

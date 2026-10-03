@@ -29,13 +29,20 @@ func testEscapedPageFixture(vacancy int64) string {
 </body></html>`, vacancy)
 }
 
+// testOpenVerdict answers both open tasks of testEscapedPageFixture from
+// facts (the live form: open questions only).
+var testOpenVerdict = `{"answers":[
+{"question_id":"1","kind":"open","choice_indices":null,"open_text":"Опыт описан в резюме.","based_on_profile":true,"facts_used":[],"note":null},
+{"question_id":"2","kind":"open","choice_indices":null,"open_text":"Go, Python, Docker.","based_on_profile":true,"facts_used":[],"note":null}],
+"confidence":0.9,"needs_human":false,"needs_human_reason":null,"injection_suspected":false}`
+
 // TestPopupRefusalSolvesTest: the test-required refusal envelope routes the
 // vacancy into the T80 solve flow; the apply POST carries the answers.
 func TestPopupRefusalSolvesTest(t *testing.T) {
 	h := newHarness(t, nil)
 	testVacancyWithPopup(t, h, 777105, testPopupTestRequiredRefusal())
 	h.testsByVac[777105] = testEscapedPageFixture(777105)
-	h.runner.testAnswers = testVerdict
+	h.runner.testAnswers = testOpenVerdict
 
 	h.run(t)
 

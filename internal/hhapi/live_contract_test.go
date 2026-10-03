@@ -111,6 +111,23 @@ func TestLiveApplyPopupLetterRequiredFromShortVacancy(t *testing.T) {
 	}
 }
 
+// T83 live form (2026-10-03): for a test-gated vacancy the popup answers
+// with the refusal envelope — no responseStatus at all. The parser must
+// surface it as TestRequired instead of a silent zero-value ApplyMeta.
+func TestLiveApplyPopupTestRequiredRefusal(t *testing.T) {
+	body := []byte(`{"type":"test-required","redirect_uri":"/applicant/vacancy_response?vacancyId=42&startedWithQuestion=false"}`)
+	meta, err := parseApplyPopup(body, 42)
+	if err != nil {
+		t.Fatalf("parseApplyPopup: %v", err)
+	}
+	if !meta.TestRequired {
+		t.Fatalf("meta = %+v, want TestRequired", meta)
+	}
+	if meta.HasTests || meta.AlreadyApplied || meta.LetterRequired {
+		t.Fatalf("meta = %+v (refusal envelope carries nothing else)", meta)
+	}
+}
+
 func TestLiveEmployerRating(t *testing.T) {
 	r, err := parseEmployerRating(readLive(t, "rating.json"), 10000007, liveNow)
 	if err != nil {
