@@ -74,6 +74,22 @@ func resolveUserAgent(acct config.Account, spec *tlsfp.Spec) (string, bool) {
 	return ua, ua != acct.UserAgent
 }
 
+// applySpecUserAgent pins one account's wire UA to the captured spec
+// (T82): the configured user_agent is inert, so a spec without a UA
+// fails the build loudly instead of leaking the config value.
+func applySpecUserAgent(acct *config.Account, spec *tlsfp.Spec, id string, log *slog.Logger) error {
+	ua, overridden := resolveUserAgent(*acct, spec)
+	if ua == "" {
+		return fmt.Errorf("engine: account %s: captured spec carries no User-Agent (the configured user_agent is inert — re-run hhauto tls-probe)", id)
+	}
+	if overridden {
+		log.Info("engine: using the captured browser User-Agent",
+			"account", id, "configured", acct.UserAgent, "captured", ua)
+	}
+	acct.UserAgent = ua
+	return nil
+}
+
 // accountTransport resolves the transport wiring for one account:
 // fail-closed proxy resolution straight from the same proxy table the
 // registry was built from (an unknown ref is an error, never a direct
@@ -147,15 +163,9 @@ func BuildAPIClients(ctx context.Context, cfg *config.Config, reg proxy.Registry
 	}
 	for _, id := range ids {
 		acct := cfg.Accounts[id]
-		ua, overridden := resolveUserAgent(acct, browserSpec)
-		if ua == "" {
-			return nil, fmt.Errorf("engine: account %s: captured spec carries no User-Agent (the configured user_agent is inert — re-run hhauto tls-probe)", id)
+		if err := applySpecUserAgent(&acct, browserSpec, id, log); err != nil {
+			return nil, err
 		}
-		if overridden {
-			log.Info("engine: using the captured browser User-Agent",
-				"account", id, "configured", acct.UserAgent, "captured", ua)
-		}
-		acct.UserAgent = ua
 		dialer, opts, err := accountTransport(cfg, reg, acct, mode, id)
 		if err != nil {
 			return nil, err
