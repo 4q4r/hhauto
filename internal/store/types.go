@@ -69,6 +69,23 @@ type Application struct {
 	AppliedAt     *time.Time
 }
 
+// CaptchaPostponed is one captcha-parked vacancy (T89): the vacancy waits
+// for retry_at, then the pass re-examines it with fresh card data (archived
+// → skip, alive → re-attack). retry_count bounds the retry cycle. It is
+// deliberately not an applications row — a postpone never blocks a future
+// apply.
+type CaptchaPostponed struct {
+	ID         int64
+	AccountID  string
+	ResumeHash string
+	VacancyID  int64
+	RunID      string
+	RetryAt    time.Time
+	RetryCount int       // read-back after Park: the number of parks so far
+	CreatedAt  time.Time // stamped by the store clock
+	UpdatedAt  time.Time // stamped by the store clock
+}
+
 // Chat tracks one chatik conversation and its chatops state machine.
 type Chat struct {
 	ID                  int64 // assigned on insert, unchanged on conflict

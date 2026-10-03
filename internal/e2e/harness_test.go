@@ -108,6 +108,11 @@ enabled = true
 ai_filter = %t
 min_match_percent = 60
 
+# The e2e suite pins the pre-T89 captcha contract (day breaker + failed
+# records); the postpone policy lives in the multiapply tests (T89).
+[features.multiapply.captcha]
+mode = "skip"
+
 [features.chatops]
 enabled = %v
 poll_interval = "5m"

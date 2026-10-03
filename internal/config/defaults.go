@@ -84,6 +84,7 @@ func applyDefaults(c *Config) {
 		}
 	}
 	applySetkaDefaults(c)
+	applyCaptchaDefaults(c)
 
 	for _, d := range []intDefault{
 		{&c.Features.AutoClone.Improve.Editor.PageTimeoutSec, 120},
@@ -170,6 +171,29 @@ func applyAccountDefaults(a *Account) {
 	}
 	if a.RPS == 0 {
 		a.RPS = 0.5
+	}
+}
+
+// applyCaptchaDefaults fills the [features.multiapply.captcha] defaults
+// (T89 owner behavior): postpone mode, limit 3, 45m cooldown, 2h retry
+// delay, 3 retries per vacancy.
+func applyCaptchaDefaults(c *Config) {
+	for _, d := range []stringDefault{
+		{&c.Features.MultiApply.Captcha.Mode, CaptchaModePostpone},            // postpone instead of the captcha skip
+		{&c.Features.MultiApply.Captcha.Cooldown, DefaultCaptchaCooldown},     // apply-phase pause
+		{&c.Features.MultiApply.Captcha.RetryAfter, DefaultCaptchaRetryAfter}, // postponed re-attack delay
+	} {
+		if *d.dst == "" {
+			*d.dst = d.val
+		}
+	}
+	for _, d := range []intDefault{
+		{&c.Features.MultiApply.Captcha.Limit, DefaultCaptchaLimit},           // the 3rd captcha pauses the pass
+		{&c.Features.MultiApply.Captcha.MaxRetries, DefaultCaptchaMaxRetries}, // per-vacancy retry budget
+	} {
+		if *d.dst == 0 {
+			*d.dst = d.val
+		}
 	}
 }
 

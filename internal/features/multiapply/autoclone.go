@@ -121,6 +121,11 @@ type passStats struct {
 	// gray-band policy routed a needs_human verdict to apply, consumed by
 	// the apply-record points (console note + ledger origin flag).
 	gray *relevance.Verdict
+	// T89 captcha postpone: the pass's challenge counter and the one-shot
+	// cooldown trip. Per-pass like the rest of the struct — concurrent
+	// account passes never share them.
+	captchaHits   int
+	captchaCooled bool
 }
 
 func newPassStats() *passStats {
@@ -157,6 +162,13 @@ func (f *Feature) runPass(ctx context.Context, runID string, run config.Run, acc
 	batch := map[int64]bool{}
 	stats := newPassStats()
 
+	// T89: due postpones re-attack before the fresh pool — the "потом" of
+	// a captcha park. A stop here halts the whole pass.
+	if stop := f.processPostponedDue(ctx, runID, run, accountID, api, prof, resumeHash, rc, stats, batch); stop != "" {
+		f.stopPass(ctx, runID, accountID, stop, stats)
+		return vacancies, true, nil
+	}
+
 	// Phase 1 (T84): F2-F6 for the whole pool — every surviving vacancy
 	// carries its scorer verdict before anything is applied, so the apply
 	// queue can be ordered best-first.
@@ -188,7 +200,8 @@ func (f *Feature) runPass(ctx context.Context, runID string, run config.Run, acc
 
 	// Phase 2: F7-F8 in queue order; a stop (quota exhausted, logout)
 	// settles the pass exactly as before.
-	for _, cand := range cands {
+	for i := 0; i < len(cands); i++ {
+		cand := cands[i]
 		if f.opt.Stopped != nil && f.opt.Stopped(ctx) {
 			f.log.Info("multiapply: kill switch tripped — stopping the vacancy batch",
 				"run", runID, "account", accountID)
@@ -197,21 +210,22 @@ func (f *Feature) runPass(ctx context.Context, runID string, run config.Run, acc
 		stop, skip := f.applyCandidate(ctx, runID, run, accountID, api, prof, resumeHash, &cand, rc, stats)
 		switch {
 		case stop != "":
-			f.incr(ctx, "apply.stop."+stop)
-			if stop != stopLoggedOut { // a logged-out account needs a human, not a tomorrow retry
-				f.queueTomorrow(ctx, accountID, runID)
-			}
-			// T69: a stopped pass still reports the counters it gathered.
-			f.console.Digest(console.DigestLine{
-				Applied: stats.applied, Letters: stats.letters,
-				Skipped: stats.skipped(), SkipBreakdown: console.SkipBreakdownByReason(stats.skips),
-				Errors: stats.errors,
-			})
+			f.stopPass(ctx, runID, accountID, stop, stats)
 			return vacancies, true, nil
 		case skip != "":
 			f.incr(ctx, "apply.skip."+skip)
 			stats.skips[skip]++
 			f.console.Skip(accountID, skip, cand.v)
+		}
+		// T89: the limit-th challenge of the pass pauses the apply phase —
+		// the remaining candidates prepare their letters during the
+		// cooldown and apply after the resume (ready first).
+		if !stats.captchaCooled && i+1 < len(cands) && f.captchaPostpone() && stats.captchaHits >= f.captchaCfg().Limit {
+			stats.captchaCooled = true
+			if f.captchaCooldown(ctx, runID, run, accountID, api, prof, resumeHash, cands[i+1:], rc, stats) {
+				return vacancies, true, nil
+			}
+			break // the drain consumed the remaining queue
 		}
 	}
 	f.console.Digest(console.DigestLine{
@@ -220,6 +234,22 @@ func (f *Feature) runPass(ctx context.Context, runID string, run config.Run, acc
 		Errors: stats.errors,
 	})
 	return vacancies, false, nil
+}
+
+// stopPass settles a stopped pass: the stop metric, the tomorrow re-arm
+// (a logged-out account needs a human, not a retry) and the T69 digest
+// with the counters gathered so far.
+func (f *Feature) stopPass(ctx context.Context, runID, accountID, stop string, stats *passStats) {
+	f.incr(ctx, "apply.stop."+stop)
+	if stop != stopLoggedOut { // a logged-out account needs a human, not a tomorrow retry
+		f.queueTomorrow(ctx, accountID, runID)
+	}
+	// T69: a stopped pass still reports the counters it gathered.
+	f.console.Digest(console.DigestLine{
+		Applied: stats.applied, Letters: stats.letters,
+		Skipped: stats.skipped(), SkipBreakdown: console.SkipBreakdownByReason(stats.skips),
+		Errors: stats.errors,
+	})
 }
 
 // maybeAutoClone evaluates pool exhaustion and, when the gates allow it,

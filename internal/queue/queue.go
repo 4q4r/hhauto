@@ -14,16 +14,17 @@ type TaskKind string
 
 // Task kinds registered by the CLI wiring (T13) and their features.
 const (
-	KindLift            TaskKind = "lift"
-	KindSearch          TaskKind = "search"
-	KindApply           TaskKind = "apply"
-	KindChatSync        TaskKind = "chat_sync"
-	KindWarmupPing      TaskKind = "warmup_ping"
-	KindSolveTest       TaskKind = "solve_test"
-	KindCollectContacts TaskKind = "collect_contacts"
-	KindSendEmail       TaskKind = "send_email"
-	KindClassify        TaskKind = "classify"
-	KindSetkaDM         TaskKind = "setka_dm" // T61: post-apply Setka DM flow
+	KindLift             TaskKind = "lift"
+	KindSearch           TaskKind = "search"
+	KindApply            TaskKind = "apply"
+	KindChatSync         TaskKind = "chat_sync"
+	KindWarmupPing       TaskKind = "warmup_ping"
+	KindSolveTest        TaskKind = "solve_test"
+	KindCollectContacts  TaskKind = "collect_contacts"
+	KindSendEmail        TaskKind = "send_email"
+	KindClassify         TaskKind = "classify"
+	KindSetkaDM          TaskKind = "setka_dm"          // T61: post-apply Setka DM flow
+	KindCaptchaPostponed TaskKind = "captcha_postponed" // T89: parked vacancy re-attack at retry_at
 )
 
 // Priority orders tasks within an account: lower value runs first (chat

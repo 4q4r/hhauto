@@ -83,10 +83,11 @@ func TestDryRunThenLiveRunApplies(t *testing.T) {
 	}
 }
 
-// FIX 3: captcha circuit breaker — after the first failed Solve the flag is
-// set, the webhook fires, and further vacancies skip without Solve calls.
+// FIX 3: captcha circuit breaker (skip policy, T89) — after the first
+// failed Solve the flag is set, the webhook fires, and further vacancies
+// skip without Solve calls.
 func TestCaptchaBreakerTripsOnSolveFailure(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, func(c *config.Config) { c.Features.MultiApply.Captcha.Mode = config.CaptchaModeSkip })
 	h.chain.err = errors.New("all providers failed")
 	h.searchItems = []string{
 		vacItem(777042, "Go Dev A", 9001, "Corp LLC", ""),
@@ -126,7 +127,7 @@ func TestCaptchaBreakerTripsOnSolveFailure(t *testing.T) {
 
 // FIX 3b: no configured chain trips the breaker too.
 func TestCaptchaBreakerTripsWithoutChain(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, func(c *config.Config) { c.Features.MultiApply.Captcha.Mode = config.CaptchaModeSkip })
 	h.noChain = true
 	h.searchItems = []string{vacItem(777044, "Go Dev", 9001, "Corp LLC", "")}
 	h.ratings[9001] = hhRating(4.5, 4.7, 100)
