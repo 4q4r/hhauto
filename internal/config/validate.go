@@ -120,7 +120,36 @@ func validateMultiApply(c *Config) error {
 	case c.Features.MultiApply.Classifier != ClassifierJev && jevOn:
 		return fmt.Errorf("features.multiapply.classifier: exactly one classifier is allowed (jev OR llm, never one after another): [ai.jev].enabled=true requires classifier=\"jev\" — set it or disable ai.jev")
 	}
+	if err := validateMultiApplyCaptcha(&c.Features.MultiApply.Captcha); err != nil {
+		return err
+	}
 	return validateCoverLetter(&c.Features.MultiApply.CoverLetter, c)
+}
+
+// validateCaptcha checks [features.multiapply.captcha] (T89): the mode
+// vocabulary and the positive durations; zero counts mean "unset" (the
+// defaults apply).
+func validateMultiApplyCaptcha(m *MultiApplyCaptcha) error {
+	switch m.Mode {
+	case "", CaptchaModePostpone, CaptchaModeSkip:
+	default:
+		return fmt.Errorf("features.multiapply.captcha.mode %q: must be one of postpone | skip", m.Mode)
+	}
+	for name, d := range map[string]string{"cooldown": m.Cooldown, "retry_after": m.RetryAfter} {
+		if d == "" {
+			continue
+		}
+		if v, err := time.ParseDuration(d); err != nil || v <= 0 {
+			return fmt.Errorf("features.multiapply.captcha.%s %q: must be a positive duration (e.g. 45m)", name, d)
+		}
+	}
+	if m.Limit < 0 {
+		return fmt.Errorf("features.multiapply.captcha.limit %d: must be >= 0", m.Limit)
+	}
+	if m.MaxRetries < 0 {
+		return fmt.Errorf("features.multiapply.captcha.max_retries %d: must be >= 0", m.MaxRetries)
+	}
+	return nil
 }
 
 // validateCoverLetter checks [features.multiapply.cover_letter] (T60).

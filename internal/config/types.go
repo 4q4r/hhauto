@@ -596,6 +596,25 @@ const (
 	GrayBandSkip       = "skip"
 )
 
+// Captcha-policy vocabulary for [features.multiapply.captcha] (T89 owner
+// decision): postpone parks a captcha-hit vacancy (retry_at = now +
+// retry_after) and pauses the apply phase after limit hits in a pass (the
+// AI work continues); skip restores the pre-T89 day-scoped breaker skip.
+const (
+	CaptchaModePostpone = "postpone"
+	CaptchaModeSkip     = "skip"
+)
+
+// Defaults of [features.multiapply.captcha] (owner behavior). The multiapply
+// policy resolver re-applies them for hand-built configs that bypass
+// applyDefaults — keep the vocabulary in one place.
+const (
+	DefaultCaptchaLimit      = 3
+	DefaultCaptchaCooldown   = "45m"
+	DefaultCaptchaRetryAfter = "2h"
+	DefaultCaptchaMaxRetries = 3
+)
+
 // MultiApply configures the apply pipeline.
 type MultiApply struct {
 	Enabled            bool `toml:"enabled"`
@@ -631,6 +650,31 @@ type MultiApply struct {
 	// answers past formal language requirements. Mixed inconsistency
 	// sets (any non-LANGUAGE type) still skip. Default true.
 	LetterIgnoreLanguage *bool `toml:"letter_ignore_language"`
+	// Captcha (T89) sets the captcha policy. postpone (the default — the
+	// owner's behavior) parks the captcha-hit vacancy for a retry_at
+	// re-attack and pauses the apply phase after limit challenges in one
+	// pass (the scoring/letters keep running, the ready applies fire
+	// first after the cooldown). skip keeps the pre-T89 behavior: the
+	// day-scoped circuit breaker and the captcha_exhausted skips.
+	Captcha MultiApplyCaptcha `toml:"captcha"`
+}
+
+// MultiApplyCaptcha is the [features.multiapply.captcha] section (T89).
+type MultiApplyCaptcha struct {
+	// Mode selects postpone | skip ("" behaves as postpone).
+	Mode string `toml:"mode"`
+	// Limit is the captcha-hit count of one pass that trips the apply
+	// cooldown (the Nth challenge pauses the responses).
+	Limit int `toml:"limit"`
+	// Cooldown is the apply-phase pause after the limit (a positive
+	// duration, e.g. 45m); the AI work continues during the pause.
+	Cooldown string `toml:"cooldown"`
+	// RetryAfter schedules the postponed vacancy's re-attack (a positive
+	// duration, e.g. 2h).
+	RetryAfter string `toml:"retry_after"`
+	// MaxRetries bounds the per-vacancy postpone cycle; exhausting it
+	// settles the vacancy as the captcha_exhausted skip.
+	MaxRetries int `toml:"max_retries"`
 }
 
 // MultiApplyCoverLetter is the [features.multiapply.cover_letter] section

@@ -441,6 +441,10 @@ func (rt *Runtime) registerFeatureHandlers(lift *autolift.Feature, apply *multia
 		set(queue.KindApply, func(ctx context.Context, _ *engine.TaskContext, task queue.Task) error {
 			return apply.HandleTask(ctx, task)
 		})
+		// T89: the parked vacancy's wake at retry_at (daemon maintenance).
+		set(queue.KindCaptchaPostponed, func(ctx context.Context, _ *engine.TaskContext, task queue.Task) error {
+			return apply.HandlePostponed(ctx, task)
+		})
 	}
 	if rt.Cfg.Features.ChatOps.Enabled {
 		set(queue.KindChatSync, func(ctx context.Context, _ *engine.TaskContext, task queue.Task) error {

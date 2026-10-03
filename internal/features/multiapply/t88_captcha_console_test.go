@@ -15,7 +15,8 @@ import (
 // The first captcha challenge (no solver chain): the yellow captcha line
 // with title and employer — not the red error, not the raw challenge text.
 func TestConsoleCaptchaFirstHit(t *testing.T) {
-	h := newHarness(t, nil)
+	// mode=skip: the T88 captcha-line surface (postpone parks its own line, T89).
+	h := newHarness(t, func(c *config.Config) { c.Features.MultiApply.Captcha.Mode = config.CaptchaModeSkip })
 	buf := h.withConsole(t, func(c *config.Console) { c.Skips = "none" })
 	h.noChain = true
 	h.searchItems = []string{vacItem(777060, "Специалист по автоматизации", 9001, "X5 Tech", "")}
@@ -47,7 +48,8 @@ func TestConsoleCaptchaFirstHit(t *testing.T) {
 // the vacancy that hit the challenge gets the captcha line, the rest of the
 // pass skips with the Russian exhausted label.
 func TestConsoleCaptchaBreakerOnce(t *testing.T) {
-	h := newHarness(t, nil)
+	// mode=skip: the T88 breaker surface (postpone never trips it, T89).
+	h := newHarness(t, func(c *config.Config) { c.Features.MultiApply.Captcha.Mode = config.CaptchaModeSkip })
 	buf := h.withConsole(t, func(c *config.Console) { c.Skips = "interesting,aggregate" })
 	h.noChain = true // the owner's setup: no solver chain configured
 	h.searchItems = []string{

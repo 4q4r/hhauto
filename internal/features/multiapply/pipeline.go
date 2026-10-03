@@ -164,7 +164,39 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 	if skip != "" {
 		return "", skip
 	}
+	return f.submitApply(ctx, runID, run, accountID, api, prof, resumeHash, v, letter, tests, rc, stats)
+}
 
+// prepareDeferred runs the non-mutating half of the cascade during the
+// captcha cooldown (T89): the daily quota, the popup feasibility probe and
+// the cover letter — the POST waits for the resume (AI work ≠ apply POST).
+func (f *Feature) prepareDeferred(ctx context.Context, runID string, run config.Run, accountID string,
+	api hhapi.HHAPI, prof profile.Profile, resumeHash string, cand *candidate, stats *passStats,
+) (letter string, tests *hhapi.VacancyTest, stop, skip string) {
+	if cand.gray {
+		stats.gray = cand.verdict
+	}
+	if qstop, qskip := f.quotaCheck(ctx, runID, run, accountID, cand.v); qstop != "" || qskip != "" {
+		return "", nil, qstop, qskip
+	}
+	pstop, pskip, letterRequired, tests := f.popupGate(ctx, accountID, api, cand.v)
+	if pstop != "" || pskip != "" {
+		return "", nil, pstop, pskip
+	}
+	letter, lskip := f.prepareLetter(ctx, runID, run, accountID, api, prof, cand.v, resumeHash, letterRequired, stats)
+	return letter, tests, "", lskip
+}
+
+// submitApply is the mutating tail of the apply: the dry-run record, the
+// pacer, the intent fence, the test solve and the POST with its captcha
+// policy (T89 postpone / T88 breaker) and ambiguous reconcile. The letter
+// arrives pre-built — the T89 cooldown drain reuses this path for the
+// letters prepared during the pause.
+func (f *Feature) submitApply(ctx context.Context, runID string, _ config.Run, accountID string,
+	api hhapi.HHAPI, prof profile.Profile, resumeHash string, v hhapi.Vacancy, letter string,
+	tests *hhapi.VacancyTest, rc *cloneRunState,
+	stats *passStats,
+) (stop, skip string) {
 	if f.dryRunApply(ctx, runID, accountID, resumeHash, v, letter, stats) {
 		return "", ""
 	}
@@ -205,7 +237,7 @@ func (f *Feature) applyOne(ctx context.Context, runID string, run config.Run, ac
 		}
 	}
 
-	skip, err = f.sendWithCaptcha(ctx, accountID, api, v, resumeHash, letter, applyTest, claim)
+	skip, err = f.sendWithCaptcha(ctx, runID, accountID, api, v, resumeHash, letter, applyTest, claim, stats)
 	if skip != "" {
 		return "", skip
 	}
@@ -1008,6 +1040,12 @@ func (f *Feature) popupGate(ctx context.Context, accountID string, api hhapi.HHA
 		// one request earlier.
 		return "", "already_applied", false, nil
 	}
+	if meta.ResponseImpossible {
+		// T89: hh itself declares the vacancy impossible to respond to
+		// (closed/archived) — the postpone re-exam settles it as
+		// vacancy_archived.
+		return "", skipVacancyArchived, false, nil
+	}
 	if meta.HasTests || meta.TestRequired {
 		stop, skip, tests := f.fetchVacancyTests(ctx, accountID, api, v)
 		if stop != "" || skip != "" {
@@ -1162,21 +1200,89 @@ func grayNote(stats *passStats) string {
 	return fmt.Sprintf("%s %d", stats.gray.Band, stats.gray.Score)
 }
 
-// sendWithCaptcha sends the apply once and, on a captcha challenge, honors
-// the circuit breaker or solves and retries exactly once. skip is set when
-// the vacancy is skipped without an error (captcha breaker open).
-func (f *Feature) sendWithCaptcha(ctx context.Context, accountID string, api hhapi.HHAPI, v hhapi.Vacancy,
-	resumeHash, letter string, applyTest *hhapi.ApplyTest, claim featurekit.IntentClaim) (string, error) {
+// sendWithCaptcha sends the apply once and, on a captcha challenge, either
+// parks it (postpone policy, T89) or honors the circuit breaker / solves
+// and retries exactly once (skip policy, T88). skip is set when the vacancy
+// is parked or skipped without an error.
+func (f *Feature) sendWithCaptcha(ctx context.Context, runID, accountID string, api hhapi.HHAPI, v hhapi.Vacancy,
+	resumeHash, letter string, applyTest *hhapi.ApplyTest, claim featurekit.IntentClaim, stats *passStats,
+) (string, error) {
 	_, err := f.sendApply(ctx, api, v, resumeHash, letter, applyTest)
-	if errors.Is(err, hhapi.ErrCaptcha) {
-		if f.captchaExhausted(ctx, accountID) {
-			return f.captchaBreakerSkip(ctx, claim), nil
-		}
-		if f.solveCaptchaOrBreak(ctx, accountID) {
-			_, err = f.sendApply(ctx, api, v, resumeHash, letter, applyTest)
+	if !errors.Is(err, hhapi.ErrCaptcha) {
+		return "", err
+	}
+	// T89 postpone parks or solves without the day breaker; the T88 skip
+	// policy keeps the breaker flow. A solved challenge retries the POST
+	// once — settled=true means the vacancy is parked/skipped instead.
+	skip, settled, cerr := f.captchaOnChallenge(ctx, runID, accountID, api, v, resumeHash, letter, applyTest, claim, stats, err)
+	if settled {
+		return skip, nil
+	}
+	return "", cerr
+}
+
+// captchaOnChallenge dispatches one captcha challenge per the policy.
+// settled=true means the vacancy is parked or skipped without an error.
+func (f *Feature) captchaOnChallenge(ctx context.Context, runID, accountID string, api hhapi.HHAPI, v hhapi.Vacancy,
+	resumeHash, letter string, applyTest *hhapi.ApplyTest, claim featurekit.IntentClaim, stats *passStats,
+	challenge error,
+) (string, bool, error) {
+	if f.captchaPostpone() {
+		return f.postponeCaptcha(ctx, runID, accountID, api, v, resumeHash, letter, applyTest, claim, stats)
+	}
+	if f.captchaExhausted(ctx, accountID) {
+		return f.captchaBreakerSkip(ctx, claim), true, nil
+	}
+	if f.solveCaptchaOrBreak(ctx, accountID) {
+		_, cerr := f.sendApply(ctx, api, v, resumeHash, letter, applyTest)
+		return "", false, cerr
+	}
+	return "", false, challenge // the breaker-tripped challenge reaches failApply
+}
+
+// postponeCaptcha is the T89 postpone path for one challenge: a working
+// chain still solves and retries; an absent or failed one parks the vacancy
+// (never the day breaker). settled=true means the vacancy is parked (or
+// exhausted) and the caller returns the skip.
+func (f *Feature) postponeCaptcha(ctx context.Context, runID, accountID string, api hhapi.HHAPI, v hhapi.Vacancy,
+	resumeHash, letter string, applyTest *hhapi.ApplyTest, claim featurekit.IntentClaim, stats *passStats,
+) (string, bool, error) {
+	if f.solveCaptchaQuiet(ctx, accountID) {
+		_, err := f.sendApply(ctx, api, v, resumeHash, letter, applyTest)
+		if !errors.Is(err, hhapi.ErrCaptcha) {
+			// The retry landed (or failed with a non-captcha error) — the
+			// normal outcome path takes over.
+			return "", false, err
 		}
 	}
-	return "", err
+	// Abandon so a later pass may re-attack the vacancy (via the parked row
+	// or the fresh pool).
+	if aerr := featurekit.AbandonIntent(ctx, f.opt.DB, claim); aerr != nil {
+		f.log.Error("multiapply: intent abandon failed", "err", aerr)
+	}
+	if f.parkPostponed(ctx, runID, accountID, resumeHash, v, stats) {
+		return skipCaptchaExhausted, true, nil
+	}
+	return skipCaptchaPostponed, true, nil
+}
+
+// solveCaptchaQuiet solves one challenge via the account chain without the
+// day breaker (the T89 postpone path): a missing chain or a failed solve
+// just reports false — the park records the setback.
+func (f *Feature) solveCaptchaQuiet(ctx context.Context, accountID string) bool {
+	var chain captcha.Chain
+	var ok bool
+	if f.opt.ChainFor != nil {
+		chain, ok = f.opt.ChainFor(accountID)
+	}
+	if !ok || chain == nil {
+		return false
+	}
+	if _, serr := chain.Solve(ctx, captchaChallenge()); serr != nil {
+		return false
+	}
+	f.incr(ctx, "apply.captcha_retry")
+	return true
 }
 
 // captchaBreakerSkip abandons the apply intent (a later pass re-attacks the

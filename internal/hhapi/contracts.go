@@ -81,6 +81,7 @@ type Vacancy struct {
 	EmployerOnline        bool            `json:"employer_online,omitempty"` // manager activity (SSR)
 	AcceptTemp            bool            `json:"accept_temp,omitempty"`
 	HasTests              bool            `json:"has_tests,omitempty"`
+	Archived              bool            `json:"archived,omitempty"` // card payload only (T89 re-exam)
 	Raw                   json.RawMessage `json:"raw,omitempty"`
 }
 

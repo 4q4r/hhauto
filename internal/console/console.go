@@ -43,8 +43,11 @@ const (
 	defaultErrorTmpl   = `✗ Ошибка отклика: «{{.VacancyTitle}}» — {{.Employer}}: {{.Reason}}`
 	defaultLetterTmpl  = `? Письмо на проверку: «{{.VacancyTitle}}» — {{.Employer}}`
 	defaultCaptchaTmpl = `⚑ Капча: «{{.VacancyTitle}}» — {{.Employer}} · решателя не настроено, вакансия пропущена до следующего цикла`
-	defaultDigestTmpl  = `✓ Проход: откликов {{.Applied}} · писем на проверку {{.Letters}} · пропущено {{.Skipped}}{{if .SkipBreakdown}} ({{.SkipBreakdown}}){{end}} · ошибок {{.Errors}} · поднято {{.Lifts}}`
-	defaultLiftTmpl    = `↑ Поднято: «{{.ResumeTitle}}» · следующий подъём ~{{.NextAt}}`
+	// T89: the captcha postpone park — the vacancy waits for the retry
+	// moment instead of skipping.
+	defaultCaptchaPostponedTmpl = `· Отложено (капча): «{{.VacancyTitle}}» — {{.Employer}} · повтор после {{.NextAt}}`
+	defaultDigestTmpl           = `✓ Проход: откликов {{.Applied}} · писем на проверку {{.Letters}} · пропущено {{.Skipped}}{{if .SkipBreakdown}} ({{.SkipBreakdown}}){{end}} · ошибок {{.Errors}} · поднято {{.Lifts}}`
+	defaultLiftTmpl             = `↑ Поднято: «{{.ResumeTitle}}» · следующий подъём ~{{.NextAt}}`
 )
 
 // VacancyLine is the template data for the per-vacancy lines (applied,
@@ -60,6 +63,7 @@ type VacancyLine struct {
 	ResumeTitle  string // store snapshot title, short hash as the fallback
 	Reason       string
 	Note         string // applied-line suffix, e.g. "gray 50" (T75 gray-band origin)
+	NextAt       string // pre-formatted moment, e.g. the postpone retry time (T89)
 }
 
 // DigestLine is the template data for the end-of-pass digest. Skipped and
@@ -104,7 +108,8 @@ var templateSpecs = []templateSpec{
 	{"applied", defaultAppliedTmpl, func(c config.Console) string { return c.TemplateApplied }},
 	{"skip", defaultSkipTmpl, func(c config.Console) string { return c.TemplateSkip }},
 	{"error", defaultErrorTmpl, func(c config.Console) string { return c.TemplateError }},
-	{"captcha", defaultCaptchaTmpl, func(config.Console) string { return "" }}, // T88: fixed format — no [console] override (the Verdict precedent)
+	{"captcha", defaultCaptchaTmpl, func(config.Console) string { return "" }},                    // T88: fixed format — no [console] override (the Verdict precedent)
+	{"captcha_postponed", defaultCaptchaPostponedTmpl, func(config.Console) string { return "" }}, // T89: fixed format — the captcha family
 	{"letter", defaultLetterTmpl, func(c config.Console) string { return c.TemplateLetter }},
 	{"digest", defaultDigestTmpl, func(c config.Console) string { return c.TemplateDigest }},
 	{"lift", defaultLiftTmpl, func(c config.Console) string { return c.TemplateLift }},
@@ -225,6 +230,32 @@ func (s *Surface) CaptchaBreaker() {
 		return
 	}
 	s.fixed(ansiYellow, "⚑ Капча-брейкер: hh начал капчить, решателя нет — остальные вакансии прохода пропущены до следующего цикла")
+}
+
+// CaptchaPostponed renders the postpone park line (yellow, T89): the
+// captcha-hit vacancy waits for the retry moment instead of skipping.
+func (s *Surface) CaptchaPostponed(v hhapi.Vacancy, retryAt time.Time) {
+	if s == nil || !boolOn(s.cfg.Errors) {
+		return
+	}
+	s.render("captcha_postponed", ansiYellow, s.vacancyLine("", "", v, VacancyLine{NextAt: formatNextAt(retryAt)}))
+}
+
+// CaptchaCooldown renders the apply-phase pause line (yellow, T89): the
+// pass hit the captcha limit; the AI work continues during the pause.
+func (s *Surface) CaptchaCooldown(until time.Time) {
+	if s == nil || !boolOn(s.cfg.Errors) {
+		return
+	}
+	s.fixed(ansiYellow, fmt.Sprintf("· Капча-лимит: пауза откликов до %s — ИИ-работа продолжается", until.Format("15:04")))
+}
+
+// CaptchaResume renders the one-line post-cooldown resume (dim, T89).
+func (s *Surface) CaptchaResume(ready int) {
+	if s == nil || !boolOn(s.cfg.Errors) {
+		return
+	}
+	s.fixed(ansiDim, fmt.Sprintf("· Пауза окончена: отклики возобновлены · готовых %d", ready))
 }
 
 // Letter renders the needs-human cover letter line (yellow).
@@ -355,6 +386,8 @@ func (s *Surface) skipShown(reason string) bool {
 // the render point; reasons without an entry render verbatim.
 var skipLabels = map[string]string{
 	"captcha_exhausted": "капча (лимит прохода)",
+	"captcha_postponed": "капча (отложено)", // T89: the park renders its own line; this is the aggregate/all-mode label
+	"vacancy_archived":  "вакансия архивна", // T89: the re-exam's settle
 }
 
 // skipLabel resolves the human label for a skip reason.
@@ -379,6 +412,7 @@ var interestingReasons = map[string]bool{
 	"intent_error":        true,
 	"hh_limit":            true,
 	"captcha_exhausted":   true,
+	"vacancy_archived":    true, // T89: the re-exam's settle deserves a line
 }
 
 // skipCategory maps a skip reason onto its digest breakdown category
