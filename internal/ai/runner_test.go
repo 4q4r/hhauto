@@ -57,7 +57,7 @@ func oneModel(fallback string) map[string]config.AIModel {
 
 func taskWithTTL(ttl int) map[string]config.AITask {
 	return map[string]config.AITask{
-		"vacancy_scoring": {ModelProfile: "profile", CacheTTLHours: ttl},
+		"vacancy_scoring": {ModelProfile: "profile", CacheTTLHours: &ttl},
 	}
 }
 

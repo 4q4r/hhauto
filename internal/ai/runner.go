@@ -371,8 +371,8 @@ func (r *runner) run(ctx context.Context, accountID, entityType, entityID, runID
 	}
 
 	// 5) Cache the validated verdict.
-	if r.cache != nil && taskCfg.CacheTTLHours > 0 {
-		if err := r.cache.Set(ctx, cacheKey, verdict, time.Duration(taskCfg.CacheTTLHours)*time.Hour); err != nil {
+	if ttl := taskCfg.CacheTTL(); r.cache != nil && ttl > 0 {
+		if err := r.cache.Set(ctx, cacheKey, verdict, time.Duration(ttl)*time.Hour); err != nil {
 			r.log.Warn("ai: cache set failed", "err", err)
 		}
 	}

@@ -84,6 +84,7 @@ func applyDefaults(c *Config) {
 		}
 	}
 	applySetkaDefaults(c)
+	applyVerdictCacheDefaults(c)
 
 	for _, d := range []intDefault{
 		{&c.Features.AutoClone.Improve.Editor.PageTimeoutSec, 120},
@@ -155,6 +156,24 @@ func applyDefaults(c *Config) {
 	}
 	if len(c.Warmup.LadderHours) == 0 {
 		c.Warmup.LadderHours = []int{24, 48, 96}
+	}
+}
+
+// applyVerdictCacheDefaults fills the T91 verdict-cache default: the two
+// slow LLM tasks cache their verdicts for 24h by default (the owner pays
+// to re-roll identical inputs at 60-100s/vacancy; T86 report: 601/601 live
+// cache misses). An explicit cache_ttl_hours = 0 stays disabled; other
+// tasks are untouched — their caching was never requested.
+func applyVerdictCacheDefaults(c *Config) {
+	for id, t := range c.AI.Tasks {
+		if id != "vacancy_scoring" && id != "cover_letter" {
+			continue
+		}
+		if t.CacheTTLHours == nil {
+			h := 24
+			t.CacheTTLHours = &h
+		}
+		c.AI.Tasks[id] = t
 	}
 }
 

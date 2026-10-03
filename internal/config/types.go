@@ -272,8 +272,22 @@ type AITask struct {
 	PromptInline  string `toml:"inline"`
 	PromptFile    string `toml:"file"`
 	PromptVersion string `toml:"version"`
-	CacheTTLHours int    `toml:"cache_ttl_hours"`
-	AutoSend      bool   `toml:"auto_send"`
+	// CacheTTLHours (T91) is the verdict-cache TTL in hours. Unset (nil)
+	// means "apply the task default" (defaults.go fills 24 for the slow
+	// vacancy_scoring/cover_letter verdicts); an explicit 0 keeps the
+	// cache disabled (backwards compatible). *int, because a plain int
+	// cannot tell "unset" from an explicit 0 (the R1 *bool pattern).
+	CacheTTLHours *int `toml:"cache_ttl_hours"`
+	AutoSend      bool `toml:"auto_send"`
+}
+
+// CacheTTL returns the effective verdict-cache TTL in hours; unset (nil)
+// and explicit 0 both disable the cache.
+func (t AITask) CacheTTL() int {
+	if t.CacheTTLHours == nil {
+		return 0
+	}
+	return *t.CacheTTLHours
 }
 
 // AIPricing is the per-million-token price used for cost accounting.
