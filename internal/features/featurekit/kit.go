@@ -162,6 +162,24 @@ func DedupKey(accountID, resumeHash string, vacancyID int64) string {
 	return hex.EncodeToString(sum[:16])
 }
 
+// OnlyLanguageInconsistencies (T86) reports whether every hh resume
+// inconsistency is a LANGUAGE gap (the posting asks for a language level
+// the resume does not state). The flattened items look like
+// "LANGUAGE: required b1, actual " — the type is the prefix before
+// ": required". Empty input is false: there is nothing to bypass, the
+// caller treats it as no inconsistencies.
+func OnlyLanguageInconsistencies(items []string) bool {
+	if len(items) == 0 {
+		return false
+	}
+	for _, item := range items {
+		if !strings.HasPrefix(item, "LANGUAGE") {
+			return false
+		}
+	}
+	return true
+}
+
 // LiftWindow buckets t (UTC, absolute time) into the current 4-hour window
 // id ("2026-09-24T08"). Six windows per day cap the daily lifts naturally.
 func LiftWindow(t time.Time) string {

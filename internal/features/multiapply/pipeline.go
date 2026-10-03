@@ -474,6 +474,11 @@ func (f *Feature) buildLetter(ctx context.Context, runID string, mode, tmpl, ext
 
 // aiLetter asks the runner for the cover-letter verdict; needs_human,
 // injection-flagged or empty letters are refused (errLetterNeedsHuman).
+// T86: a model hesitation (needs_human=true) with letter text and no
+// injection is NOT refused — the outcome is a deterministic function of
+// (injection, empty letter): the owner consciously answers past formal
+// requirement gaps (language levels, experience thresholds, missing stack
+// items), so hesitation on those must never flip the outcome.
 func (f *Feature) aiLetter(ctx context.Context, runID, mode, tmpl, extraInstructions, accountID string,
 	prof profile.Profile, v *hhapi.Vacancy, details *vacancyDetails, stats *passStats) (string, error) {
 	// The prompt carries the slim vacancy summary; the full field set rides
@@ -500,11 +505,20 @@ func (f *Feature) aiLetter(ctx context.Context, runID, mode, tmpl, extraInstruct
 		Letter     string `json:"letter"`
 		NeedsHuman bool   `json:"needs_human"`
 		Injection  bool   `json:"injection_suspected"`
+
+		NeedsHumanReason string `json:"needs_human_reason"`
 	}
 	if jerr := json.Unmarshal(raw, &lv); jerr != nil {
 		return "", jerr
 	}
 	if lv.NeedsHuman || lv.Injection || strings.TrimSpace(lv.Letter) == "" {
+		if !lv.Injection && strings.TrimSpace(lv.Letter) != "" {
+			// T86: hesitation without critique — accept the letter, keep
+			// the model's reason visible in the log (no silent swallow).
+			f.log.Warn("multiapply: cover letter hesitation ignored (formal requirement gaps do not block)",
+				"vacancy", v.ID, "reason", lv.NeedsHumanReason)
+			return strings.TrimSpace(lv.Letter), nil
+		}
 		f.review(ctx, accountID, "letter_needs_human",
 			"cover letter verdict needs human or is empty",
 			fmt.Sprintf(`{"vacancy_id":%d,"run":%q}`, v.ID, runID))
@@ -938,6 +952,14 @@ func (f *Feature) quotaCheck(ctx context.Context, runID string, run config.Run, 
 	return "", ""
 }
 
+// letterIgnoreLanguage reports the T86 [features.multiapply]
+// letter_ignore_language toggle (default true): LANGUAGE-type resume
+// inconsistencies do not block the letter or the apply.
+func (f *Feature) letterIgnoreLanguage() bool {
+	v := f.opt.Config.Features.MultiApply.LetterIgnoreLanguage
+	return v == nil || *v
+}
+
 // popupGate is F6.5: the apply-popup feasibility probe (logged-out stops
 // the account; inconsistencies, already-applied, disabled chat skip).
 // T80: a vacancy with tests additionally yields its fetched VacancyTest
@@ -957,10 +979,17 @@ func (f *Feature) popupGate(ctx context.Context, accountID string, api hhapi.HHA
 		f.log.Warn("multiapply: popup failed", "vacancy", v.ID, "err", err)
 		return "", "popup_failed", false, nil
 	}
-	if len(meta.ResumeInconsistencies) > 0 {
+	// T86: a LANGUAGE-only gap never blocks (the owner consciously
+	// answers past formal language screening); mixed sets keep the skip.
+	langOnly := f.letterIgnoreLanguage() && featurekit.OnlyLanguageInconsistencies(meta.ResumeInconsistencies)
+	if len(meta.ResumeInconsistencies) > 0 && !langOnly {
 		f.log.Info("multiapply: resume inconsistencies", "vacancy", v.ID,
 			"inconsistencies", strings.Join(meta.ResumeInconsistencies, "; "))
 		return "", "inconsistencies", false, nil
+	}
+	if len(meta.ResumeInconsistencies) > 0 {
+		f.log.Info("multiapply: LANGUAGE resume inconsistencies ignored",
+			"vacancy", v.ID, "inconsistencies", strings.Join(meta.ResumeInconsistencies, "; "))
 	}
 	if meta.AlreadyApplied {
 		// Live popup surfaces the structural alreadyApplied flag upfront

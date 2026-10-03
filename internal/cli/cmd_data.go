@@ -213,8 +213,13 @@ func screenVacancy(ctx context.Context, rt *Runtime, run config.Run, runID strin
 		return row
 	}
 	if len(meta.ResumeInconsistencies) > 0 {
-		row.SkipReason = "inconsistencies"
-		return row
+		// T86: a LANGUAGE-only gap never skips (same policy as the live
+		// popup gate); mixed sets keep the old skip.
+		langOnly := letterIgnoreLanguage(rt.Cfg) && featurekit.OnlyLanguageInconsistencies(meta.ResumeInconsistencies)
+		if !langOnly {
+			row.SkipReason = "inconsistencies"
+			return row
+		}
 	}
 	if meta.ChatWritePossibility == "DISABLED" {
 		row.SkipReason = "chat_disabled"
@@ -227,6 +232,13 @@ func screenVacancy(ctx context.Context, rt *Runtime, run config.Run, runID strin
 		row.Stage = "F8_apply_would_run"
 	}
 	return row
+}
+
+// letterIgnoreLanguage reports the T86 [features.multiapply]
+// letter_ignore_language toggle (default true) for the survey path.
+func letterIgnoreLanguage(c *config.Config) bool {
+	v := c.Features.MultiApply.LetterIgnoreLanguage
+	return v == nil || *v
 }
 
 func orDash(s string) string {

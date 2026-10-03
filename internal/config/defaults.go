@@ -111,6 +111,7 @@ func applyDefaults(c *Config) {
 	}
 
 	for _, d := range []boolPtrDefault{
+		{&c.Features.MultiApply.LetterIgnoreLanguage, true}, // T86: a missing language section never blocks the letter
 		{&c.Features.AutoClone.Autolift, true},
 		{&c.Features.AutoClone.Improve.ExperienceReplace, true}, // T58: the owner's clone already grew duplicates from improve applies
 		{&c.Pacing.NightPause, true},

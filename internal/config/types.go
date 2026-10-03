@@ -610,6 +610,13 @@ type MultiApply struct {
 	// negative = the 120s default. A solve that burns the budget falls
 	// back to the test_required skip.
 	TestSolveTimeoutSec int `toml:"testsolve_timeout_sec"`
+	// LetterIgnoreLanguage (T86) treats LANGUAGE-type resume
+	// inconsistencies (the posting asks for a language level the resume
+	// does not state) as non-blocking: the vacancy is not skipped at the
+	// popup gate and the letter is written — the owner consciously
+	// answers past formal language requirements. Mixed inconsistency
+	// sets (any non-LANGUAGE type) still skip. Default true.
+	LetterIgnoreLanguage *bool `toml:"letter_ignore_language"`
 }
 
 // MultiApplyCoverLetter is the [features.multiapply.cover_letter] section
