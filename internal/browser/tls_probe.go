@@ -124,6 +124,12 @@ func ProbeTLSSpec(ctx context.Context, p *CloakProvider, host string, log *slog.
 		chromedp.UserDataDir(dir),
 		chromedp.ProxyServer(ln.Addr().String()),
 	)
+	// T82: the capture runs the same [browser] preset launch profile as
+	// the editor/testsolve lanes, so the captured ClientHello and UA
+	// describe the session the lanes actually present.
+	for _, f := range p.stealthFlags() {
+		opts = append(opts, chromedp.Flag(f.Name, f.Value))
+	}
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, opts...)
 	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
 	navCtx, cancelNav := context.WithTimeout(browserCtx, probeTimeout)
@@ -136,15 +142,18 @@ func ProbeTLSSpec(ctx context.Context, p *CloakProvider, host string, log *slog.
 	// The UA is read from the browser's own about:blank session before
 	// any navigation — deterministic, and the same value the browser
 	// puts into its User-Agent request header. A capture without a UA
-	// is incomplete (the spec is the UA source of truth) and fails.
+	// is incomplete (the spec is the UA source of truth) and fails; a
+	// headless-marker UA fails too — the spec must carry the stealth
+	// profile's identity (T82), so nothing is ever saved from such a
+	// session.
 	uaCtx, cancelUA := context.WithTimeout(browserCtx, uaProbeTimeout)
 	defer cancelUA()
 	var ua string
 	if uerr := chromedp.Run(uaCtx, chromedp.Evaluate(`navigator.userAgent`, &ua)); uerr != nil {
 		return nil, fmt.Errorf("browser: tls probe: read browser User-Agent: %w", uerr)
 	}
-	if strings.TrimSpace(ua) == "" {
-		return nil, errors.New("browser: tls probe: browser reported an empty User-Agent")
+	if err := validateSpecUserAgent(ua); err != nil {
+		return nil, err
 	}
 
 	go func() {

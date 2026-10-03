@@ -210,6 +210,17 @@ func Load(path string) (*Spec, error) {
 	if s.UserAgent == "" {
 		return nil, errors.New("tlsfp: spec has no user_agent (re-run the tls-probe capture)")
 	}
+	// T82 identity integrity: the spec is the single source of truth for
+	// every lane's UA, so it must describe a real (stealth) session — a
+	// headless-marker UA must never be replayed anywhere — and it must
+	// carry the JA3 pair the engine reports and triages on. A spec
+	// failing either check is unusable and recaptured by the engine.
+	if strings.Contains(s.UserAgent, "HeadlessChrome") {
+		return nil, fmt.Errorf("tlsfp: spec user_agent carries the HeadlessChrome marker: %q (re-run the tls-probe capture)", s.UserAgent)
+	}
+	if s.JA3 == "" || s.JA3MD5 == "" {
+		return nil, errors.New("tlsfp: spec has no ja3 fingerprint (re-run the tls-probe capture)")
+	}
 	if _, err := s.RawClientHello(); err != nil {
 		return nil, fmt.Errorf("tlsfp: spec raw hello: %w", err)
 	}

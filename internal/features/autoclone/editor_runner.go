@@ -149,7 +149,11 @@ type EditorOptions struct {
 	// BrowserCfg carries the [browser] section: the careful-preset stealth
 	// launch flags and the humanize pacing/typing cadence.
 	BrowserCfg config.Browser
-	Log        *slog.Logger
+	// SpecUserAgent pins the lane's identity to the captured spec UA
+	// (T82: the spec is the single source of truth). Empty = the
+	// browser's own identity stands.
+	SpecUserAgent string
+	Log           *slog.Logger
 }
 
 // ChromeEditorRunner is the chromedp-backed EditorRunner.
@@ -745,7 +749,7 @@ func (r *ChromeEditorRunner) startChrome(ctx context.Context, ck []*http.Cookie)
 		chromedp.ExecPath(chromePath),
 		chromedp.UserDataDir(dir),
 	)
-	for _, f := range r.stealthFlags() {
+	for _, f := range r.launchFlags() {
 		opts = append(opts, chromedp.Flag(f.Name, f.Value))
 	}
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, opts...)
@@ -777,6 +781,13 @@ func (r *ChromeEditorRunner) stealthFlags() []browser.StealthFlag {
 		return nil
 	}
 	return flags
+}
+
+// launchFlags assembles the lane's full launch identity (T32 stealth
+// pair + T82 spec-UA pin): the session presents exactly the captured
+// spec's UA, whatever the raw browser would report.
+func (r *ChromeEditorRunner) launchFlags() []browser.StealthFlag {
+	return append(r.stealthFlags(), browser.SpecUserAgentFlags(r.opt.SpecUserAgent)...)
 }
 
 // editorPacer builds the humanize pacer for the [browser] section; nil

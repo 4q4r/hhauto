@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strings"
 
 	"hhauto/internal/browser"
 	"hhauto/internal/config"
@@ -57,16 +58,36 @@ func loadBrowserSpec(ctx context.Context, cfg *config.Config, log *slog.Logger) 
 	return spec, nil
 }
 
-// resolveUserAgent returns the effective account User-Agent (T50): the
-// captured browser UA wins — the spec is the single source of truth and
-// JA3 plus UA must describe the same browser. A difference is routine
-// (INFO), not a mismatch to warn about: with a 1:1 spec the captured UA
-// is by definition the right one.
+// resolveUserAgent returns the wire User-Agent (T50/T82): the captured
+// spec UA always wins — the spec is the single source of truth and JA3
+// plus UA must describe the same browser. The configured account UA is
+// inert (owner rule: it must never reach the wire); a spec without a UA
+// returns empty and the caller fails loudly instead of falling back.
 func resolveUserAgent(acct config.Account, spec *tlsfp.Spec) (string, bool) {
-	if spec == nil || spec.UserAgent == "" || spec.UserAgent == acct.UserAgent {
-		return acct.UserAgent, false
+	if spec == nil {
+		return "", false
 	}
-	return spec.UserAgent, true
+	ua := strings.TrimSpace(spec.UserAgent)
+	if ua == "" {
+		return "", false
+	}
+	return ua, ua != acct.UserAgent
+}
+
+// applySpecUserAgent pins one account's wire UA to the captured spec
+// (T82): the configured user_agent is inert, so a spec without a UA
+// fails the build loudly instead of leaking the config value.
+func applySpecUserAgent(acct *config.Account, spec *tlsfp.Spec, id string, log *slog.Logger) error {
+	ua, overridden := resolveUserAgent(*acct, spec)
+	if ua == "" {
+		return fmt.Errorf("engine: account %s: captured spec carries no User-Agent (the configured user_agent is inert — re-run hhauto tls-probe)", id)
+	}
+	if overridden {
+		log.Info("engine: using the captured browser User-Agent",
+			"account", id, "configured", acct.UserAgent, "captured", ua)
+	}
+	acct.UserAgent = ua
+	return nil
 }
 
 // accountTransport resolves the transport wiring for one account:
@@ -142,10 +163,8 @@ func BuildAPIClients(ctx context.Context, cfg *config.Config, reg proxy.Registry
 	}
 	for _, id := range ids {
 		acct := cfg.Accounts[id]
-		if ua, overridden := resolveUserAgent(acct, browserSpec); overridden {
-			log.Info("engine: using the captured browser User-Agent",
-				"account", id, "configured", acct.UserAgent, "captured", ua)
-			acct.UserAgent = ua
+		if err := applySpecUserAgent(&acct, browserSpec, id, log); err != nil {
+			return nil, err
 		}
 		dialer, opts, err := accountTransport(cfg, reg, acct, mode, id)
 		if err != nil {

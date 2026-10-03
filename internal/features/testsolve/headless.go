@@ -436,7 +436,7 @@ func (h *HeadlessFiller) newBrowser(ctx context.Context, req FillRequest) (conte
 		chromedp.ExecPath(chromePath),
 		chromedp.UserDataDir(dir),
 	)
-	for _, f := range h.stealthFlags() {
+	for _, f := range h.launchFlags() {
 		opts = append(opts, chromedp.Flag(f.Name, f.Value))
 	}
 	if server != "" {
@@ -470,6 +470,13 @@ func (h *HeadlessFiller) stealthFlags() []browser.StealthFlag {
 		return nil
 	}
 	return flags
+}
+
+// launchFlags assembles the lane's full launch identity (T32 stealth
+// pair + T82 spec-UA pin): the session presents exactly the captured
+// spec's UA, whatever the raw browser would report.
+func (h *HeadlessFiller) launchFlags() []browser.StealthFlag {
+	return append(h.stealthFlags(), browser.SpecUserAgentFlags(browser.LaneUserAgent(h.Cfg.General.DataDir, h.log()))...)
 }
 
 // humanize reports the [browser].humanize toggle. A zero-value config
