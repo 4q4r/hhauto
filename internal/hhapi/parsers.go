@@ -160,6 +160,10 @@ func parseResumes(body []byte) ([]Resume, error) {
 
 func parseApplyPopup(body []byte, vacancyID int64) (*ApplyMeta, error) {
 	var env struct {
+		// The envelope type: "modal" on the success shape (live fixture
+		// popup.json); "test-required" is hh's refusal for test-gated
+		// vacancies (T83 live form — no responseStatus at all).
+		Type           string `json:"type"`
 		ResponseStatus struct {
 			Test struct {
 				HasTests bool `json:"hasTests"`
@@ -201,6 +205,7 @@ func parseApplyPopup(body []byte, vacancyID int64) (*ApplyMeta, error) {
 	}
 	return &ApplyMeta{
 		HasTests:              rs.Test.HasTests || env.Test.HasTests,
+		TestRequired:          env.Type == "test-required",
 		LetterRequired:        jsonBool(rs.ShortVacancy.LetterRequired) || jsonBool(env.LetterRequired),
 		AcceptAutoResponse:    jsonBool(rs.ShortVacancy.AutoResponse.AcceptAutoResponse) || jsonBool(env.AcceptAutoResponse),
 		ChatWritePossibility:  firstNonEmpty(rs.ShortVacancy.ChatWritePossibility, env.ChatWritePossibility),

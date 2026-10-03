@@ -47,6 +47,40 @@ func TestVacancyTestsParse(t *testing.T) {
 	}
 }
 
+// T83 live form (2026-10-03 capture): the real response page embeds the
+// whole state HTML-escaped — every quote is &#34;, so the literal-key
+// search misses it and the vacancy slipped to a 400 test-required apply.
+// Fixture anonymized: ids → 777/uid-777, texts → neutral wording.
+const vacancyTestsPageEscaped = `<html><head><title>Отклик</title></head><body>
+<script type="text/json" id="HH-Lux-InitialState">{&#34;vacancyTests&#34;:{&#34;777&#34;:{&#34;uidPk&#34;:&#34;uid-777&#34;,&#34;guid&#34;:&#34;guid-777&#34;,&#34;startTime&#34;:&#34;1791000000&#34;,&#34;required&#34;:&#34;true&#34;,&#34;name&#34;:&#34;Вопросы к соискателю&#34;,&#34;description&#34;:&#34;Просим ответить на вопросы:&#34;,&#34;tasks&#34;:[{&#34;id&#34;:&#34;t1&#34;,&#34;description&#34;:&#34;Опишите ваш опыт.&#34;,&#34;open&#34;:&#34;true&#34;,&#34;multiple&#34;:&#34;false&#34;,&#34;candidateSolutions&#34;:[]},{&#34;id&#34;:&#34;t2&#34;,&#34;description&#34;:&#34;Перечислите знакомые вам технологии.&#34;,&#34;open&#34;:&#34;true&#34;,&#34;multiple&#34;:&#34;false&#34;,&#34;candidateSolutions&#34;:[]}]}}}</script>
+</body></html>`
+
+func TestVacancyTestsEscapedState(t *testing.T) {
+	env := newTestEnv(t)
+	env.serve(env.mux1, "1", "GET", "/applicant/vacancy_response", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("vacancyId") != "777" {
+			t.Errorf("query = %s", r.URL.RawQuery)
+		}
+		_, _ = io.WriteString(w, vacancyTestsPageEscaped)
+	})
+	c := env.client()
+	ctx, cancel := ctxb(t)
+	defer cancel()
+	vt, err := c.VacancyTests(ctx, 777)
+	if err != nil {
+		t.Fatalf("VacancyTests: %v (the escaped live form must parse)", err)
+	}
+	if vt.UIDPk != "uid-777" || vt.GUID != "guid-777" || vt.StartTime != "1791000000" || !vt.Required {
+		t.Fatalf("coordinates = %+v", vt)
+	}
+	if len(vt.Tasks) != 2 {
+		t.Fatalf("tasks = %+v, want 2", vt.Tasks)
+	}
+	if vt.Tasks[0].ID != "t1" || len(vt.Tasks[0].Solutions) != 0 {
+		t.Fatalf("t1 = %+v, want an open task", vt.Tasks[0])
+	}
+}
+
 func TestVacancyTestsMissingState(t *testing.T) {
 	env := newTestEnv(t)
 	env.serve(env.mux1, "1", "GET", "/applicant/vacancy_response", func(w http.ResponseWriter, _ *http.Request) {
@@ -76,16 +110,19 @@ func TestVacancyTestsCaptcha(t *testing.T) {
 
 func TestApplyCarriesTestFields(t *testing.T) {
 	env := newTestEnv(t)
-	var hhtmFrom, hhtmSource string
-	env.serve(env.mux1, "1", "POST", "/applicant/vacancy_response/popup", func(w http.ResponseWriter, r *http.Request) {
+	var hhtmFrom, hhtmSource, target string
+	// T83 live proof: the test apply posts to the response DOCUMENT url
+	// (the site's own form has no action), not to /popup.
+	env.serve(env.mux1, "1", "POST", "/applicant/vacancy_response", func(w http.ResponseWriter, r *http.Request) {
+		target = r.URL.String()
 		hhtmFrom = r.Header.Get("X-Hhtmfrom")
 		hhtmSource = r.Header.Get("X-Hhtmsource")
-		_, _ = io.WriteString(w, `{"success":true}`)
+		_, _ = io.WriteString(w, `<html><body>redirect-to-vacancy</body></html>`)
 	})
 	c := env.client()
 	ctx, cancel := ctxb(t)
 	defer cancel()
-	ref, err := c.Apply(ctx, ApplyRequest{
+	_, err := c.Apply(ctx, ApplyRequest{
 		VacancyID: 777, ResumeHash: "hash_1",
 		Test: &ApplyTest{
 			UIDPk: "uid-777", GUID: "guid-777", StartTime: "1727700000", Required: true,
@@ -95,23 +132,30 @@ func TestApplyCarriesTestFields(t *testing.T) {
 			},
 		},
 	})
-	if err != nil {
-		t.Fatalf("Apply: %v", err)
+	// The live answer is the redirect-to-vacancy document wall: the apply
+	// outcome is AMBIGUOUS — the caller reconciles by reading (T83).
+	var amb *AmbiguousError
+	if !errors.As(err, &amb) {
+		t.Fatalf("err = %v, want AmbiguousError (non-JSON answer)", err)
 	}
-	if ref.Vacancy != 777 {
-		t.Fatalf("ref = %+v", ref)
+	if !strings.Contains(target, "vacancyId=777") || !strings.Contains(target, "startedWithQuestion=false") {
+		t.Fatalf("target = %q, want the response document url", target)
 	}
-	body := env.lastBody("1:POST /applicant/vacancy_response/popup")
+	body := env.lastBody("1:POST /applicant/vacancy_response")
 	for _, want := range []string{
-		"resume_hash=hash_1", "vacancy_id=777",
+		"resume_hash=hash_1", "vacancy_id=777", "_xsrf=",
 		"uidPk=uid-777", "guid=guid-777", "startTime=1727700000",
-		"testRequired=true", "ignore_postponed=true", "incomplete=false",
-		"mark_applicant_visible_in_vacancy_country=false",
-		"country_ids=%5B%5D", "lux=true", "withoutTest=no",
-		"task_t1=101", "task_t2_text=",
+		"testRequired=true", "task_t1=101", "task_t2_text=",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("apply body %q misses %q", body, want)
+		}
+	}
+	// The donor extras are NOT part of the live form (T83 capture) — hh's
+	// /popup answered them with 400 {"error":"unknown"}.
+	for _, gone := range []string{"ignore_postponed", "incomplete", "withoutTest", "lux=", "country_ids"} {
+		if strings.Contains(body, gone) {
+			t.Fatalf("apply body %q must not carry the donor extra %q", body, gone)
 		}
 	}
 	if hhtmFrom != "vacancy" || hhtmSource != "vacancy_response" {
