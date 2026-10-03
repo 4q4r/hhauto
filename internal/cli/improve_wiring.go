@@ -182,6 +182,7 @@ func buildEditorRunner(cfg *config.Config, db *store.DB, ckStore cookies.Store,
 		AccountID:      accountID,
 		ChromeProvider: sysbrowser.NewFromConfig(cfg.Browser, log),
 		BrowserCfg:     cfg.Browser,
+		SpecUserAgent:  sysbrowser.LaneUserAgent(cfg.General.DataDir, log),
 		Log:            log,
 	})
 }

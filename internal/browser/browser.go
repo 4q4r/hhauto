@@ -74,6 +74,10 @@ type Options struct {
 	// Version pins the download/cache version; "" = CLOAKBROWSER_VERSION
 	// or the per-platform pinned free build.
 	Version string
+	// Preset is the [browser] launch profile (default | careful): the
+	// capture session runs the same flag set as the browser lanes so
+	// every session presents one identity (T82).
+	Preset string
 	// DownloadURL overrides the release base URL; "" = CLOAKBROWSER_DOWNLOAD_URL
 	// or https://cloakbrowser.dev (GitHub Releases fallback always tried).
 	DownloadURL string
@@ -110,7 +114,21 @@ func NewFromConfig(cfg config.Browser, log *slog.Logger) *CloakProvider {
 	return New(Options{
 		AutoDownload: cfg.AutoDownload != nil && *cfg.AutoDownload,
 		Channel:      cfg.Channel,
+		Preset:       cfg.Preset,
 	}, log)
+}
+
+// stealthFlags maps the [browser] preset onto the capture launch flag set
+// — the same profile the editor runner / testsolve filler run under, so
+// the capture session and the lanes present one identity (T82). A broken
+// preset degrades to the plain launch (warned), like the lanes do.
+func (p *CloakProvider) stealthFlags() []StealthFlag {
+	flags, err := StealthFlags(p.opt.Preset)
+	if err != nil {
+		p.log.Warn("browser: preset проигнорирован", "err", err)
+		return nil
+	}
+	return flags
 }
 
 // Chrome implements Provider. The result is memoized: the first call may

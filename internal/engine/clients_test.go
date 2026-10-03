@@ -112,12 +112,35 @@ func TestResolveUserAgentPrefersCaptured(t *testing.T) {
 		t.Fatalf("ua = %q changed = %v, want no override", ua, changed)
 	}
 
-	// Spec without a UA: the configured one stays.
+	// T82 (owner rule): the configured UA is inert — a spec without a UA
+	// is never patched over with the config value; the resolver returns
+	// empty and the engine fails loudly instead.
 	noUA := *spec
 	noUA.UserAgent = ""
 	ua, changed = resolveUserAgent(config.Account{UserAgent: "configured/1"}, &noUA)
-	if changed || ua != "configured/1" {
-		t.Fatalf("ua = %q changed = %v, want configured/1", ua, changed)
+	if changed || ua != "" {
+		t.Fatalf("ua = %q changed = %v, want empty/no-override (config UA is inert)", ua, changed)
+	}
+
+	// T82: no spec at all is equally empty — the engine owns the error.
+	ua, changed = resolveUserAgent(config.Account{UserAgent: "configured/1"}, nil)
+	if changed || ua != "" {
+		t.Fatalf("ua = %q changed = %v, want empty/no-override for a nil spec", ua, changed)
+	}
+}
+
+// T82: a spec that carries no UA must fail the build loudly — the config
+// UA must never silently take the wire.
+func TestBuildAPIClientsFailsWithoutSpecUA(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.General.DataDir = t.TempDir()
+	cfg.Accounts = map[string]config.Account{"a1": {DisplayName: "one", UserAgent: "configured/1"}}
+	bare := tlsfix.Spec(t, "")
+	stubCapture(t, func(_ context.Context, _ *config.Config, _ *slog.Logger) (*tlsfp.Spec, error) {
+		return bare, nil
+	})
+	if _, err := BuildAPIClients(context.Background(), cfg, nil, nil, discardLogger()); err == nil {
+		t.Fatal("BuildAPIClients must fail when the spec carries no UA (config UA is inert)")
 	}
 }
 

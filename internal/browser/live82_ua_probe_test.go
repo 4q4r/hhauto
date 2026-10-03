@@ -24,11 +24,11 @@ import (
 )
 
 type uaFacts struct {
-	UserAgent       string `json:"user_agent"`
-	Webdriver       any    `json:"navigator.webdriver"`
-	StealthProfile  string `json:"stealth_profile"`
-	HeadlessMarker  bool   `json:"has_headless_chrome_marker"`
-	ChromiumMarker  bool   `json:"has_chromium_word"`
+	UserAgent      string `json:"user_agent"`
+	Webdriver      any    `json:"navigator.webdriver"`
+	StealthProfile string `json:"stealth_profile"`
+	HeadlessMarker bool   `json:"has_headless_chrome_marker"`
+	ChromiumMarker bool   `json:"has_chromium_word"`
 }
 
 func probeSession(t *testing.T, chromePath string, stealth []StealthFlag) uaFacts {
