@@ -69,7 +69,7 @@ func TestTestSolvedApplyCompletes(t *testing.T) {
 	}
 	body := h.applyBodies[0]
 	for _, want := range []string{"uidPk=uid-777101", "guid=guid-777101", "startTime=1727700000",
-		"testRequired=true", "withoutTest=no", "lux=true", "task_t1=101", "task_t2_text="} {
+		"testRequired=true", "task_t1=101", "task_t2_text="} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("apply body %q misses %q", body, want)
 		}
@@ -78,8 +78,11 @@ func TestTestSolvedApplyCompletes(t *testing.T) {
 		t.Fatalf("apply body %q misses the open answer", body)
 	}
 	m := mustMetrics(t, h.db)
-	if m["apply.test_solved"] != 1 {
-		t.Fatalf("apply.test_solved = %d, want 1 (metrics %v)", m["apply.test_solved"], m)
+	// T83: the live test-apply answer is opaque (redirect-to-vacancy doc
+	// wall) — the success is confirmed by reading the negotiations, hence
+	// apply.reconciled, not apply.test_solved.
+	if m["apply.reconciled"] != 1 {
+		t.Fatalf("apply.reconciled = %d, want 1 (metrics %v)", m["apply.reconciled"], m)
 	}
 	if m["apply.skip.test_required"] != 0 {
 		t.Fatalf("apply.skip.test_required = %d, want 0", m["apply.skip.test_required"])

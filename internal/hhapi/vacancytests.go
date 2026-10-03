@@ -145,8 +145,10 @@ func parseVacancyTest(raw json.RawMessage) (*VacancyTest, error) {
 		UIDPk     json.RawMessage `json:"uidPk"`
 		GUID      json.RawMessage `json:"guid"`
 		StartTime json.RawMessage `json:"startTime"`
-		Required  bool            `json:"required"`
-		Tasks     []struct {
+		// T83 live form: the escaped envelope carries booleans as strings
+		// ("required":"true") — parsed tolerantly, not as bool.
+		Required json.RawMessage `json:"required"`
+		Tasks    []struct {
 			ID                 json.RawMessage `json:"id"`
 			Description        string          `json:"description"`
 			CandidateSolutions []struct {
@@ -162,7 +164,7 @@ func parseVacancyTest(raw json.RawMessage) (*VacancyTest, error) {
 		UIDPk:     rawLiteral(env.UIDPk),
 		GUID:      rawLiteral(env.GUID),
 		StartTime: rawLiteral(env.StartTime),
-		Required:  env.Required,
+		Required:  jsonBool(env.Required),
 	}
 	if vt.UIDPk == "" || vt.GUID == "" {
 		return nil, fmt.Errorf("envelope misses uidPk/guid")
@@ -200,20 +202,18 @@ func rawLiteral(raw json.RawMessage) string {
 	return s
 }
 
-// applyTestForm adds the test submission fields to the apply form (the
-// donor-captured shape: hh's own coordinates, honest constants and the
-// per-task answers). Mutates form in place.
-func applyTestForm(form url.Values, t *ApplyTest) {
+// applyTestForm adds the test submission fields to the apply form — the
+// live-proven shape (T83 2026-10-03 capture): hh's own form coordinates
+// (uidPk/guid/startTime/testRequired) and the per-task answers. The donor
+// extras (ignore_postponed/incomplete/lux/withoutTest/country_ids/…)
+// belong to an older surface and are NOT part of the real form; /popup
+// answers them with 400 {"error":"unknown"}.
+func applyTestForm(form url.Values, t *ApplyTest, xsrf string) {
+	form.Set("_xsrf", xsrf)
 	form.Set("uidPk", t.UIDPk)
 	form.Set("guid", t.GUID)
 	form.Set("startTime", t.StartTime)
 	form.Set("testRequired", strconv.FormatBool(t.Required))
-	form.Set("ignore_postponed", "true")
-	form.Set("incomplete", "false")
-	form.Set("mark_applicant_visible_in_vacancy_country", "false")
-	form.Set("country_ids", "[]")
-	form.Set("lux", "true")
-	form.Set("withoutTest", "no")
 	for _, a := range t.Answers {
 		if a.SolutionID != "" {
 			form.Set("task_"+a.TaskID, a.SolutionID)

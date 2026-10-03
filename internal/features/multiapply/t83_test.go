@@ -25,7 +25,7 @@ func testPopupTestRequiredRefusal() string {
 // HTML-escaped, two open tasks.
 func testEscapedPageFixture(vacancy int64) string {
 	return fmt.Sprintf(`<html><head><title>Отклик</title></head><body>
-<script type="text/json" id="HH-Lux-InitialState">{&#34;vacancyTests&#34;:{&#34;%[1]d&#34;:{&#34;uidPk&#34;:&#34;uid-%[1]d&#34;,&#34;guid&#34;:&#34;guid-%[1]d&#34;,&#34;startTime&#34;:&#34;1791000000&#34;,&#34;required&#34;:true,&#34;name&#34;:&#34;Вопросы к соискателю&#34;,&#34;description&#34;:&#34;Просим ответить на вопросы:&#34;,&#34;tasks&#34;:[{&#34;id&#34;:&#34;t1&#34;,&#34;description&#34;:&#34;Опишите ваш опыт.&#34;,&#34;open&#34;:true,&#34;multiple&#34;:false,&#34;candidateSolutions&#34;:[]},{&#34;id&#34;:&#34;t2&#34;,&#34;description&#34;:&#34;Перечислите знакомые вам технологии.&#34;,&#34;open&#34;:true,&#34;multiple&#34;:false,&#34;candidateSolutions&#34;:[]}]}}}</script>
+<script type="text/json" id="HH-Lux-InitialState">{&#34;vacancyTests&#34;:{&#34;%[1]d&#34;:{&#34;uidPk&#34;:&#34;uid-%[1]d&#34;,&#34;guid&#34;:&#34;guid-%[1]d&#34;,&#34;startTime&#34;:&#34;1791000000&#34;,&#34;required&#34;:&#34;true&#34;,&#34;name&#34;:&#34;Вопросы к соискателю&#34;,&#34;description&#34;:&#34;Просим ответить на вопросы:&#34;,&#34;tasks&#34;:[{&#34;id&#34;:&#34;t1&#34;,&#34;description&#34;:&#34;Опишите ваш опыт.&#34;,&#34;open&#34;:&#34;true&#34;,&#34;multiple&#34;:&#34;false&#34;,&#34;candidateSolutions&#34;:[]},{&#34;id&#34;:&#34;t2&#34;,&#34;description&#34;:&#34;Перечислите знакомые вам технологии.&#34;,&#34;open&#34;:&#34;true&#34;,&#34;multiple&#34;:&#34;false&#34;,&#34;candidateSolutions&#34;:[]}]}}}</script>
 </body></html>`, vacancy)
 }
 
@@ -58,8 +58,9 @@ func TestPopupRefusalSolvesTest(t *testing.T) {
 			t.Fatalf("apply body %q misses %q", h.applyBodies[0], want)
 		}
 	}
-	if m := mustMetrics(t, h.db); m["apply.test_solved"] != 1 {
-		t.Fatalf("apply.test_solved = %d, want 1 (metrics %v)", m["apply.test_solved"], m)
+	// T83: the opaque live answer reconciles by reading → apply.reconciled.
+	if m := mustMetrics(t, h.db); m["apply.reconciled"] != 1 {
+		t.Fatalf("apply.reconciled = %d, want 1 (metrics %v)", m["apply.reconciled"], m)
 	}
 }
 

@@ -900,8 +900,16 @@ func (c *Client) ApplyPopup(ctx context.Context, vacancyID int64) (*ApplyMeta, e
 
 // Apply implements hhapi.HHAPI: submits the vacancy response with the
 // idempotency key; AmbiguousError on transport loss after send. A request
-// carrying a solved Test (T80) posts the test fields on the same endpoint.
+// carrying a solved Test (T80) posts the test fields on the response
+// DOCUMENT url — the site's own test form has no action and posts to the
+// page url; /popup answers them with 400 {"error":"unknown"} (T83 live
+// proof 2026-10-03).
 func (c *Client) Apply(ctx context.Context, req ApplyRequest) (NegotiationRef, error) {
+	target := c.withPinnedHost(c.endpointURL(epApply, c.eps.siteDefault("/applicant/vacancy_response/popup")))
+	if req.Test != nil {
+		target = c.withPinnedHost(c.endpointURL(epVacancyResponse, c.eps.siteDefault("/applicant/vacancy_response"))) +
+			"?vacancyId=" + strconv.FormatInt(req.VacancyID, 10) + "&startedWithQuestion=false"
+	}
 	resp, err := c.doMutation(ctx, func() requestSpec {
 		form := url.Values{}
 		form.Set("resume_hash", req.ResumeHash)
@@ -913,16 +921,15 @@ func (c *Client) Apply(ctx context.Context, req ApplyRequest) (NegotiationRef, e
 		h := c.xhrHeaders(c.popupReferer(req.VacancyID))
 		h.Set("Content-Type", "application/x-www-form-urlencoded")
 		if req.Test != nil {
-			applyTestForm(form, req.Test)
-			// The site itself answers the test form from the vacancy page
-			// (donor capture); harmless identity for the plain apply.
+			applyTestForm(form, req.Test, c.xsrfToken())
+			// The site itself answers the test form from the vacancy page.
 			h.Set("X-Hhtmfrom", "vacancy")
 			h.Set("X-Hhtmsource", "vacancy_response")
 		}
 		return requestSpec{
 			kind: kindMutation, operation: "apply",
 			method: http.MethodPost,
-			url:    c.withPinnedHost(c.endpointURL(epApply, c.eps.siteDefault("/applicant/vacancy_response/popup"))),
+			url:    target,
 			header: h,
 			body:   []byte(form.Encode()),
 		}
@@ -951,6 +958,13 @@ func (c *Client) Apply(ctx context.Context, req ApplyRequest) (NegotiationRef, e
 		} `json:"responseStatus"`
 	}
 	if jerr := json.Unmarshal(resp.body, &payload); jerr != nil {
+		if req.Test != nil {
+			// T83: the site answers the test apply with a redirect to the
+			// vacancy page — a document surface, opaque to this client.
+			// The outcome is never readable from this body: reconcile by
+			// reading (negotiations), never by repeating.
+			return NegotiationRef{}, &AmbiguousError{Err: fmt.Errorf("test apply: non-JSON answer (HTTP %d): %.80s", resp.status, snippet(resp.body))}
+		}
 		return NegotiationRef{}, &StatusError{
 			Kind: ErrUpstream, StatusCode: resp.status, URL: resp.finalURL,
 			BodySnippet: snippet(resp.body), Chain: resp.chain,

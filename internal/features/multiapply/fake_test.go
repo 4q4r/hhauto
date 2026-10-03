@@ -338,6 +338,32 @@ func newApplyEnv(t *testing.T) *applyEnv {
 		}
 		_, _ = io.WriteString(w, body)
 	})
+	mux.HandleFunc("POST /applicant/vacancy_response", func(w http.ResponseWriter, r *http.Request) {
+		// T83: the solved-test apply posts to the response document url.
+		body, _ := io.ReadAll(r.Body)
+		form, _ := parseForm(string(body))
+		vid, _ := strconv.ParseInt(form["vacancy_id"], 10, 64)
+		e.mu.Lock()
+		e.applyCalls = append(e.applyCalls, vid)
+		e.applyBodies = append(e.applyBodies, string(body))
+		// The topic exists as soon as the POST lands — the ambiguous-
+		// outcome reconcile reads it here (T83 live proof).
+		e.negPages = append([][]hhapi.Negotiation{{{ID: fmt.Sprintf("555%d", vid), VacancyID: vid}}}, e.negPages...)
+		fn := e.applyErr
+		e.mu.Unlock()
+		if fn != nil {
+			if err := fn(len(e.applyCalls), vid, form["letter"]); err != nil {
+				if te, ok := err.(*respErr); ok {
+					http.Error(w, te.body, te.status)
+					return
+				}
+				http.Error(w, err.Error(), http.StatusForbidden)
+				return
+			}
+		}
+		// The live answer is the redirect-to-vacancy document wall.
+		_, _ = io.WriteString(w, `<html><body>redirect-to-vacancy</body></html>`)
+	})
 	mux.HandleFunc("GET /applicant/negotiations", func(w http.ResponseWriter, r *http.Request) {
 		e.mu.Lock()
 		read := e.negReads + 1
