@@ -272,9 +272,16 @@ func (f *Feature) failApply(ctx context.Context, runID, accountID, resumeHash st
 	}
 	f.createApplication(ctx, runID, accountID, resumeHash, v, "failed", letter, err.Error(), stats)
 	f.incr(ctx, "apply.error")
-	// T69: the console surface renders the failure line; the structured
-	// record stays visible at debug level (one banner per event on the
-	// default console — T52).
+	// T88: a captcha challenge renders the yellow captcha line — the raw
+	// challenge payload stays in the file log (the Debug line below) and
+	// the ledger row; any other failure keeps the red error line.
+	if errors.Is(err, hhapi.ErrCaptcha) {
+		f.console.Captcha(accountID, v)
+	} else {
+		f.console.Error(accountID, v, err.Error())
+	}
+	// T69: the structured record stays visible at debug level (one banner
+	// per event on the default console — T52).
 	f.log.Debug("multiapply: apply failed", "vacancy", v.ID, "err", err)
 	return ""
 }
@@ -379,14 +386,15 @@ func (f *Feature) createApplication(ctx context.Context, runID, accountID, resum
 ) {
 	appKey := featurekit.DedupKey(accountID, resumeHash, v.ID)
 	// T69: the console surface renders the terminal vacancy line at the
-	// record point — one line per outcome, counters ride along.
+	// record point — one line per outcome, counters ride along. The failed
+	// line renders at the caller since T88: only there the error object is
+	// at hand to route a captcha challenge to the yellow captcha line.
 	switch status {
 	case "applied":
 		stats.applied++
 		f.console.Applied(false, accountID, resumeHash, v, grayNote(stats))
 	case "failed":
 		stats.errors++
-		f.console.Error(accountID, v, failReason)
 	}
 	// A dry_run survey row for the same vacancy is upgraded in place —
 	// ApplicationsCreate would fail on the UNIQUE dedup_key (Wave 3 fix 2).
@@ -728,6 +736,9 @@ func (f *Feature) tripCaptchaBreaker(ctx context.Context, accountID, reason stri
 			Payload:   map[string]any{"account_id": accountID, "reason": reason},
 		})
 	}
+	// T88: the Russian breaker banner — one line per trip event (the
+	// day-scoped flag keeps later challenges on the skip path).
+	f.console.CaptchaBreaker()
 	f.log.Warn("multiapply: captcha breaker tripped", "account", accountID, "reason", reason)
 }
 
@@ -1245,6 +1256,7 @@ func (f *Feature) resolveAmbiguous(ctx context.Context, runID string, accountID 
 		}
 		_ = featurekit.FinishIntent(ctx, f.opt.DB, claim2, retryErr)
 		f.createApplication(ctx, runID, accountID, resumeHash, v, "failed", letter, retryErr.Error(), stats)
+		f.console.Error(accountID, v, retryErr.Error())
 		f.incr(ctx, "apply.error")
 		return true, nil
 	default:

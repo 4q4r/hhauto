@@ -42,6 +42,7 @@ const (
 	defaultSkipTmpl    = `· Пропущен: «{{.VacancyTitle}}» — {{.Employer}}: {{.Reason}}`
 	defaultErrorTmpl   = `✗ Ошибка отклика: «{{.VacancyTitle}}» — {{.Employer}}: {{.Reason}}`
 	defaultLetterTmpl  = `? Письмо на проверку: «{{.VacancyTitle}}» — {{.Employer}}`
+	defaultCaptchaTmpl = `⚑ Капча: «{{.VacancyTitle}}» — {{.Employer}} · решателя не настроено, вакансия пропущена до следующего цикла`
 	defaultDigestTmpl  = `✓ Проход: откликов {{.Applied}} · писем на проверку {{.Letters}} · пропущено {{.Skipped}}{{if .SkipBreakdown}} ({{.SkipBreakdown}}){{end}} · ошибок {{.Errors}} · поднято {{.Lifts}}`
 	defaultLiftTmpl    = `↑ Поднято: «{{.ResumeTitle}}» · следующий подъём ~{{.NextAt}}`
 )
@@ -103,6 +104,7 @@ var templateSpecs = []templateSpec{
 	{"applied", defaultAppliedTmpl, func(c config.Console) string { return c.TemplateApplied }},
 	{"skip", defaultSkipTmpl, func(c config.Console) string { return c.TemplateSkip }},
 	{"error", defaultErrorTmpl, func(c config.Console) string { return c.TemplateError }},
+	{"captcha", defaultCaptchaTmpl, func(config.Console) string { return "" }}, // T88: fixed format — no [console] override (the Verdict precedent)
 	{"letter", defaultLetterTmpl, func(c config.Console) string { return c.TemplateLetter }},
 	{"digest", defaultDigestTmpl, func(c config.Console) string { return c.TemplateDigest }},
 	{"lift", defaultLiftTmpl, func(c config.Console) string { return c.TemplateLift }},
@@ -184,12 +186,14 @@ func (s *Surface) Applied(dry bool, accountID, resumeHash string, v hhapi.Vacanc
 }
 
 // Skip renders one individual skip line (dim) when the configured mode and
-// the optional reason allowlist let it through.
+// the optional reason allowlist let it through. The mode and the allowlist
+// key on the raw machine reason; the rendered line uses the human label
+// when one exists (T88: captcha_exhausted → «капча (лимит прохода)»).
 func (s *Surface) Skip(accountID, reason string, v hhapi.Vacancy) {
 	if s == nil || !s.skipShown(reason) {
 		return
 	}
-	s.render("skip", ansiDim, s.vacancyLine(accountID, "", v, VacancyLine{Reason: reason}))
+	s.render("skip", ansiDim, s.vacancyLine(accountID, "", v, VacancyLine{Reason: skipLabel(reason)}))
 }
 
 // Error renders the apply failure line (red).
@@ -198,6 +202,29 @@ func (s *Surface) Error(accountID string, v hhapi.Vacancy, reason string) {
 		return
 	}
 	s.render("error", ansiRed, s.vacancyLine(accountID, "", v, VacancyLine{Reason: reason}))
+}
+
+// Captcha renders the captcha-challenge line (yellow, T88): instead of the
+// red error, a yellow attention line — the vacancy is skipped to the next
+// cycle. The method takes no reason, so the raw challenge payload
+// (captchaState JSON, HTTP details) cannot reach the console; it stays in
+// the file log and the ledger row. Gated by the errors toggle — the line
+// replaces what used to be the error line.
+func (s *Surface) Captcha(accountID string, v hhapi.Vacancy) {
+	if s == nil || !boolOn(s.cfg.Errors) {
+		return
+	}
+	s.render("captcha", ansiYellow, s.vacancyLine(accountID, "", v, VacancyLine{}))
+}
+
+// CaptchaBreaker renders the captcha circuit-breaker banner (yellow, T88):
+// one line per trip event (the breaker is day-scoped, so once a day per
+// account) — the pass's remaining vacancies skip to the next cycle.
+func (s *Surface) CaptchaBreaker() {
+	if s == nil || !boolOn(s.cfg.Errors) {
+		return
+	}
+	s.fixed(ansiYellow, "⚑ Капча-брейкер: hh начал капчить, решателя нет — остальные вакансии прохода пропущены до следующего цикла")
 }
 
 // Letter renders the needs-human cover letter line (yellow).
@@ -322,6 +349,20 @@ func (s *Surface) skipShown(reason string) bool {
 		return false
 	}
 	return true
+}
+
+// skipLabels translates machine skip reasons onto human Russian labels at
+// the render point; reasons without an entry render verbatim.
+var skipLabels = map[string]string{
+	"captcha_exhausted": "капча (лимит прохода)",
+}
+
+// skipLabel resolves the human label for a skip reason.
+func skipLabel(reason string) string {
+	if label, ok := skipLabels[reason]; ok {
+		return label
+	}
+	return reason
 }
 
 // interestingReasons lists the skip reasons worth an individual line:

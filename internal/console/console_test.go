@@ -287,6 +287,69 @@ func TestNilSurfaceSilent(_ *testing.T) {
 	s.Digest(DigestLine{})
 }
 
+// T88 §6: the captcha challenge renders the yellow human line — title,
+// employer and the skip-to-next-cycle note; the method takes no reason, so
+// the raw challenge payload cannot leak onto the console.
+func TestCaptchaLine(t *testing.T) {
+	s, buf := newTestSurface(t, false, testCfg(nil))
+	s.Captcha("acc1", vacancy(""))
+	out := buf.String()
+	if !strings.Contains(out, "⚑ Капча: «Backend-разработчик (Go)» — Corp LLC · решателя не настроено, вакансия пропущена до следующего цикла") {
+		t.Fatalf("captcha line wrong: %q", out)
+	}
+	if strings.Contains(out, "captchaState") || strings.Contains(out, "hhcaptcha") || strings.Contains(out, "{") {
+		t.Fatalf("raw challenge payload leaked: %q", out)
+	}
+}
+
+// T88 §6: the captcha line is yellow on a color surface, plain on non-TTY.
+func TestCaptchaLineColor(t *testing.T) {
+	v := vacancy("")
+	sColor, bufC := newTestSurface(t, true, testCfg(nil))
+	sColor.Captcha("acc1", v)
+	if !strings.Contains(bufC.String(), "\033[33m⚑ Капча:") {
+		t.Fatalf("color surface lost ANSI: %q", bufC.String())
+	}
+	sPlain, bufP := newTestSurface(t, false, testCfg(nil))
+	sPlain.Captcha("acc1", v)
+	if strings.Contains(bufP.String(), "\033[") {
+		t.Fatalf("plain surface colored: %q", bufP.String())
+	}
+}
+
+// T88 §6: the breaker banner renders once per trip, fixed format.
+func TestCaptchaBreakerLine(t *testing.T) {
+	s, buf := newTestSurface(t, false, testCfg(nil))
+	s.CaptchaBreaker()
+	if got, want := buf.String(),
+		"⚑ Капча-брейкер: hh начал капчить, решателя нет — остальные вакансии прохода пропущены до следующего цикла\n"; got != want {
+		t.Fatalf("breaker line = %q, want %q", got, want)
+	}
+}
+
+// T88 §6: the captcha_exhausted skip renders its Russian label; the raw
+// machine reason stays internal (modes and allowlists still key on it).
+func TestSkipCaptchaExhaustedLabel(t *testing.T) {
+	s, buf := newTestSurface(t, false, testCfg(nil)) // interesting: captcha_exhausted shows
+	s.Skip("acc1", "captcha_exhausted", vacancy(""))
+	out := buf.String()
+	if !strings.Contains(out, "· Пропущен: «Backend-разработчик (Go)» — Corp LLC: капча (лимит прохода)") {
+		t.Fatalf("russian captcha skip label missing: %q", out)
+	}
+	if strings.Contains(out, "captcha_exhausted") {
+		t.Fatalf("raw reason leaked: %q", out)
+	}
+	// The allowlist still filters by the raw reason.
+	s2, buf2 := newTestSurface(t, false, testCfg(func(c *config.Console) {
+		c.Skips = "all"
+		c.SkipsReasons = []string{"ai_injection"}
+	}))
+	s2.Skip("acc1", "captcha_exhausted", vacancy(""))
+	if buf2.Len() != 0 {
+		t.Fatalf("allowlist broken by label: %q", buf2.String())
+	}
+}
+
 // formatNextAt: the full "02.01 15:04" local form (lifts cross midnight,
 // a bare HH:MM would read as today); zero renders empty.
 func TestFormatNextAt(t *testing.T) {
