@@ -48,7 +48,7 @@ func (im *Improver) ImproveAnyResume(ctx context.Context, accountID, hash string
 		DryRun:     im.opt.DryRun,
 	}
 	mutated := live.Clone()
-	pendings := im.planFields(ctx, accountID, hash, live, mutated, artifact, parentCtx)
+	pendings := im.planFields(ctx, accountID, hash, live, mutated, artifact, parentHash, parentCtx)
 	if im.opt.DryRun || len(pendings) == 0 {
 		im.opt.Log.Info("autoclone: improve any-resume done (no apply)",
 			"hash", hash, "dry_run", im.opt.DryRun, "planned_fields", len(artifact.Fields), "pending", len(pendings))

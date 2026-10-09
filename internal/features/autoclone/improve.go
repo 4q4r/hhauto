@@ -180,7 +180,7 @@ func (im *Improver) ImproveClone(ctx context.Context, accountID, parentHash, clo
 	}
 	mutated := live.Clone()
 	parentCtx := im.parentContextOf(ctx, accountID, parentHash)
-	pendings := im.planFields(ctx, accountID, cloneHash, live, mutated, artifact, parentCtx)
+	pendings := im.planFields(ctx, accountID, cloneHash, live, mutated, artifact, parentHash, parentCtx)
 	if im.opt.DryRun || len(pendings) == 0 {
 		im.opt.Log.Info("autoclone: improve clone done (no apply)",
 			"hash", cloneHash, "dry_run", im.opt.DryRun, "planned_fields", len(artifact.Fields), "pending", len(pendings))
@@ -276,10 +276,23 @@ func (im *Improver) requireCloneLineage(ctx context.Context, accountID, parentHa
 // per item) and writes accepted values into mutated. It returns the
 // mutations awaiting the apply step. parentCtx (nil for base resumes)
 // carries the lineage anchor: the family positioning rides every task and
-// the parent's same-field value rides it when it differs.
+// the parent's same-field value rides it when it differs. The title
+// post-check anchors on the parent's family when the lineage is known and
+// readable, on the resume's own current positioning for bases — and on
+// NOTHING when the lineage is known but the parent is unreadable (never
+// anchor a clone on its own possibly-drifted title).
 func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
-	live, mutated *hhapi.ResumeContent, artifact *DiffArtifact, parentCtx *parentContext) []pending {
+	live, mutated *hhapi.ResumeContent, artifact *DiffArtifact, parentHash string, parentCtx *parentContext) []pending {
 	candidateCtx, targetRoles := im.candidateContext(ctx, accountID)
+	var families map[string]bool
+	switch {
+	case parentCtx != nil:
+		families = titleFamilies(familyAnchorText(parentCtx.title, contentKeySkills(parentCtx.content)))
+	case parentHash != "":
+		families = nil // T93 (б): no readable anchor this run — the check stays off, no false guard
+	default:
+		families = titleFamilies(familyAnchorText(contentTitle(live), contentKeySkills(live)))
+	}
 	called := false // the previous target made its AI call
 	var pendings []pending
 	im.opt.Log.Info("autoclone: improve plan start",
@@ -309,7 +322,7 @@ func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 			started := time.Now()
 			im.opt.Log.Info("autoclone: improve field asking AI",
 				"field", id, "locator", tg.locator, "label", spec.Label)
-			proposed, status, reason, reviewID, verdictLevels := im.propose(ctx, accountID, cloneHash, spec, tg, live, candidateCtx, targetRoles, parentCtx)
+			proposed, status, reason, reviewID, verdictLevels := im.propose(ctx, accountID, cloneHash, spec, tg, live, candidateCtx, targetRoles, parentCtx, families)
 			diff.Status, diff.Reason, diff.ReviewID = status, reason, reviewID
 			if proposed != nil {
 				diff.After = displayValue(spec, proposed)
@@ -480,9 +493,10 @@ func (im *Improver) fieldPrompt(fieldID, candidateCtx string) string {
 // verdict's optional key_skill_levels ride along (T57; nil otherwise).
 // The lineage context (T93): the family positioning fact rides EVERY task;
 // the parent's same-field value rides only when it differs from the
-// clone's current value.
+// clone's current value. The title post-check (T93 б) parks a family
+// switch as needs_human — it never auto-applies.
 func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, spec FieldSpec,
-	tg target, live *hhapi.ResumeContent, candidateCtx string, targetRoles []string, parentCtx *parentContext) (value json.RawMessage, status, reason string, reviewID int64, skillLevels map[string]string) {
+	tg target, live *hhapi.ResumeContent, candidateCtx string, targetRoles []string, parentCtx *parentContext, families map[string]bool) (value json.RawMessage, status, reason string, reviewID int64, skillLevels map[string]string) {
 	facts := factsFor(spec, live, tg.item)
 	if parentCtx != nil {
 		facts = append([]string{"Позиционирование семьи: " + parentCtx.title}, facts...)
@@ -528,6 +542,21 @@ func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, sp
 	}
 	if rawEqualT(validated, tg.raw) {
 		return nil, StatusUnchanged, "", 0, nil
+	}
+	// T93 (б): the deterministic family post-check — a title that switches
+	// the base's role family parks for the owner, it never auto-applies.
+	if spec.ID == "title" && len(families) > 0 {
+		newTitle := titleTextOf(validated)
+		if newFam := titleFamilies(newTitle); familyConflict(families, newFam) {
+			reason := "нарушение позиционирования семьи: титул «" + newTitle +
+				"» относится к семье " + strings.Join(familyNames(newFam), "/") +
+				", база — " + strings.Join(familyNames(families), "/") +
+				"; смена семьи не применяется автоматически"
+			proposal, _ := slotValue(spec, verdict)
+			id := im.parkReview(ctx, accountID, ReviewKindImproveNeedsHuman,
+				"improve verdict needs human: "+reason, needReviewPayload(cloneHash, spec, tg, proposal))
+			return nil, StatusNeedsHuman, reason, id, nil
+		}
 	}
 	// always_ask: the value is good but a human approves it first.
 	for _, f := range im.opt.Cfg.AlwaysAsk {
