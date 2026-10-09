@@ -62,6 +62,11 @@ const (
 	// lives on the resume-profile-front service host; overridable via
 	// config like every endpoint.
 	epProfileExperienceUpdate = "profile_experience_update" // POST /profile/shards/profile/update
+	// T100 account photo album (live-verified 2026-10-09): the artifact
+	// list the resume page's photo icon loads ({"images":[…]}); a resume
+	// renders its avatar from the per-resume photo field pointing at an
+	// album artifact id. Overridable via config like every endpoint.
+	epAccountArtifacts = "account_artifacts" // GET /shards/applicant/artifacts/all
 )
 
 // endpointSet resolves endpoint URLs from config with defaults and

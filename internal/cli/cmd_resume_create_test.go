@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -75,6 +76,64 @@ func TestPrintCreateVerdictRendersVerifiedRow(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "newh4sh") || !strings.Contains(buf.String(), "not_finished") {
 		t.Fatalf("verdict %q misses the verified row", buf.String())
+	}
+}
+
+// T100 photo step: the owner default (nil = on) applies the album photo
+// to the fresh shell; a step failure degrades to a stderr warning (the
+// create stands); the config off-switch skips silently.
+type fakePhotoAPI struct {
+	hhapi.HHAPI
+	albumID   int64
+	albumErr  error
+	setErr    error
+	setHashes []string
+}
+
+func (f *fakePhotoAPI) AlbumPhotoID(context.Context) (int64, error) { return f.albumID, f.albumErr }
+
+func (f *fakePhotoAPI) SetResumePhoto(_ context.Context, hash string, id int64) error {
+	if f.setErr != nil {
+		return f.setErr
+	}
+	f.setHashes = append(f.setHashes, hash+":"+strconv.FormatInt(id, 10))
+	return nil
+}
+
+func TestApplyCreatePhotoAppliesOnDefault(t *testing.T) {
+	api := &fakePhotoAPI{albumID: 198680330}
+	rt := &Runtime{Cfg: &config.Config{Features: config.Features{}}}
+	o, buf := newTestOut()
+	applyCreatePhoto(context.Background(), o, rt, api, "newh4sh")
+	if len(api.setHashes) != 1 || api.setHashes[0] != "newh4sh:198680330" {
+		t.Fatalf("photo not applied: %v", api.setHashes)
+	}
+	if !strings.Contains(buf.String(), "Фото профиля применено") {
+		t.Fatalf("output %q misses the success line", buf.String())
+	}
+}
+
+func TestApplyCreatePhotoFailureWarnsNotFails(t *testing.T) {
+	api := &fakePhotoAPI{albumErr: hhapi.ErrPhotoAlbumEmpty}
+	rt := &Runtime{Cfg: &config.Config{Features: config.Features{}}}
+	o, buf := newTestOut()
+	applyCreatePhoto(context.Background(), o, rt, api, "newh4sh") // must not panic/exit
+	if strings.Contains(buf.String(), "Фото профиля применено") {
+		t.Fatalf("success line on a failed step: %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), "фото профиля") {
+		t.Fatalf("the failure stayed silent: %q", buf.String())
+	}
+}
+
+func TestApplyCreatePhotoOffSwitchSkips(t *testing.T) {
+	off := false
+	api := &fakePhotoAPI{albumID: 1}
+	rt := &Runtime{Cfg: &config.Config{Features: config.Features{ApplyProfilePhoto: &off}}}
+	o, buf := newTestOut()
+	applyCreatePhoto(context.Background(), o, rt, api, "newh4sh")
+	if len(api.setHashes) != 0 || buf.String() != "" {
+		t.Fatalf("off-switch leaked: hashes=%v out=%q", api.setHashes, buf.String())
 	}
 }
 

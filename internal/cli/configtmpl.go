@@ -116,6 +116,7 @@ const configTemplate = `# hhauto configuration — full example (docs/PLAN.md §
 # resume_visibility = false
 # websocket_push = false
 # emaildup = false                      # WF8: email-duplicate sends (consumed by contacts)
+# apply_profile_photo = true            # T100: resume create применяет фото профиля (альбом) к новому резюме
 [features.auto_lift]
 # enabled = false                       # WF1: 6 lifts/day (hh 4h server timer)
 # per_day = 6

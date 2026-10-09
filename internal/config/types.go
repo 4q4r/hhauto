@@ -310,6 +310,17 @@ type Features struct {
 	ResumeVisibility bool            `toml:"resume_visibility"`
 	WebsocketPush    bool            `toml:"websocket_push"`
 	Setka            Setka           `toml:"setka"`
+	// ApplyProfilePhoto (T100): `resume create` assigns the account's
+	// album photo to the fresh resume — the avatar renders from the
+	// per-resume photo field (native clones inherit it, created shells do
+	// not). Nil = the owner default, enabled.
+	ApplyProfilePhoto *bool `toml:"apply_profile_photo"`
+}
+
+// PhotoApplyEnabled reports the effective apply_profile_photo value
+// (nil = enabled).
+func (f Features) PhotoApplyEnabled() bool {
+	return f.ApplyProfilePhoto == nil || *f.ApplyProfilePhoto
 }
 
 // Setka mode vocabulary for [features.setka].mode (T61).

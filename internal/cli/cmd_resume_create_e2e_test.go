@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +27,11 @@ type createHHState struct {
 	Title   string
 	edits   int
 	creates []string
+	// T100: photo edits ride the same /applicant/resume/edit route but
+	// are counted separately — st.edits stays the improve/content edit
+	// counter the tests assert on.
+	photoID   int64
+	photoSeen bool
 }
 
 const t96ShellHash = "newsh1ff112c34820039ed1f6000111222334"
@@ -48,11 +54,16 @@ func (s *createHHState) shardBody() string {
 func (s *createHHState) builderStateBody() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	photo := ``
+	if s.photoSeen {
+		photo = `"photo": [{"string":` + strconv.FormatInt(s.photoID, 10) + `}],`
+	}
 	return `{
 	  "nextIncompleteScreenId": "professional_role",
 	  "screens": [{"screenType":"STATIC","screenId":"title","title":"Должность","fieldsOptions":{},"screenContent":[],"messages":[]}],
 	  "resume": {
 	    "_attributes": {"hash":"` + t96ShellHash + `","status":"not_finished","isSearchable":false},
+	    ` + photo + `
 	    "title": [{"string":` + mustJSONT(s.Title) + `}]
 	  },
 	  "profile": {"fields": {}},
@@ -101,9 +112,27 @@ func newFakeHHCreate(t *testing.T, st *createHHState) string {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = w.Write([]byte(st.builderStateBody()))
 	})
+	// T100: the account photo album the photo-apply step reads.
+	mux.HandleFunc("/shards/applicant/artifacts/all", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(`{"images":[{"id":198680330,"state":"processed","artifactType":"RESUME_PHOTO"}]}`))
+	})
 	mux.HandleFunc("/applicant/resume/edit", func(w http.ResponseWriter, r *http.Request) {
 		var payload map[string]json.RawMessage
 		_ = json.NewDecoder(r.Body).Decode(&payload)
+		if raw, ok := payload["photo"]; ok {
+			// The wire carries the FLAT integer array (editFlatValue strips
+			// the builder's [{"string":id}] wrapper) — the fake pins that.
+			var flat []int64
+			if err := json.Unmarshal(raw, &flat); err == nil && len(flat) == 1 {
+				st.mu.Lock()
+				st.photoID, st.photoSeen = flat[0], true
+				st.mu.Unlock()
+			}
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			_, _ = w.Write([]byte(st.builderStateBody()))
+			return
+		}
 		var title []string
 		if raw, ok := payload["title"]; ok {
 			_ = json.Unmarshal(raw, &title)
@@ -165,7 +194,7 @@ func TestResumeCreateImproveChainE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create chain: %v\nedits=%d title=%q\n%s", err, st.editCount(), st.title(), out)
 	}
-	mustContain(t, out, t96ShellHash, "Резюме создано", "применено")
+	mustContain(t, out, t96ShellHash, "Резюме создано", "Фото профиля применено", "применено")
 	if st.editCount() == 0 {
 		t.Fatalf("the improve pipeline never reached the editor: edits=0 title=%q\n%s", st.title(), out)
 	}
@@ -201,7 +230,9 @@ func TestResumeCreateChainPassesTitleAnchorE2E(t *testing.T) {
 	}
 }
 
-// --no-improve: the bare shell only — the editor route is never touched.
+// --no-improve: the bare shell only — the improve pipeline never runs
+// (st.edits stays 0). The T100 photo step is independent of improve and
+// still applies the owner-default album photo.
 func TestResumeCreateNoImproveE2E(t *testing.T) {
 	st := &createHHState{}
 	testSite = newFakeHHCreate(t, st)
@@ -213,12 +244,15 @@ func TestResumeCreateNoImproveE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create --no-improve: %v\n%s", err, out)
 	}
-	mustContain(t, out, t96ShellHash, "Резюме создано")
+	mustContain(t, out, t96ShellHash, "Резюме создано", "Фото профиля применено")
 	if strings.Contains(out, "improve diff") {
 		t.Fatalf("--no-improve must not run the improve pipeline:\n%s", out)
 	}
 	if edits := st.editCount(); edits != 0 {
-		t.Fatalf("--no-improve reached the editor %d times", edits)
+		t.Fatalf("--no-improve reached the improve editor %d times", edits)
+	}
+	if !st.photoSeen || st.photoID != 198680330 {
+		t.Fatalf("--no-improve skipped the photo step: photoID=%d seen=%v", st.photoID, st.photoSeen)
 	}
 }
 
