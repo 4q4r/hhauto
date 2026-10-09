@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -247,6 +248,38 @@ func TestResumeImproveHappyPathE2E(t *testing.T) {
 	mustContain(t, out, "применено")
 	if got := st.title(); got != "DevOps-инженер (автоматизация)" {
 		t.Fatalf("resume title after improve = %q", got)
+	}
+}
+
+// T97: --title implies fill-empty. The anchor exists exactly for resumes
+// with empty content (fresh create shells); without the fill the
+// empty-title skip would keep the requested positioning from ever landing
+// (the a88bd526 case: title empty, requested «Преподаватель…»).
+func TestResumeImproveTitleImpliesFillEmptyE2E(t *testing.T) {
+	st := &improveHHState{Title: ""} // the fresh shell: title empty
+	testSite = newFakeHHImprove(t, false, st)
+	var bodies []string
+	aiURL := newFakeAICapture(t, t35Verdict, func(body string) { bodies = append(bodies, body) })
+	extra := t35ImproveExtra(aiURL)
+	t.Setenv("T35_AI_KEY", "test-key")
+	cfgPath := writeTestConfig(t, extra)
+	dataDir := filepath.Dir(cfgPath)
+	seedBaseResumeSnapshot(t, dataDir)
+	if werr := os.WriteFile(filepath.Join(dataDir, "profile.md"), []byte("# Профиль\n\n- Целевые роли: Специалист по ИБ\n"), 0o600); werr != nil {
+		t.Fatalf("write profile.md: %v", werr)
+	}
+
+	out, err := runRoot(t, "resume", "improve", "--resume", "b4se1", "--confirm",
+		"--title", "Специалист по информационной безопасности", "--config", cfgPath)
+	if err != nil {
+		t.Fatalf("improve --title: %v\n%s", err, out)
+	}
+	if st.title() == "" {
+		t.Fatalf("empty title was skipped, the --title anchor never landed:\n%s", out)
+	}
+	joined := strings.Join(bodies, "\n")
+	if !strings.Contains(joined, "Позиционирование семьи: Специалист по информационной безопасности") {
+		t.Fatalf("positioning fact missing from the AI context:\n%s", joined)
 	}
 }
 

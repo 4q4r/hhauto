@@ -130,7 +130,10 @@ func runResumeImprove(ctx context.Context, rt *Runtime, o out, req improveReques
 		"hash", req.Hash, "account", accountID, "clone", isClone,
 		"fields", improve.Fields, "dry_run", req.DryRun)
 
-	improver, err := buildImproveForCommand(rt, improve, accountID, req.DryRun, req.FillEmpty, req.Positioning)
+	// T97: --title implies fill-empty — the anchor exists exactly for
+	// resumes with empty content (fresh create shells); without it the
+	// empty-title skip would keep the requested positioning from landing.
+	improver, err := buildImproveForCommand(rt, improve, accountID, req.DryRun, req.FillEmpty || req.Positioning != "", req.Positioning)
 	if err != nil {
 		return exitErr("%v", err)
 	}
