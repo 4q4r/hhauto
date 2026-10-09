@@ -427,9 +427,107 @@ func acceptsAutoResponse(raw json.RawMessage) (accepts, found bool) {
 }
 
 func newResumeCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "resume", Short: "Resume operations (list | lift | improve)"}
-	cmd.AddCommand(newResumeListCmd(), newResumeLiftCmd(), newResumeImproveCmd())
+	cmd := &cobra.Command{Use: "resume", Short: "Resume operations (list | lift | improve | sync-lineage)"}
+	cmd.AddCommand(newResumeListCmd(), newResumeLiftCmd(), newResumeImproveCmd(), newResumeLineageSyncCmd())
 	return cmd
+}
+
+// newResumeLineageSyncCmd builds `hhauto resume sync-lineage` (T93): the
+// idempotent clone-lineage registration from the live resume shard. It is
+// the seed mechanism for clones created outside the engine (hand-made in
+// the hh UI): GET-only shard read, lineage edges resolved from
+// _attributes, registered through the store API — never hand-written SQL.
+func newResumeLineageSyncCmd() *cobra.Command {
+	var account string
+	cmd := &cobra.Command{
+		Use:   "sync-lineage",
+		Short: "Register resume clone lineage from the live shard (idempotent)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			opts := buildOpts()
+			opts.Account = account
+			ctx := cmd.Context()
+			rt, err := Build(ctx, opts)
+			if err != nil {
+				return exitErr("wiring: %v", err)
+			}
+			defer func() { _ = rt.Close() }() // command teardown
+			if len(rt.Cfg.Accounts) == 0 {
+				return exitErr("аккаунтов нет")
+			}
+			o := outFor(cmd)
+			ids := make([]string, 0, len(rt.Cfg.Accounts))
+			for id := range rt.Cfg.Accounts {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			totalReg, totalTracked, totalConflict := 0, 0, 0
+			for _, id := range ids {
+				if account != "" && id != account {
+					continue
+				}
+				api, err := rt.APIFor(id)
+				if err != nil {
+					return exitErr("api %s: %v", id, err)
+				}
+				resumes, err := api.ListResumes(ctx)
+				if err != nil {
+					return exitErr("шард резюме %s: %v", id, err)
+				}
+				reg, tracked, conflict, err := syncLineageEdges(ctx, rt.DB, id, autoclone.LineageEdges(resumes), rt.Cfg.General.DryRun)
+				if err != nil {
+					return exitErr("lineage %s: %v", id, err)
+				}
+				totalReg += reg
+				totalTracked += tracked
+				totalConflict += conflict
+				o.printf("Аккаунт %s: резюме в шарде %d · зарегистрировано %d · уже отслеживалось %d · конфликтов %d\n",
+					id, len(resumes), reg, tracked, conflict)
+			}
+			if rt.Cfg.General.DryRun {
+				o.println("dry-run: регистрации не было")
+			} else {
+				o.printf("Готово: клонов зарегистрировано %d, конфликтов %d\n", totalReg, totalConflict)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&account, "account", "", "restrict to one account")
+	return cmd
+}
+
+// syncLineageEdges registers the resolved lineage edges through the store
+// API (idempotent: an existing clone row is lineage-immutable — same
+// parent counts as tracked, a different one is a conflict to report). A
+// new edge registers with the parent's depth + 1. dry=true only reports.
+func syncLineageEdges(ctx context.Context, db *store.DB, accountID string,
+	edges []autoclone.LineageEdge, dry bool) (registered, tracked, conflicts int, err error) {
+	for _, e := range edges {
+		existing, err := db.ResumeClonesGet(ctx, e.Clone)
+		if err != nil {
+			return registered, tracked, conflicts, err
+		}
+		switch {
+		case existing != nil && existing.ParentHash == e.Parent:
+			tracked++
+		case existing != nil:
+			conflicts++ // lineage is immutable once recorded; report, never rewrite
+		default:
+			registered++
+			if dry {
+				continue
+			}
+			depth := 0
+			if parent, perr := db.ResumeClonesGet(ctx, e.Parent); perr == nil && parent != nil {
+				depth = parent.Depth
+			}
+			if rerr := db.ResumeClonesRegister(ctx, &store.ResumeClone{
+				CloneHash: e.Clone, ParentHash: e.Parent, Depth: depth + 1, AccountID: accountID,
+			}); rerr != nil {
+				return registered, tracked, conflicts, rerr
+			}
+		}
+	}
+	return registered, tracked, conflicts, nil
 }
 
 func newResumeListCmd() *cobra.Command {

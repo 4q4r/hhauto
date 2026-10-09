@@ -34,15 +34,21 @@ func (im *Improver) ImproveAnyResume(ctx context.Context, accountID, hash string
 	}
 	im.opt.Log.Info("autoclone: improve live content read", "hash", hash)
 
+	// T93 lineage-awareness: an untracked hash with a shard lineage edge
+	// (parentResumeId in the stored snapshot) auto-registers; a tracked
+	// clone improves with the full parent context either way.
+	parentHash := im.ensureLineage(ctx, accountID, hash)
+	parentCtx := im.parentContextOf(ctx, accountID, parentHash)
+
 	artifact := &DiffArtifact{
 		Schema:     artifactSchemaV1,
 		CloneHash:  hash,
-		ParentHash: "", // base resumes have no lineage parent
+		ParentHash: parentHash,
 		CreatedAt:  im.opt.Now().UTC(),
 		DryRun:     im.opt.DryRun,
 	}
 	mutated := live.Clone()
-	pendings := im.planFields(ctx, accountID, hash, live, mutated, artifact)
+	pendings := im.planFields(ctx, accountID, hash, live, mutated, artifact, parentHash, parentCtx)
 	if im.opt.DryRun || len(pendings) == 0 {
 		im.opt.Log.Info("autoclone: improve any-resume done (no apply)",
 			"hash", hash, "dry_run", im.opt.DryRun, "planned_fields", len(artifact.Fields), "pending", len(pendings))

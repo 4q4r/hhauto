@@ -96,6 +96,11 @@ type Options struct {
 	// plus stored owner Q&A rules); nil or a load failure degrades to an
 	// empty context — the improve run itself never fails on it.
 	ProfileFor func(ctx context.Context, accountID string) (profile.Profile, error)
+	// ResumeContentFor reads the live content of ANY resume of the account
+	// (T93: the lineage parent fetch — the parent is a base resume, not a
+	// tracked clone, so the main API surface may not route it). nil or a
+	// read failure degrades to no parent context — never a failed run.
+	ResumeContentFor func(ctx context.Context, accountID, hash string) (*hhapi.ResumeContent, error)
 	// BasePrompt is the resume_improve task's base system prompt (builtin
 	// v5 or the [ai.tasks] TOML override) the per-field prompt composes
 	// on top of (the RunWithSystem contract); empty = field prompt only.
@@ -174,7 +179,8 @@ func (im *Improver) ImproveClone(ctx context.Context, accountID, parentHash, clo
 		DryRun:     im.opt.DryRun,
 	}
 	mutated := live.Clone()
-	pendings := im.planFields(ctx, accountID, cloneHash, live, mutated, artifact)
+	parentCtx := im.parentContextOf(ctx, accountID, parentHash)
+	pendings := im.planFields(ctx, accountID, cloneHash, live, mutated, artifact, parentHash, parentCtx)
 	if im.opt.DryRun || len(pendings) == 0 {
 		im.opt.Log.Info("autoclone: improve clone done (no apply)",
 			"hash", cloneHash, "dry_run", im.opt.DryRun, "planned_fields", len(artifact.Fields), "pending", len(pendings))
@@ -268,10 +274,25 @@ func (im *Improver) requireCloneLineage(ctx context.Context, accountID, parentHa
 
 // planFields runs one AI call per field target (experience fields expand
 // per item) and writes accepted values into mutated. It returns the
-// mutations awaiting the apply step.
+// mutations awaiting the apply step. parentCtx (nil for base resumes)
+// carries the lineage anchor: the family positioning rides every task and
+// the parent's same-field value rides it when it differs. The title
+// post-check anchors on the parent's family when the lineage is known and
+// readable, on the resume's own current positioning for bases — and on
+// NOTHING when the lineage is known but the parent is unreadable (never
+// anchor a clone on its own possibly-drifted title).
 func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
-	live, mutated *hhapi.ResumeContent, artifact *DiffArtifact) []pending {
-	candidateCtx := im.candidateContext(ctx, accountID)
+	live, mutated *hhapi.ResumeContent, artifact *DiffArtifact, parentHash string, parentCtx *parentContext) []pending {
+	candidateCtx, targetRoles := im.candidateContext(ctx, accountID)
+	var families map[string]bool
+	switch {
+	case parentCtx != nil:
+		families = titleFamilies(familyAnchorText(parentCtx.title, contentKeySkills(parentCtx.content)))
+	case parentHash != "":
+		families = nil // T93 (б): no readable anchor this run — the check stays off, no false guard
+	default:
+		families = titleFamilies(familyAnchorText(contentTitle(live), contentKeySkills(live)))
+	}
 	called := false // the previous target made its AI call
 	var pendings []pending
 	im.opt.Log.Info("autoclone: improve plan start",
@@ -301,7 +322,7 @@ func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 			started := time.Now()
 			im.opt.Log.Info("autoclone: improve field asking AI",
 				"field", id, "locator", tg.locator, "label", spec.Label)
-			proposed, status, reason, reviewID, verdictLevels := im.propose(ctx, accountID, cloneHash, spec, tg, live, candidateCtx)
+			proposed, status, reason, reviewID, verdictLevels := im.propose(ctx, accountID, cloneHash, spec, tg, live, candidateCtx, targetRoles, parentCtx, families)
 			diff.Status, diff.Reason, diff.ReviewID = status, reason, reviewID
 			if proposed != nil {
 				diff.After = displayValue(spec, proposed)
@@ -434,18 +455,20 @@ func (im *Improver) settleRetryOutcome(artifact *DiffArtifact, retry []pending, 
 // candidateContext loads the trusted candidate context once per run and
 // renders the profile sections (profile text plus stored owner Q&A; the
 // resume digest stays out — the live resume facts already ride per
-// field). Absence degrades to "" — never a failed run.
-func (im *Improver) candidateContext(ctx context.Context, accountID string) string {
+// field). It also extracts the target-roles vocabulary from the profile
+// text (T93 (а): the improve input's target_roles parameter). Absence
+// degrades to ""/nil — never a failed run.
+func (im *Improver) candidateContext(ctx context.Context, accountID string) (string, []string) {
 	if im.opt.ProfileFor == nil {
-		return ""
+		return "", nil
 	}
 	p, err := im.opt.ProfileFor(ctx, accountID)
 	if err != nil {
 		im.opt.Log.Warn("autoclone: profile load failed; improving without candidate context",
 			"account", accountID, "err", err)
-		return ""
+		return "", nil
 	}
-	return profile.RenderForPrompt(p, profile.SectionProfile, profile.SectionFacts)
+	return profile.RenderForPrompt(p, profile.SectionProfile, profile.SectionFacts), profile.TargetRoles(p.ProfileText)
 }
 
 // fieldPrompt resolves the field's system prompt with the candidate
@@ -468,15 +491,27 @@ func (im *Improver) fieldPrompt(fieldID, candidateCtx string) string {
 // propose asks the AI for one field target's new value and returns the
 // validated payload value (nil when nothing may apply). For key_skills the
 // verdict's optional key_skill_levels ride along (T57; nil otherwise).
+// The lineage context (T93): the family positioning fact rides EVERY task;
+// the parent's same-field value rides only when it differs from the
+// clone's current value. The title post-check (T93 б) parks a family
+// switch as needs_human — it never auto-applies.
 func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, spec FieldSpec,
-	tg target, live *hhapi.ResumeContent, candidateCtx string) (value json.RawMessage, status, reason string, reviewID int64, skillLevels map[string]string) {
+	tg target, live *hhapi.ResumeContent, candidateCtx string, targetRoles []string, parentCtx *parentContext, families map[string]bool) (value json.RawMessage, status, reason string, reviewID int64, skillLevels map[string]string) {
+	facts := factsFor(spec, live, tg.item)
+	if parentCtx != nil {
+		facts = append([]string{"Позиционирование семьи: " + parentCtx.title}, facts...)
+		if pv, ok := parentFieldValue(spec, parentCtx.content, tg); ok && !rawEqualT(pv, tg.current) {
+			facts = append(facts, "Значение родителя (то же поле базового резюме): "+string(pv))
+		}
+	}
 	verdict, _, err := im.opt.Runner.RunWithSystem(ctx, accountID, "resume", cloneHash, "",
 		ai.TaskResumeImprove, im.fieldPrompt(spec.ID, candidateCtx), ai.ImproveInput{
 			Field:            spec.ID,
 			FieldLabel:       spec.Label,
 			CurrentValue:     tg.current,
-			TrustedFacts:     factsFor(spec, live, tg.item),
+			TrustedFacts:     facts,
 			CandidateContext: candidateCtx,
+			TargetRoles:      targetRoles,
 		})
 	if err != nil {
 		return nil, StatusError, err.Error(), 0, nil
@@ -507,6 +542,21 @@ func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, sp
 	}
 	if rawEqualT(validated, tg.raw) {
 		return nil, StatusUnchanged, "", 0, nil
+	}
+	// T93 (б): the deterministic family post-check — a title that switches
+	// the base's role family parks for the owner, it never auto-applies.
+	if spec.ID == "title" && len(families) > 0 {
+		newTitle := titleTextOf(validated)
+		if newFam := titleFamilies(newTitle); familyConflict(families, newFam) {
+			reason := "нарушение позиционирования семьи: титул «" + newTitle +
+				"» относится к семье " + strings.Join(familyNames(newFam), "/") +
+				", база — " + strings.Join(familyNames(families), "/") +
+				"; смена семьи не применяется автоматически"
+			proposal, _ := slotValue(spec, verdict)
+			id := im.parkReview(ctx, accountID, ReviewKindImproveNeedsHuman,
+				"improve verdict needs human: "+reason, needReviewPayload(cloneHash, spec, tg, proposal))
+			return nil, StatusNeedsHuman, reason, id, nil
+		}
 	}
 	// always_ask: the value is good but a human approves it first.
 	for _, f := range im.opt.Cfg.AlwaysAsk {
