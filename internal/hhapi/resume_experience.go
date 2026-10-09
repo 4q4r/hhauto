@@ -53,28 +53,7 @@ func experiencePool(st *builderState) ([]experienceRecord, error) {
 	if !ok {
 		return nil, errors.New("hhapi: no profile.fields.experience in builder state")
 	}
-	var arr []json.RawMessage
-	if err := json.Unmarshal(raw, &arr); err != nil {
-		return nil, fmt.Errorf("hhapi: experience decode: %w", err)
-	}
-	records := make([]experienceRecord, 0, len(arr))
-	for _, r := range arr {
-		var p struct {
-			ID      int64 `json:"id"`
-			Resumes []struct {
-				Hash string `json:"hash"`
-			} `json:"resumes"`
-		}
-		if err := json.Unmarshal(r, &p); err != nil {
-			return nil, fmt.Errorf("hhapi: experience record decode: %w", err)
-		}
-		rec := experienceRecord{Raw: r, ID: p.ID}
-		for _, rr := range p.Resumes {
-			rec.ResumeHashes = append(rec.ResumeHashes, rr.Hash)
-		}
-		records = append(records, rec)
-	}
-	return records, nil
+	return experiencePoolRaw(raw)
 }
 
 // sharedWithOthers reports whether the record renders on resumes other

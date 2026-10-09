@@ -73,7 +73,14 @@ func (c *Client) DetachDuplicateExperience(ctx context.Context, hash string) (De
 	if err != nil {
 		return DetachExperienceResult{}, err
 	}
-	pool, err := experiencePool(st)
+	raw, ok := st.ProfileFields["experience"]
+	if !ok {
+		// No experience section in the builder state — nothing to prune
+		// (the fresh-shell shape; the create→improve chain calls this
+		// before the resume ever rendered a pool record).
+		return DetachExperienceResult{Kept: []int64{}, Detached: []int64{}, Skipped: []int64{}}, nil
+	}
+	pool, err := experiencePoolRaw(raw)
 	if err != nil {
 		return DetachExperienceResult{}, err
 	}
@@ -125,6 +132,34 @@ func (c *Client) DetachDuplicateExperience(ctx context.Context, hash string) (De
 	}
 	sort.Slice(res.Kept, func(i, j int) bool { return res.Kept[i] < res.Kept[j] })
 	return res, nil
+}
+
+// experiencePoolRaw parses one profile.fields.experience array (the raw
+// bytes side of experiencePool, so the dedup can read a state the delete
+// machine would refuse).
+func experiencePoolRaw(raw json.RawMessage) ([]experienceRecord, error) {
+	var arr []json.RawMessage
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return nil, fmt.Errorf("hhapi: experience decode: %w", err)
+	}
+	records := make([]experienceRecord, 0, len(arr))
+	for _, r := range arr {
+		var p struct {
+			ID      int64 `json:"id"`
+			Resumes []struct {
+				Hash string `json:"hash"`
+			} `json:"resumes"`
+		}
+		if err := json.Unmarshal(r, &p); err != nil {
+			return nil, fmt.Errorf("hhapi: experience record decode: %w", err)
+		}
+		rec := experienceRecord{Raw: r, ID: p.ID}
+		for _, rr := range p.Resumes {
+			rec.ResumeHashes = append(rec.ResumeHashes, rr.Hash)
+		}
+		records = append(records, rec)
+	}
+	return records, nil
 }
 
 // detachSharedExperience detaches one shared record from hash: an edit

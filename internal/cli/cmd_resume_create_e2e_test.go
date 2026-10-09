@@ -55,7 +55,7 @@ func (s *createHHState) builderStateBody() string {
 	    "_attributes": {"hash":"` + t96ShellHash + `","status":"not_finished","isSearchable":false},
 	    "title": [{"string":` + mustJSONT(s.Title) + `}]
 	  },
-	  "profile": {"fields": {}},
+	  "profile": {"fields": {"experience": []}},
 	  "additionalProperties": {}
 	}`
 }
