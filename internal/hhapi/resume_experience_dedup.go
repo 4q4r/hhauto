@@ -182,43 +182,54 @@ func (c *Client) DetachDuplicateExperience(ctx context.Context, hash string) (De
 	// The render-set body: the keep records verbatim (minus the usage
 	// metadata the save contract never carries), ascending id.
 	sort.Slice(keep, func(i, j int) bool { return keep[i].ID < keep[j].ID })
+	return res, c.postExperienceRenderSet(ctx, hash, keep, before)
+}
+
+// postExperienceRenderSet posts the keep records as the resume's render
+// set and polls until the pool invariants hold and the render set
+// settled.
+func (c *Client) postExperienceRenderSet(ctx context.Context, hash string, keep, before []experienceRecord) error {
+	keepSet := make(map[int64]bool, len(keep))
+	for _, rec := range keep {
+		keepSet[rec.ID] = true
+	}
 	items := make([]json.RawMessage, 0, len(keep))
 	for _, rec := range keep {
 		var base map[string]json.RawMessage
 		if uerr := json.Unmarshal(rec.Raw, &base); uerr != nil {
-			return res, fmt.Errorf("hhapi: experience dedup decode %d: %w", rec.ID, uerr)
+			return fmt.Errorf("hhapi: experience dedup decode %d: %w", rec.ID, uerr)
 		}
 		delete(base, "resumes")
 		delete(base, "companyLogos")
 		b, merr := json.Marshal(base)
 		if merr != nil {
-			return res, fmt.Errorf("hhapi: experience dedup encode %d: %w", rec.ID, merr)
+			return fmt.Errorf("hhapi: experience dedup encode %d: %w", rec.ID, merr)
 		}
 		items = append(items, b)
 	}
 	body, merr := json.Marshal(items)
 	if merr != nil {
-		return res, fmt.Errorf("hhapi: experience dedup encode: %w", merr)
+		return fmt.Errorf("hhapi: experience dedup encode: %w", merr)
 	}
 	if err := c.postResumeEdit(ctx, hash, "experience", body); err != nil {
-		return res, fmt.Errorf("hhapi: experience dedup render set: %w", err)
+		return fmt.Errorf("hhapi: experience dedup render set: %w", err)
 	}
 
 	deadline := time.Now().Add(dedupVerifyBudget)
 	for {
 		applied, ierr := c.experienceDedupVerify(ctx, hash, before, keepSet)
 		if ierr != nil {
-			return res, ierr
+			return ierr
 		}
 		if applied {
-			return res, nil
+			return nil
 		}
 		if time.Now().After(deadline) {
-			return res, fmt.Errorf("%w: %s after %s", ErrExperienceDedupVerify, hash, dedupVerifyBudget)
+			return fmt.Errorf("%w: %s after %s", ErrExperienceDedupVerify, hash, dedupVerifyBudget)
 		}
 		select {
 		case <-ctx.Done():
-			return res, fmt.Errorf("hhapi: experience dedup verify: %w", ctx.Err())
+			return fmt.Errorf("hhapi: experience dedup verify: %w", ctx.Err())
 		case <-time.After(dedupPollInterval):
 		}
 	}

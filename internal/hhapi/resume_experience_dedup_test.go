@@ -33,7 +33,6 @@ type dedupSurface struct {
 	// invariant tests.
 	dropForeign bool // a foreign member silently disappears
 	dropRecord  bool // a pool record disappears
-	dropped     bool
 }
 
 func (s *dedupSurface) stateLocked() string {
