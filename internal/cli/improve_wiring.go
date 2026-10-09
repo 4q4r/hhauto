@@ -248,6 +248,13 @@ func buildImprove(cfg *config.Config, runner ai.Runner, db interface {
 		Log:        log,
 		ProfileFor: profileFor,
 		BasePrompt: base,
+		ResumeContentFor: func(ctx context.Context, accountID, hash string) (*hhapi.ResumeContent, error) {
+			api, err := apiFor(accountID) // T93: the parent is a base resume — the account's own client reads it
+			if err != nil {
+				return nil, err
+			}
+			return api.ResumeContent(ctx, hash)
+		},
 	})
 }
 
@@ -306,5 +313,12 @@ func buildImproveForCommand(rt *Runtime, improve config.AutoCloneImprove, accoun
 		ProfileFor: rt.profileFor,
 		BasePrompt: base,
 		Review:     rt.review.For(rt.DB), // T66: needs_human/always_ask park for review like the run path
+		ResumeContentFor: func(ctx context.Context, accountID, hash string) (*hhapi.ResumeContent, error) {
+			api, err := rt.contentEditorFor(accountID) // T93: parent content (a base resume) through the account client
+			if err != nil {
+				return nil, err
+			}
+			return api.ResumeContent(ctx, hash)
+		},
 	})
 }

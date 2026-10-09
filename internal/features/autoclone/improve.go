@@ -96,6 +96,11 @@ type Options struct {
 	// plus stored owner Q&A rules); nil or a load failure degrades to an
 	// empty context — the improve run itself never fails on it.
 	ProfileFor func(ctx context.Context, accountID string) (profile.Profile, error)
+	// ResumeContentFor reads the live content of ANY resume of the account
+	// (T93: the lineage parent fetch — the parent is a base resume, not a
+	// tracked clone, so the main API surface may not route it). nil or a
+	// read failure degrades to no parent context — never a failed run.
+	ResumeContentFor func(ctx context.Context, accountID, hash string) (*hhapi.ResumeContent, error)
 	// BasePrompt is the resume_improve task's base system prompt (builtin
 	// v5 or the [ai.tasks] TOML override) the per-field prompt composes
 	// on top of (the RunWithSystem contract); empty = field prompt only.
@@ -174,7 +179,8 @@ func (im *Improver) ImproveClone(ctx context.Context, accountID, parentHash, clo
 		DryRun:     im.opt.DryRun,
 	}
 	mutated := live.Clone()
-	pendings := im.planFields(ctx, accountID, cloneHash, live, mutated, artifact)
+	parentCtx := im.parentContextOf(ctx, accountID, parentHash)
+	pendings := im.planFields(ctx, accountID, cloneHash, live, mutated, artifact, parentCtx)
 	if im.opt.DryRun || len(pendings) == 0 {
 		im.opt.Log.Info("autoclone: improve clone done (no apply)",
 			"hash", cloneHash, "dry_run", im.opt.DryRun, "planned_fields", len(artifact.Fields), "pending", len(pendings))
@@ -268,9 +274,11 @@ func (im *Improver) requireCloneLineage(ctx context.Context, accountID, parentHa
 
 // planFields runs one AI call per field target (experience fields expand
 // per item) and writes accepted values into mutated. It returns the
-// mutations awaiting the apply step.
+// mutations awaiting the apply step. parentCtx (nil for base resumes)
+// carries the lineage anchor: the family positioning rides every task and
+// the parent's same-field value rides it when it differs.
 func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
-	live, mutated *hhapi.ResumeContent, artifact *DiffArtifact) []pending {
+	live, mutated *hhapi.ResumeContent, artifact *DiffArtifact, parentCtx *parentContext) []pending {
 	candidateCtx := im.candidateContext(ctx, accountID)
 	called := false // the previous target made its AI call
 	var pendings []pending
@@ -301,7 +309,7 @@ func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 			started := time.Now()
 			im.opt.Log.Info("autoclone: improve field asking AI",
 				"field", id, "locator", tg.locator, "label", spec.Label)
-			proposed, status, reason, reviewID, verdictLevels := im.propose(ctx, accountID, cloneHash, spec, tg, live, candidateCtx)
+			proposed, status, reason, reviewID, verdictLevels := im.propose(ctx, accountID, cloneHash, spec, tg, live, candidateCtx, parentCtx)
 			diff.Status, diff.Reason, diff.ReviewID = status, reason, reviewID
 			if proposed != nil {
 				diff.After = displayValue(spec, proposed)
@@ -468,14 +476,24 @@ func (im *Improver) fieldPrompt(fieldID, candidateCtx string) string {
 // propose asks the AI for one field target's new value and returns the
 // validated payload value (nil when nothing may apply). For key_skills the
 // verdict's optional key_skill_levels ride along (T57; nil otherwise).
+// The lineage context (T93): the family positioning fact rides EVERY task;
+// the parent's same-field value rides only when it differs from the
+// clone's current value.
 func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, spec FieldSpec,
-	tg target, live *hhapi.ResumeContent, candidateCtx string) (value json.RawMessage, status, reason string, reviewID int64, skillLevels map[string]string) {
+	tg target, live *hhapi.ResumeContent, candidateCtx string, parentCtx *parentContext) (value json.RawMessage, status, reason string, reviewID int64, skillLevels map[string]string) {
+	facts := factsFor(spec, live, tg.item)
+	if parentCtx != nil {
+		facts = append([]string{"Позиционирование семьи: " + parentCtx.title}, facts...)
+		if pv, ok := parentFieldValue(spec, parentCtx.content, tg); ok && !rawEqualT(pv, tg.current) {
+			facts = append(facts, "Значение родителя (то же поле базового резюме): "+string(pv))
+		}
+	}
 	verdict, _, err := im.opt.Runner.RunWithSystem(ctx, accountID, "resume", cloneHash, "",
 		ai.TaskResumeImprove, im.fieldPrompt(spec.ID, candidateCtx), ai.ImproveInput{
 			Field:            spec.ID,
 			FieldLabel:       spec.Label,
 			CurrentValue:     tg.current,
-			TrustedFacts:     factsFor(spec, live, tg.item),
+			TrustedFacts:     facts,
 			CandidateContext: candidateCtx,
 		})
 	if err != nil {
