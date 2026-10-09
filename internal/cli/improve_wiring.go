@@ -282,8 +282,9 @@ func buildNeedApplier(rt *Runtime, accountID string) (*autoclone.NeedApply, erro
 // the caller (the command is the enable signal). fillEmpty (T96) lets the
 // planner propose empty-field values from the profile context — the
 // create→improve chain sets it; the standalone command keeps the
-// conservative skip.
-func buildImproveForCommand(rt *Runtime, improve config.AutoCloneImprove, accountID string, dryRun, fillEmpty bool) (*autoclone.Improver, error) {
+// conservative skip. positioning (T97) is the requested --title anchor for
+// a resume with no lineage — empty keeps the own-positioning anchor.
+func buildImproveForCommand(rt *Runtime, improve config.AutoCloneImprove, accountID string, dryRun, fillEmpty bool, positioning string) (*autoclone.Improver, error) {
 	fpr, ok := rt.AI.(ai.FieldPromptRunner)
 	if !ok {
 		return nil, fmt.Errorf("autoclone: the AI runner does not support per-field prompts (FieldPromptRunner)")
@@ -316,6 +317,7 @@ func buildImproveForCommand(rt *Runtime, improve config.AutoCloneImprove, accoun
 		ProfileFor:           rt.profileFor,
 		BasePrompt:           base,
 		FillEmptyFromProfile: fillEmpty,            // T96 create→improve chain scoping
+		Positioning:          positioning,          // T97: the requested --title anchor (no lineage)
 		Review:               rt.review.For(rt.DB), // T66: needs_human/always_ask park for review like the run path
 		ResumeContentFor: func(ctx context.Context, accountID, hash string) (*hhapi.ResumeContent, error) {
 			api, err := rt.contentEditorFor(accountID) // T93: parent content (a base resume) through the account client
