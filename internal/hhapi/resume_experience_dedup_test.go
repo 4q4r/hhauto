@@ -243,6 +243,53 @@ func TestDetachDuplicateExperienceKeepsNewestPerEmployer(t *testing.T) {
 	}
 }
 
+func TestDetachDuplicateExperienceRestoresCollapsedRenderSet(t *testing.T) {
+	const self = "created6"
+	// A render set collapsed by an interrupted operation (live: the
+	// single-record probe POST): the resume renders only one record. The
+	// keep set is selected across the whole pool, so the run restores the
+	// full one-per-employer view instead of freezing the collapse.
+	surface := &dedupSurface{pool: []string{
+		dedupFixture(100, "Компания А", "ген-1", "base1", "clone1"),
+		dedupFixture(110, "Компания А", "ген-2", self),
+		dedupFixture(120, "Компания А", "ген-3", "clone3"),
+		dedupFixture(200, "Компания Б", "ген-4", "base1"),
+		dedupFixture(210, "Компания Б", "ген-5", "clone2"),
+	}}
+	env := newTestEnv(t)
+	surface.mount(t, env, self)
+	c := env.client()
+	c.setXSRFForTests("tok_abc123")
+	ctx, cancel := ctxb(t)
+	defer cancel()
+
+	res, err := c.DetachDuplicateExperience(ctx, self)
+	if err != nil {
+		t.Fatalf("dedup: %v", err)
+	}
+	if len(res.Kept) != 2 || res.Kept[0] != 120 || res.Kept[1] != 210 {
+		t.Fatalf("kept=%v, want [120 210]", res.Kept)
+	}
+	if len(res.Detached) != 1 || res.Detached[0] != 110 {
+		t.Fatalf("detached=%v, want [110]", res.Detached)
+	}
+	owners120, owners210 := dedupMembership(t, surface.snapshot(), 120), dedupMembership(t, surface.snapshot(), 210)
+	for _, owners := range [][]string{owners120, owners210} {
+		found := false
+		for _, o := range owners {
+			if o == self {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("keep lost self after restore: %v", owners)
+		}
+	}
+	if owners := dedupMembership(t, surface.snapshot(), 110); len(owners) != 0 {
+		t.Fatalf("detached 110 still renders on self: %v", owners)
+	}
+}
+
 func TestDetachDuplicateExperienceNoopWithoutDuplicates(t *testing.T) {
 	const self = "created1"
 	// The fresh-shell shape: no experience section at all, and the

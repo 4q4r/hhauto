@@ -117,10 +117,13 @@ type DetachExperienceResult struct {
 }
 
 // DetachDuplicateExperience prunes the duplicate experience generations a
-// created resume inherited from the account pool: among the records that
-// render on hash it keeps the newest per company and detaches the rest
-// through one render-set POST. Idempotent; a resume with nothing (or
-// exactly one record per employer) rendering performs no mutation.
+// created resume inherited from the account pool: the resume must render
+// exactly the newest generation (highest record id; end dates are
+// identical within an employer) per pool employer, so the keep set is
+// selected across the whole pool and posted once as the render set.
+// Idempotent; a resume rendering nothing performs no mutation (the
+// create→improve chain runs this before the resume ever rendered pool
+// records).
 func (c *Client) DetachDuplicateExperience(ctx context.Context, hash string) (DetachExperienceResult, error) {
 	res := DetachExperienceResult{Kept: []int64{}, Detached: []int64{}}
 	st, err := c.fetchBuilderState(ctx, hash)
@@ -151,7 +154,12 @@ func (c *Client) DetachDuplicateExperience(ctx context.Context, hash string) (De
 		return res, nil
 	}
 
-	keep := experienceNewestPerCompany(rendered)
+	// The keep set is selected across the WHOLE pool, not just the
+	// currently rendered records: a created resume's legitimate view is
+	// the newest generation of every pool employer, and a render set
+	// collapsed by an interrupted operation (live: a partial render-set
+	// POST) must be restored, not frozen.
+	keep := experienceNewestPerCompany(pool)
 	for _, rec := range keep {
 		res.Kept = append(res.Kept, rec.ID)
 	}
