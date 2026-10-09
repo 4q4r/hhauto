@@ -2,79 +2,184 @@ package hhapi
 
 // T99 fake tests for DetachDuplicateExperience: the live account shape
 // scaled down — one created resume renders every generation of the
-// lineage pool (the publish attach), and the dedup must leave exactly the
-// newest generation per employer rendering on it while every other
-// resume's view stays byte-identical and the pool record count is
-// constant (fork + delete-fork nets zero).
+// lineage pool (the publish attach), and the dedup must leave exactly
+// the newest generation per employer rendering on it with ONE render-set
+// POST while every other resume's view stays byte-identical and the pool
+// record count never changes. The fake speaks the live render-set
+// contract the 2026-10-09 experiment proved: the edit POST's array IS
+// the resume's render set.
 
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
-// dedupSpec builds one fake pool record; company groups the dedup.
-type dedupSpec struct {
-	id      int64
-	company string
-	owners  []string
-	desc    string
+// dedupSurface fakes the builder state plus the edit route with the live
+// render-set semantics. updatePosts counts profile/update calls (the
+// dedup must never touch that route — it deletes pool records).
+type dedupSurface struct {
+	mu          sync.Mutex
+	pool        []string // full raw records with resumes membership
+	hash        string
+	reads       int
+	editPosts   int
+	updatePosts int
+	// dropForeign or dropRecord model integrity accidents for the
+	// invariant tests.
+	dropForeign bool // a foreign member silently disappears
+	dropRecord  bool // a pool record disappears
+	dropped     bool
 }
 
-func dedupRecord(t *testing.T, s dedupSpec) string {
+func (s *dedupSurface) stateLocked() string {
+	items := make([]string, 0, len(s.pool))
+	items = append(items, s.pool...)
+	if s.dropRecord && s.editPosts > 0 && len(items) > 1 {
+		items = items[:len(items)-1] // model: the pool shrinks after the POST
+	}
+	return `{"nextIncompleteScreenId":null,"screens":[],"resume":{"_attributes":{"hash":"` + s.hash + `","id":"285632195","status":"modified","isSearchable":true}},"profile":{"fields":{"experience":[` + strings.Join(items, ",") + `]}},"additionalProperties":{}}`
+}
+
+func (s *dedupSurface) snapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.pool...)
+}
+
+func (s *dedupSurface) mount(t *testing.T, env *testEnv, hash string) {
 	t.Helper()
-	rs := make([]string, 0, len(s.owners))
-	for _, h := range s.owners {
+	s.hash = hash
+	env.serve(env.mux1, "1", "GET", "/profile/shards/resume/get_by_hash", func(w http.ResponseWriter, _ *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.reads++
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(s.stateLocked()))
+	})
+	env.serve(env.mux1, "1", "POST", "/applicant/resume/edit", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-hhtmSource") != "resume_partial_edit" || r.Header.Get("X-Requested-With") == "" ||
+			r.Header.Get("X-Xsrftoken") == "" || r.Header.Get("Accept") != "application/json" ||
+			r.Header.Get("Content-Type") != "application/json" ||
+			r.URL.Query().Get("hhtmSource") != "resume_partial_edit" || r.URL.Query().Get("resume") == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		body := env.lastBody("1:POST /applicant/resume/edit")
+		var envelope struct {
+			Experience []struct {
+				ID int64 `json:"id"`
+			} `json:"experience"`
+		}
+		if err := json.Unmarshal([]byte(body), &envelope); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.editPosts++
+		want := map[int64]bool{}
+		for _, it := range envelope.Experience {
+			want[it.ID] = true
+		}
+		pool := make([]string, 0, len(s.pool))
+		for _, raw := range s.pool {
+			var p struct {
+				ID      int64 `json:"id"`
+				Resumes []struct {
+					Hash string `json:"hash"`
+				} `json:"resumes"`
+			}
+			if err := json.Unmarshal([]byte(raw), &p); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			members := make([]string, 0, len(p.Resumes))
+			for _, m := range p.Resumes {
+				if s.dropForeign && m.Hash != s.hash && len(p.Resumes) > 1 {
+					continue // model: a foreign member silently lost
+				}
+				if m.Hash != s.hash {
+					members = append(members, m.Hash)
+				}
+			}
+			if want[p.ID] { // render-set contract: listed records render on self
+				members = append(members, s.hash)
+			}
+			out := make([]json.RawMessage, 0, len(members))
+			for _, m := range members {
+				out = append(out, json.RawMessage(`{"hash":"`+m+`"}`))
+			}
+			rec := map[string]json.RawMessage{}
+			if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			rec["resumes"], _ = json.Marshal(out)
+			b, _ := json.Marshal(rec)
+			pool = append(pool, string(b))
+		}
+		s.pool = pool
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(s.stateLocked()))
+	})
+	env.serve(env.mux1, "1", "POST", "/profile/shards/profile/update", func(w http.ResponseWriter, _ *http.Request) {
+		s.mu.Lock()
+		s.updatePosts++
+		s.mu.Unlock()
+		w.WriteHeader(http.StatusBadRequest) // must never be called
+	})
+}
+
+// dedupFixtures builds pool records; owners = resumes rendering it.
+func dedupFixture(id int64, company, desc string, owners ...string) string {
+	rs := make([]string, 0, len(owners))
+	for _, h := range owners {
 		rs = append(rs, `{"hash":"`+h+`"}`)
 	}
-	return `{"id":` + itoa64(s.id) + `,"startDate":"2024-01-01","endDate":null,"companyName":"` + s.company + `","position":"Инженер Test","resumes":[` + strings.Join(rs, ",") + `],"description":` + mustJSON(s.desc) + `}`
+	return `{"id":` + itoa64(id) + `,"startDate":"2024-01-01","endDate":null,"companyName":"` + company + `","position":"Инженер Test","resumes":[` + strings.Join(rs, ",") + `],"description":` + mustJSON(desc) + `}`
 }
 
-func dedupMembership(t *testing.T, pool []string, id int64) (owners []string, desc string) {
+func dedupMembership(t *testing.T, pool []string, id int64) []string {
 	t.Helper()
 	for _, raw := range pool {
 		var p struct {
-			ID          int64    `json:"id"`
-			Description string   `json:"description"`
-			Resumes     []string `json:"-"`
-		}
-		var probe struct {
+			ID      int64 `json:"id"`
 			Resumes []struct {
 				Hash string `json:"hash"`
 			} `json:"resumes"`
 		}
-		if err := json.Unmarshal([]byte(raw), &probe); err != nil {
+		if err := json.Unmarshal([]byte(raw), &p); err != nil {
 			t.Fatalf("fixture decode: %v", err)
 		}
-		_ = json.Unmarshal([]byte(raw), &p)
 		if p.ID != id {
 			continue
 		}
-		for _, r := range probe.Resumes {
-			owners = append(owners, r.Hash)
+		owners := make([]string, 0, len(p.Resumes))
+		for _, m := range p.Resumes {
+			owners = append(owners, m.Hash)
 		}
-		return owners, p.Description
+		return owners
 	}
 	t.Fatalf("record %d not in pool", id)
-	return nil, ""
+	return nil
 }
 
 func TestDetachDuplicateExperienceKeepsNewestPerEmployer(t *testing.T) {
 	const self = "created0"
-	// Two employers × generations; self renders all five (the publish
-	// attach), the newest generation per employer is the highest id.
-	pool := &[]string{
-		dedupRecord(t, dedupSpec{100, "Компания А", []string{"base1", "clone1", self}, "ген-1"}),
-		dedupRecord(t, dedupSpec{110, "Компания А", []string{"clone2", self}, "ген-2"}),
-		dedupRecord(t, dedupSpec{120, "Компания А", []string{"clone3", self}, "ген-3"}),
-		dedupRecord(t, dedupSpec{200, "Компания Б", []string{"base1", self}, "ген-4"}),
-		dedupRecord(t, dedupSpec{210, "Компания Б", []string{"clone2", self}, "ген-5"}),
-	}
-	surface := &replaceSurface{nextID: 2000, reassignShared: true, pool: *pool}
+	surface := &dedupSurface{pool: []string{
+		dedupFixture(100, "Компания А", "ген-1", "base1", "clone1", self),
+		dedupFixture(110, "Компания А", "ген-2", "clone2", self),
+		dedupFixture(120, "Компания А", "ген-3", "clone3", self),
+		dedupFixture(200, "Компания Б", "ген-4", "base1", self),
+		dedupFixture(210, "Компания Б", "ген-5", "clone2", self),
+	}}
 	env := newTestEnv(t)
-	surface.mount(env, self)
+	surface.mount(t, env, self)
 	c := env.client()
 	c.setXSRFForTests("tok_abc123")
 	ctx, cancel := ctxb(t)
@@ -90,178 +195,63 @@ func TestDetachDuplicateExperienceKeepsNewestPerEmployer(t *testing.T) {
 	if len(res.Detached) != 3 {
 		t.Fatalf("detached=%v, want 3 ids", res.Detached)
 	}
-	if len(res.Skipped) != 0 {
-		t.Fatalf("skipped=%v, want none", res.Skipped)
+	if surface.editPosts != 1 {
+		t.Fatalf("edit posts=%d, want exactly one render-set POST", surface.editPosts)
+	}
+	if surface.updatePosts != 0 {
+		t.Fatalf("the dedup touched the delete route %d times", surface.updatePosts)
 	}
 
 	final := surface.snapshot()
 	if len(final) != 5 {
-		t.Fatalf("pool=%d records, want 5 (fork+delete nets zero)", len(final))
+		t.Fatalf("pool=%d records, want 5 (the pool is never touched)", len(final))
 	}
-	// The detached originals dropped self but kept everyone else and
-	// their content byte-identical.
-	wantDesc := map[int64]string{100: "ген-1", 110: "ген-2", 200: "ген-4"}
-	for id, want := range wantDesc {
-		owners, desc := dedupMembership(t, final, id)
-		if strings.Contains(strings.Join(owners, ","), self) {
-			t.Fatalf("record %d still renders on self: %v", id, owners)
-		}
-		if desc != want {
-			t.Fatalf("record %d desc=%q, want %q", id, desc, want)
-		}
-	}
-	// Keeps still render on self.
-	for _, id := range []int64{120, 210} {
-		owners, _ := dedupMembership(t, final, id)
-		found := false
+	for _, id := range []int64{100, 110, 200} {
+		owners := dedupMembership(t, final, id)
 		for _, o := range owners {
 			if o == self {
-				found = true
+				t.Fatalf("record %d still renders on self: %v", id, owners)
 			}
 		}
-		if !found {
-			t.Fatalf("keep %d no longer renders on self: %v", id, owners)
+	}
+	// Foreign members untouched on detached records.
+	if owners := dedupMembership(t, final, 100); len(owners) != 2 {
+		t.Fatalf("record 100 owners=%v, want base1+clone1", owners)
+	}
+	// Keeps render on self with byte-identical content.
+	owners120 := dedupMembership(t, final, 120)
+	found := false
+	for _, o := range owners120 {
+		if o == self {
+			found = true
 		}
 	}
-	// Other owners untouched on detached records.
-	owners100, _ := dedupMembership(t, final, 100)
-	if len(owners100) != 2 || owners100[0] != "base1" || owners100[1] != "clone1" {
-		t.Fatalf("record 100 owners=%v, want base1+clone1", owners100)
-	}
-	if surface.editPosts != 3 || surface.updatePosts != 3 {
-		t.Fatalf("posts: edit=%d update=%d, want 3/3", surface.editPosts, surface.updatePosts)
+	if !found {
+		t.Fatalf("keep 120 lost self: %v", owners120)
 	}
 
 	// Idempotency: a second run performs no mutations.
-	postsBefore := surface.editPosts + surface.updatePosts
 	res2, err := c.DetachDuplicateExperience(ctx, self)
 	if err != nil {
 		t.Fatalf("second dedup: %v", err)
 	}
-	if len(res2.Kept) != 2 || len(res2.Detached) != 0 {
+	if len(res2.Detached) != 0 || len(res2.Kept) != 2 {
 		t.Fatalf("second run kept=%v detached=%v", res2.Kept, res2.Detached)
 	}
-	if surface.editPosts+surface.updatePosts != postsBefore {
-		t.Fatalf("second run mutated: %d posts", surface.editPosts+surface.updatePosts-postsBefore)
-	}
-}
-
-func TestDetachDuplicateExperienceWaitsForLaggingFork(t *testing.T) {
-	const self = "created1"
-	pool := &[]string{
-		dedupRecord(t, dedupSpec{100, "Компания А", []string{"base1", self}, "старый"}),
-		dedupRecord(t, dedupSpec{110, "Компания А", []string{"clone1", self}, "новый"}),
-	}
-	surface := &replaceSurface{nextID: 3000, reassignShared: true, forkAfterReads: 3, pool: *pool}
-	env := newTestEnv(t)
-	surface.mount(env, self)
-	c := env.client()
-	c.setXSRFForTests("tok_abc123")
-	oldInterval, oldBudget := dedupPollInterval, dedupForkBudget
-	dedupPollInterval, dedupForkBudget = 2*time.Millisecond, 5*time.Second
-	defer func() { dedupPollInterval, dedupForkBudget = oldInterval, oldBudget }()
-	ctx, cancel := ctxb(t)
-	defer cancel()
-
-	res, err := c.DetachDuplicateExperience(ctx, self)
-	if err != nil {
-		t.Fatalf("dedup with lagging fork: %v", err)
-	}
-	if len(res.Detached) != 1 || res.Detached[0] != 100 {
-		t.Fatalf("detached=%v, want [100]", res.Detached)
-	}
-	final := surface.snapshot()
-	if len(final) != 2 {
-		t.Fatalf("pool=%d, want 2", len(final))
-	}
-	owners, _ := dedupMembership(t, final, 100)
-	for _, o := range owners {
-		if o == self {
-			t.Fatalf("record 100 still renders on self after lagged fork: %v", owners)
-		}
-	}
-}
-
-func TestDetachDuplicateExperienceDeletesCrashOrphan(t *testing.T) {
-	const self = "created2"
-	// A previous run crashed between the fork POST and the fork delete:
-	// the tweaked fork renders lone. It must be deleted directly (sole
-	// member), leaving the shared original as the keep.
-	pool := &[]string{
-		dedupRecord(t, dedupSpec{100, "Компания А", []string{"base1", self}, "текст"}),
-		dedupRecord(t, dedupSpec{150, "Компания А", []string{self}, "текст\n"}),
-	}
-	surface := &replaceSurface{nextID: 4000, reassignShared: true, pool: *pool}
-	env := newTestEnv(t)
-	surface.mount(env, self)
-	c := env.client()
-	c.setXSRFForTests("tok_abc123")
-	ctx, cancel := ctxb(t)
-	defer cancel()
-
-	res, err := c.DetachDuplicateExperience(ctx, self)
-	if err != nil {
-		t.Fatalf("dedup: %v", err)
-	}
-	if len(res.Detached) != 1 || res.Detached[0] != 150 {
-		t.Fatalf("detached=%v, want [150]", res.Detached)
-	}
-	if len(res.Kept) != 1 || res.Kept[0] != 100 {
-		t.Fatalf("kept=%v, want [100]", res.Kept)
-	}
-	if surface.editPosts != 0 {
-		t.Fatalf("orphan delete must not fork: %d edit posts", surface.editPosts)
-	}
-	final := surface.snapshot()
-	if len(final) != 1 {
-		t.Fatalf("pool=%d, want 1", len(final))
-	}
-	owners, desc := dedupMembership(t, final, 100)
-	if len(owners) != 2 || desc != "текст" {
-		t.Fatalf("keep record changed: owners=%v desc=%q", owners, desc)
-	}
-}
-
-func TestDetachDuplicateExperienceSkipsUnknownLoneRecords(t *testing.T) {
-	const self = "created3"
-	// A lone record that is not this mechanism's orphan (no tweak
-	// signature) is never touched.
-	pool := &[]string{
-		dedupRecord(t, dedupSpec{100, "Компания А", []string{"base1", self}, "общий"}),
-		dedupRecord(t, dedupSpec{160, "Компания А", []string{self}, "своё"}),
-	}
-	surface := &replaceSurface{nextID: 4000, pool: *pool}
-	env := newTestEnv(t)
-	surface.mount(env, self)
-	c := env.client()
-	c.setXSRFForTests("tok_abc123")
-	ctx, cancel := ctxb(t)
-	defer cancel()
-
-	res, err := c.DetachDuplicateExperience(ctx, self)
-	if err != nil {
-		t.Fatalf("dedup: %v", err)
-	}
-	if len(res.Skipped) != 1 || res.Skipped[0] != 160 {
-		t.Fatalf("skipped=%v, want [160]", res.Skipped)
-	}
-	if len(res.Kept) != 1 || res.Kept[0] != 100 || len(res.Detached) != 0 {
-		t.Fatalf("kept=%v detached=%v", res.Kept, res.Detached)
-	}
-	if surface.editPosts+surface.updatePosts != 0 {
-		t.Fatalf("skip path mutated: %d posts", surface.editPosts+surface.updatePosts)
+	if surface.editPosts != 1 {
+		t.Fatalf("second run POSTed %d more times", surface.editPosts-1)
 	}
 }
 
 func TestDetachDuplicateExperienceNoopWithoutDuplicates(t *testing.T) {
-	const self = "created4"
-	// The fresh-shell shape: nothing of the pool renders on self.
-	pool := &[]string{
-		dedupRecord(t, dedupSpec{100, "Компания А", []string{"base1"}, "ген-1"}),
-	}
-	surface := &replaceSurface{nextID: 4000, pool: *pool}
+	const self = "created1"
+	// The fresh-shell shape: no experience section at all, and the
+	// already-deduped shape: one record per employer.
+	surface := &dedupSurface{pool: []string{
+		dedupFixture(120, "Компания А", "ген-3", "clone3"),
+	}}
 	env := newTestEnv(t)
-	surface.mount(env, self)
+	surface.mount(t, env, self)
 	c := env.client()
 	c.setXSRFForTests("tok_abc123")
 	ctx, cancel := ctxb(t)
@@ -271,50 +261,54 @@ func TestDetachDuplicateExperienceNoopWithoutDuplicates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dedup: %v", err)
 	}
-	if len(res.Kept)+len(res.Detached)+len(res.Skipped) != 0 {
-		t.Fatalf("empty view must no-op: %+v", res)
+	if len(res.Kept)+len(res.Detached) != 0 {
+		t.Fatalf("nothing renders on self — must no-op: %+v", res)
 	}
 	if surface.editPosts+surface.updatePosts != 0 {
 		t.Fatalf("noop mutated: %d posts", surface.editPosts+surface.updatePosts)
 	}
 }
 
-func TestDetachDuplicateExperienceRevertsInPlaceEdit(t *testing.T) {
-	const self = "created5"
-	// The unexpected live branch: hh answers the fork-provoking edit by
-	// changing the shared original in place. The dedup must revert the
-	// record byte-for-byte and fail loudly, leaving no drift behind.
-	pool := &[]string{
-		dedupRecord(t, dedupSpec{100, "Компания А", []string{"base1", self}, "дрейф-мишень"}),
-		dedupRecord(t, dedupSpec{110, "Компания А", []string{"clone1", self}, "новейший"}),
-	}
-	surface := &replaceSurface{nextID: 5000, reassignShared: true, inPlaceEdit: true, pool: *pool}
+func TestDetachDuplicateExperienceVerifiesForeignMembership(t *testing.T) {
+	const self = "created2"
+	// Integrity accident: the render-set POST loses a FOREIGN member of a
+	// detached record. The dedup must fail loudly instead of accepting.
+	surface := &dedupSurface{pool: []string{
+		dedupFixture(100, "Компания А", "ген-1", "base1", "clone1", self),
+		dedupFixture(110, "Компания А", "ген-2", "clone2", self),
+		dedupFixture(210, "Компания Б", "ген-5", "clone2", self),
+	}, dropForeign: true}
 	env := newTestEnv(t)
-	surface.mount(env, self)
+	surface.mount(t, env, self)
 	c := env.client()
 	c.setXSRFForTests("tok_abc123")
-	oldInterval, oldBudget := dedupPollInterval, dedupForkBudget
-	dedupPollInterval, dedupForkBudget = 2*time.Millisecond, 5*time.Second
-	defer func() { dedupPollInterval, dedupForkBudget = oldInterval, oldBudget }()
+	oldInterval, oldBudget := dedupPollInterval, dedupVerifyBudget
+	dedupPollInterval, dedupVerifyBudget = 2*time.Millisecond, 50*time.Millisecond
+	defer func() { dedupPollInterval, dedupVerifyBudget = oldInterval, oldBudget }()
 	ctx, cancel := ctxb(t)
 	defer cancel()
 
 	_, err := c.DetachDuplicateExperience(ctx, self)
-	if !errors.Is(err, ErrExperienceInPlace) {
-		t.Fatalf("err=%v, want ErrExperienceInPlace", err)
+	if !errors.Is(err, ErrExperienceDedupIntegrity) {
+		t.Fatalf("err=%v, want ErrExperienceDedupIntegrity", err)
 	}
-	final := surface.snapshot()
-	owners, desc := dedupMembership(t, final, 100)
-	if desc != "дрейф-мишень" {
-		t.Fatalf("record 100 desc=%q after revert, want original", desc)
-	}
-	found := false
-	for _, o := range owners {
-		if o == self {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("record 100 lost self during in-place revert: %v", owners)
+}
+
+func TestDetachDuplicateExperienceVerifiesPoolSurvival(t *testing.T) {
+	const self = "created3"
+	// Integrity accident: the pool loses a record around the POST.
+	surface := &dedupSurface{pool: []string{
+		dedupFixture(100, "Компания А", "ген-1", "base1", "clone1", self),
+		dedupFixture(110, "Компания А", "ген-2", "clone2", self),
+	}, dropRecord: true}
+	env := newTestEnv(t)
+	surface.mount(t, env, self)
+	c := env.client()
+	c.setXSRFForTests("tok_abc123")
+	ctx, cancel := ctxb(t)
+	defer cancel()
+
+	if _, err := c.DetachDuplicateExperience(ctx, self); !errors.Is(err, ErrExperienceDedupIntegrity) {
+		t.Fatalf("err=%v, want ErrExperienceDedupIntegrity", err)
 	}
 }

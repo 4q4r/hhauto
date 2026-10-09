@@ -1,18 +1,25 @@
 package hhapi
 
-// T99 created-resume experience dedup. Live mechanism (dumps 2026-10-09,
-// /tmp/opencode/t99/): the account experience pool is ONE lineage pool —
-// every record lists in "resumes" the resumes that render it. Publishing a
-// created resume attaches its hash to EVERY pool record, so the fresh
-// resume renders all four generations per employer (the owner-visible
-// bug). hh has no detach endpoint: the editor delete button is a GLOBAL
-// delete (T56 modal "исчезнет из всех резюме"), and the replace route
-// ignores the resumes field. The only per-resume mechanism is the EDIT
-// route's FORK (live T67): editing a shared record forks it for the
-// editing resume and the original drops that resume's hash. Detach is
-// therefore fork + delete-the-fork (the fork is a sole-member record, so
-// the T56 delete machine applies): the original loses the resume, the
-// fork dies, the pool keeps its twelve records — net zero.
+// T99 created-resume experience dedup. Live mechanism (dumps and the
+// 2026-10-09 live experiment, /tmp/opencode/t99/): the account experience
+// pool is ONE lineage pool — every record lists in "resumes" the resumes
+// that render it, and publishing a created resume attaches its hash to
+// EVERY pool record, so the fresh resume renders all generations per
+// employer. The edit route's experience array is a RENDER-SET statement:
+// posting {"experience":[…]} makes hh render exactly the listed records
+// on this resume (every unlisted record drops the resume's hash) while
+// the listed records' content upserts by id — unchanged content is a
+// no-op (live proof: one single-record POST collapsed the resume's
+// renders to exactly that record, pool ids and descriptions
+// byte-unchanged, no fork). The pool itself is never touched: no record
+// is created or deleted, other resumes' memberships stay as they were.
+//
+// The dedup therefore posts the keep-set — the newest generation (highest
+// record id; end dates are identical within an employer) per company —
+// and verifies the pool's integrity around the POST: same record ids,
+// same description shas, and every record's membership changed only by
+// losing hash. Idempotent: a resume already rendering one generation per
+// employer performs no POST.
 
 import (
 	"context"
@@ -25,114 +32,23 @@ import (
 	"time"
 )
 
-// dedupForkBudget bounds the wait for one fork to materialize (async hh
-// queue — the T67 lesson); dedupPollInterval is the poll step. Package
-// variables so tests can shrink them.
+// dedupVerifyBudget bounds the wait for hh to apply the render-set change;
+// dedupPollInterval is the poll step. Package variables so tests can
+// shrink them.
 var (
-	dedupForkBudget   = 600 * time.Second
+	dedupVerifyBudget = 300 * time.Second
 	dedupPollInterval = 10 * time.Second
 )
 
-// ErrExperienceForkTimeout reports a fork that never materialized within
-// the budget. The state stays consistent (earlier detachments persist) and
-// a re-run continues where the call stopped.
-var ErrExperienceForkTimeout = errors.New("hhapi: experience fork did not materialize")
+// ErrExperienceDedupIntegrity reports a render-set POST whose read-back
+// broke a pool invariant (a record disappeared, a description drifted, or
+// another resume's membership changed) — the account's shared experience
+// must never change beyond hash's own render set.
+var ErrExperienceDedupIntegrity = errors.New("hhapi: experience dedup broke a pool invariant")
 
-// ErrExperienceInPlace reports the unexpected live branch: hh answered the
-// fork-provoking edit by changing the SHARED original in place. The record
-// is reverted before the error returns; render impact is a single trailing
-// newline until the revert lands.
-var ErrExperienceInPlace = errors.New("hhapi: shared experience record edited in place")
-
-// DetachExperienceResult reports one DetachDuplicateExperience run.
-type DetachExperienceResult struct {
-	// Kept holds one record id per employer — the newest generation left
-	// rendering on the resume.
-	Kept []int64
-	// Detached holds the record ids that stopped rendering on the resume
-	// (shared originals plus deleted crash-orphan forks).
-	Detached []int64
-	// Skipped holds lone-member records outside the dedup mechanism,
-	// left untouched (the method never deletes content it cannot
-	// attribute to this mechanism).
-	Skipped []int64
-}
-
-// DetachDuplicateExperience prunes the duplicate experience generations a
-// created resume inherited from the account pool: among the records that
-// render on hash it keeps the newest (highest record id — end dates are
-// identical within an employer) per company and detaches the rest. Records
-// rendered only by hash are kept as-is unless they are crash orphans of a
-// previous run (description equal to another rendered record's plus one
-// trailing newline — the fork-provoking tweak), which are deleted
-// directly. Shared records are detached through fork + delete-fork. The
-// call is idempotent: with one generation per employer it performs no
-// mutations.
-func (c *Client) DetachDuplicateExperience(ctx context.Context, hash string) (DetachExperienceResult, error) {
-	st, err := c.fetchBuilderState(ctx, hash)
-	if err != nil {
-		return DetachExperienceResult{}, err
-	}
-	raw, ok := st.ProfileFields["experience"]
-	if !ok {
-		// No experience section in the builder state — nothing to prune
-		// (the fresh-shell shape; the create→improve chain calls this
-		// before the resume ever rendered a pool record).
-		return DetachExperienceResult{Kept: []int64{}, Detached: []int64{}, Skipped: []int64{}}, nil
-	}
-	pool, err := experiencePoolRaw(raw)
-	if err != nil {
-		return DetachExperienceResult{}, err
-	}
-
-	baselineSHA := map[int64]string{}
-	rendered := make([]experienceRecord, 0, len(pool))
-	for _, rec := range pool {
-		baselineSHA[rec.ID] = experienceDescSHA(rec.Raw)
-		if rec.rendersOn(hash) {
-			rendered = append(rendered, rec)
-		}
-	}
-
-	res := DetachExperienceResult{Kept: []int64{}, Detached: []int64{}, Skipped: []int64{}}
-	for _, group := range experienceGroups(rendered) {
-		var shared, lone []experienceRecord
-		for _, rec := range group {
-			if len(rec.ResumeHashes) > 1 {
-				shared = append(shared, rec)
-			} else {
-				lone = append(lone, rec)
-			}
-		}
-		// Crash orphans of an interrupted run: a lone fork carrying the
-		// tweak signature. Everything else lone stays (never delete
-		// content this mechanism did not create).
-		for _, rec := range lone {
-			if experienceIsOrphan(rec, group) {
-				if _, derr := c.DeleteExperienceRecords(ctx, hash, []int64{rec.ID}); derr != nil {
-					return res, derr
-				}
-				res.Detached = append(res.Detached, rec.ID)
-			} else {
-				res.Skipped = append(res.Skipped, rec.ID)
-			}
-		}
-		if len(shared) == 0 {
-			continue
-		}
-		sort.Slice(shared, func(i, j int) bool { return shared[i].ID < shared[j].ID })
-		keep := shared[len(shared)-1] // ascending sort → newest generation
-		res.Kept = append(res.Kept, keep.ID)
-		for _, rec := range shared[:len(shared)-1] {
-			if ferr := c.detachSharedExperience(ctx, hash, rec, baselineSHA); ferr != nil {
-				return res, ferr
-			}
-			res.Detached = append(res.Detached, rec.ID)
-		}
-	}
-	sort.Slice(res.Kept, func(i, j int) bool { return res.Kept[i] < res.Kept[j] })
-	return res, nil
-}
+// ErrExperienceDedupVerify reports a render-set POST hh accepted but did
+// not apply within the budget (the T55 silent-no-op class).
+var ErrExperienceDedupVerify = errors.New("hhapi: experience dedup render set not applied")
 
 // experiencePoolRaw parses one profile.fields.experience array (the raw
 // bytes side of experiencePool, so the dedup can read a state the delete
@@ -162,180 +78,8 @@ func experiencePoolRaw(raw json.RawMessage) ([]experienceRecord, error) {
 	return records, nil
 }
 
-// detachSharedExperience detaches one shared record from hash: an edit
-// POST with a single trailing-newline tweak makes hh fork the record for
-// hash (the fork carries the tweak; the original drops hash). Once the
-// fork materializes and the original dropped hash, the fork is deleted
-// through the T56 replace route (sole member → not shared).
-func (c *Client) detachSharedExperience(ctx context.Context, hash string, rec experienceRecord, baselineSHA map[int64]string) error {
-	wantSHA := baselineSHA[rec.ID]
-	var base map[string]json.RawMessage
-	if err := json.Unmarshal(rec.Raw, &base); err != nil {
-		return fmt.Errorf("hhapi: experience dedup decode %d: %w", rec.ID, err)
-	}
-	delete(base, "resumes") // the save contract never carries usage metadata
-	delete(base, "companyLogos")
-	var descText string
-	if err := json.Unmarshal(base["description"], &descText); err != nil {
-		return fmt.Errorf("hhapi: experience dedup decode %d description: %w", rec.ID, err)
-	}
-	tweaked, merr := json.Marshal(descText + "\n")
-	if merr != nil {
-		return fmt.Errorf("hhapi: experience dedup encode %d: %w", rec.ID, merr)
-	}
-	base["description"] = tweaked
-	body, merr := json.Marshal([]map[string]json.RawMessage{base})
-	if merr != nil {
-		return fmt.Errorf("hhapi: experience dedup encode %d: %w", rec.ID, merr)
-	}
-	if err := c.postResumeEdit(ctx, hash, "experience", body); err != nil {
-		return fmt.Errorf("hhapi: experience dedup fork %d: %w", rec.ID, err)
-	}
-
-	deadline := time.Now().Add(dedupForkBudget)
-	for {
-		forkID, originalDropped, originalIntact, err := c.experienceForkState(ctx, hash, rec.ID, descText+"\n", wantSHA)
-		if err != nil {
-			return err
-		}
-		if !originalIntact {
-			// The shared original's description drifted: hh answered the
-			// edit in place instead of forking. Revert and fail loudly.
-			return c.revertInPlaceExperience(ctx, hash, rec, wantSHA)
-		}
-		if forkID != 0 && originalDropped {
-			if _, derr := c.DeleteExperienceRecords(ctx, hash, []int64{forkID}); derr != nil {
-				return derr
-			}
-			return nil
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("%w: record %d after %s", ErrExperienceForkTimeout, rec.ID, dedupForkBudget)
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("hhapi: experience dedup fork %d: %w", rec.ID, ctx.Err())
-		case <-time.After(dedupPollInterval):
-		}
-	}
-}
-
-// experienceForkState polls one round: the fork's id (a record carrying
-// the tweaked description that the baseline did not have — it may
-// materialize without membership first, the T67 lag window), whether the
-// original dropped hash, and whether the original's description still
-// matches the baseline sha.
-func (c *Client) experienceForkState(ctx context.Context, hash string, originalID int64, tweaked, wantSHA string) (forkID int64, dropped, intact bool, err error) {
-	st, err := c.fetchBuilderState(ctx, hash)
-	if err != nil {
-		return 0, false, false, err
-	}
-	pool, err := experiencePool(st)
-	if err != nil {
-		return 0, false, false, err
-	}
-	for _, r := range pool {
-		var p struct {
-			Description string `json:"description"`
-		}
-		_ = json.Unmarshal(r.Raw, &p)
-		switch {
-		case r.ID == originalID:
-			intact = experienceDescSHA(r.Raw) == wantSHA
-			dropped = !r.rendersOn(hash)
-		case p.Description == tweaked:
-			forkID = r.ID
-		}
-	}
-	return forkID, dropped, intact, nil
-}
-
-// revertInPlaceExperience restores the shared record's description after
-// an in-place edit and verifies the restore; it never leaves the drift
-// silent.
-func (c *Client) revertInPlaceExperience(ctx context.Context, hash string, rec experienceRecord, wantSHA string) error {
-	var base map[string]json.RawMessage
-	if err := json.Unmarshal(rec.Raw, &base); err != nil {
-		return err
-	}
-	delete(base, "resumes")
-	delete(base, "companyLogos")
-	body, merr := json.Marshal([]map[string]json.RawMessage{base})
-	if merr != nil {
-		return merr
-	}
-	if err := c.postResumeEdit(ctx, hash, "experience", body); err != nil {
-		return fmt.Errorf("%w: record %d revert POST: %v", ErrExperienceInPlace, rec.ID, err)
-	}
-	rdeadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(rdeadline) {
-		st, err := c.fetchBuilderState(ctx, hash)
-		if err != nil {
-			return err
-		}
-		pool, err := experiencePool(st)
-		if err != nil {
-			return err
-		}
-		for _, r := range pool {
-			if r.ID == rec.ID && experienceDescSHA(r.Raw) == wantSHA {
-				return fmt.Errorf("%w: record %d reverted", ErrExperienceInPlace, rec.ID)
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(dedupPollInterval):
-		}
-	}
-	return fmt.Errorf("%w: record %d revert not confirmed", ErrExperienceInPlace, rec.ID)
-}
-
-// experienceGroups buckets rendered records by company name in
-// deterministic (sorted) key order.
-func experienceGroups(records []experienceRecord) [][]experienceRecord {
-	keys := make([]string, 0, len(records))
-	byKey := map[string][]experienceRecord{}
-	for _, rec := range records {
-		var p struct {
-			Company string `json:"companyName"`
-		}
-		_ = json.Unmarshal(rec.Raw, &p)
-		if _, ok := byKey[p.Company]; !ok {
-			keys = append(keys, p.Company)
-		}
-		byKey[p.Company] = append(byKey[p.Company], rec)
-	}
-	sort.Strings(keys)
-	out := make([][]experienceRecord, 0, len(keys))
-	for _, k := range keys {
-		out = append(out, byKey[k])
-	}
-	return out
-}
-
-// experienceIsOrphan reports whether the lone record is a crashed run's
-// fork: its description is exactly another rendered record's description
-// plus the single tweak newline.
-func experienceIsOrphan(rec experienceRecord, group []experienceRecord) bool {
-	desc, hasDesc, _ := experienceDescRaw(rec.Raw)
-	if !hasDesc {
-		return false
-	}
-	for _, other := range group {
-		if other.ID == rec.ID {
-			continue
-		}
-		base, ok, _ := experienceDescRaw(other.Raw)
-		if ok && base+"\n" == desc {
-			return true
-		}
-	}
-	return false
-}
-
 // experienceDescRaw extracts the description with presence (missing field
-// is distinct from empty).
+// is distinct from empty) plus its sha prefix.
 func experienceDescRaw(raw json.RawMessage) (desc string, ok bool, sha string) {
 	var p struct {
 		Description *string `json:"description"`
@@ -361,4 +105,204 @@ func (r experienceRecord) rendersOn(hash string) bool {
 		}
 	}
 	return false
+}
+
+// DetachExperienceResult reports one DetachDuplicateExperience run.
+type DetachExperienceResult struct {
+	// Kept holds one record id per employer — the newest generation left
+	// rendering on the resume.
+	Kept []int64
+	// Detached holds the record ids that stopped rendering on the resume.
+	Detached []int64
+}
+
+// DetachDuplicateExperience prunes the duplicate experience generations a
+// created resume inherited from the account pool: among the records that
+// render on hash it keeps the newest per company and detaches the rest
+// through one render-set POST. Idempotent; a resume with nothing (or
+// exactly one record per employer) rendering performs no mutation.
+func (c *Client) DetachDuplicateExperience(ctx context.Context, hash string) (DetachExperienceResult, error) {
+	res := DetachExperienceResult{Kept: []int64{}, Detached: []int64{}}
+	st, err := c.fetchBuilderState(ctx, hash)
+	if err != nil {
+		return res, err
+	}
+	raw, ok := st.ProfileFields["experience"]
+	if !ok {
+		// No experience section in the builder state — nothing to prune
+		// (the fresh-shell shape; the create→improve chain calls this
+		// before the resume ever rendered a pool record).
+		return res, nil
+	}
+	pool, err := experiencePoolRaw(raw)
+	if err != nil {
+		return res, err
+	}
+
+	before := make([]experienceRecord, 0, len(pool))
+	rendered := make([]experienceRecord, 0, len(pool))
+	for _, rec := range pool {
+		before = append(before, rec)
+		if rec.rendersOn(hash) {
+			rendered = append(rendered, rec)
+		}
+	}
+	if len(rendered) == 0 {
+		return res, nil
+	}
+
+	keep := experienceNewestPerCompany(rendered)
+	for _, rec := range keep {
+		res.Kept = append(res.Kept, rec.ID)
+	}
+	sort.Slice(res.Kept, func(i, j int) bool { return res.Kept[i] < res.Kept[j] })
+	if experienceSameIDs(keep, rendered) {
+		return res, nil // already one generation per employer
+	}
+
+	keepSet := make(map[int64]bool, len(keep))
+	for _, rec := range keep {
+		keepSet[rec.ID] = true
+	}
+	for _, rec := range rendered {
+		if !keepSet[rec.ID] {
+			res.Detached = append(res.Detached, rec.ID)
+		}
+	}
+	sort.Slice(res.Detached, func(i, j int) bool { return res.Detached[i] < res.Detached[j] })
+
+	// The render-set body: the keep records verbatim (minus the usage
+	// metadata the save contract never carries), ascending id.
+	sort.Slice(keep, func(i, j int) bool { return keep[i].ID < keep[j].ID })
+	items := make([]json.RawMessage, 0, len(keep))
+	for _, rec := range keep {
+		var base map[string]json.RawMessage
+		if uerr := json.Unmarshal(rec.Raw, &base); uerr != nil {
+			return res, fmt.Errorf("hhapi: experience dedup decode %d: %w", rec.ID, uerr)
+		}
+		delete(base, "resumes")
+		delete(base, "companyLogos")
+		b, merr := json.Marshal(base)
+		if merr != nil {
+			return res, fmt.Errorf("hhapi: experience dedup encode %d: %w", rec.ID, merr)
+		}
+		items = append(items, b)
+	}
+	body, merr := json.Marshal(items)
+	if merr != nil {
+		return res, fmt.Errorf("hhapi: experience dedup encode: %w", merr)
+	}
+	if err := c.postResumeEdit(ctx, hash, "experience", body); err != nil {
+		return res, fmt.Errorf("hhapi: experience dedup render set: %w", err)
+	}
+
+	deadline := time.Now().Add(dedupVerifyBudget)
+	for {
+		applied, ierr := c.experienceDedupVerify(ctx, hash, before, keepSet)
+		if ierr != nil {
+			return res, ierr
+		}
+		if applied {
+			return res, nil
+		}
+		if time.Now().After(deadline) {
+			return res, fmt.Errorf("%w: %s after %s", ErrExperienceDedupVerify, hash, dedupVerifyBudget)
+		}
+		select {
+		case <-ctx.Done():
+			return res, fmt.Errorf("hhapi: experience dedup verify: %w", ctx.Err())
+		case <-time.After(dedupPollInterval):
+		}
+	}
+}
+
+// experienceDedupVerify re-reads the pool and checks the post-POST
+// invariants: every record survived with an unchanged description, hash
+// renders exactly the keep set, and no other resume's membership moved.
+func (c *Client) experienceDedupVerify(ctx context.Context, hash string, before []experienceRecord, keepSet map[int64]bool) (bool, error) {
+	st, err := c.fetchBuilderState(ctx, hash)
+	if err != nil {
+		return false, err
+	}
+	raw, ok := st.ProfileFields["experience"]
+	if !ok {
+		return false, fmt.Errorf("%w: experience section vanished", ErrExperienceDedupIntegrity)
+	}
+	pool, err := experiencePoolRaw(raw)
+	if err != nil {
+		return false, err
+	}
+	beforeByID := make(map[int64]experienceRecord, len(before))
+	for _, rec := range before {
+		beforeByID[rec.ID] = rec
+	}
+	applied := true
+	for _, rec := range pool {
+		was, known := beforeByID[rec.ID]
+		if !known {
+			return false, fmt.Errorf("%w: record %d appeared", ErrExperienceDedupIntegrity, rec.ID)
+		}
+		if experienceDescSHA(rec.Raw) != experienceDescSHA(was.Raw) {
+			return false, fmt.Errorf("%w: record %d description drifted", ErrExperienceDedupIntegrity, rec.ID)
+		}
+		selfMember := rec.rendersOn(hash)
+		if selfMember != keepSet[rec.ID] {
+			applied = false // own render set not settled yet — keep polling
+		}
+		for _, member := range was.ResumeHashes {
+			if member == hash {
+				continue // our own membership is the change we are making
+			}
+			if !rec.rendersOn(member) {
+				return false, fmt.Errorf("%w: record %d lost member %s", ErrExperienceDedupIntegrity, rec.ID, member)
+			}
+		}
+	}
+	if len(pool) != len(before) {
+		return false, fmt.Errorf("%w: pool %d → %d records", ErrExperienceDedupIntegrity, len(before), len(pool))
+	}
+	return applied, nil
+}
+
+// experienceNewestPerCompany picks, per company name, the highest record
+// id (hh's record ids are a monotonic sequence: the newest generation of
+// that employer's improve history).
+func experienceNewestPerCompany(records []experienceRecord) []experienceRecord {
+	keys := make([]string, 0, len(records))
+	byKey := map[string]experienceRecord{}
+	for _, rec := range records {
+		var p struct {
+			Company string `json:"companyName"`
+		}
+		_ = json.Unmarshal(rec.Raw, &p)
+		if _, ok := byKey[p.Company]; !ok {
+			keys = append(keys, p.Company)
+		}
+		if best, ok := byKey[p.Company]; !ok || rec.ID > best.ID {
+			byKey[p.Company] = rec
+		}
+	}
+	sort.Strings(keys)
+	out := make([]experienceRecord, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, byKey[k])
+	}
+	return out
+}
+
+// experienceSameIDs reports whether both lists carry the same record ids.
+func experienceSameIDs(a, b []experienceRecord) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	ids := make(map[int64]bool, len(a))
+	for _, rec := range a {
+		ids[rec.ID] = true
+	}
+	for _, rec := range b {
+		if !ids[rec.ID] {
+			return false
+		}
+	}
+	return true
 }

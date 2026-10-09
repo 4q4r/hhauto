@@ -43,11 +43,6 @@ type replaceSurface struct {
 	hash         string
 	silentUpdate bool // profile/update answers 200 but applies nothing
 	silentEdit   bool // edit POST answers 200 but applies nothing (T55 no-op)
-	// inPlaceEdit: the live hh branch where an edit of a shared record
-	// changes the SHARED original in place instead of forking (the T58
-	// own-record behavior applied to a shared record — the T99 dedup's
-	// revert path exists for exactly this).
-	inPlaceEdit bool
 	// lagForkResumes: forks are created WITHOUT self membership — the
 	// observed T67 blind window (the fork exists in the raw pool while the
 	// resumes-filtered split does not show it yet).
@@ -117,8 +112,6 @@ func (s *replaceSurface) mount(env *testEnv, hash string) {
 				switch {
 				case id == 0 || idx < 0: // unknown id → add (live T55 upsert semantics)
 					s.pool = append(s.pool, t58WithMeta(item, s.hash, 0))
-				case s.inPlaceEdit && !t58SameContent(s.pool[idx], item): // in-place edit of the shared original
-					s.pool[idx] = t58ReplaceContent(s.pool[idx], item)
 				case !t58SameContent(s.pool[idx], item): // content edit → FORK: new id, old record stays
 					s.nextID++
 					fork := t58WithMeta(item, s.hash, s.nextID)
@@ -216,24 +209,6 @@ func t58SelflessMeta(item map[string]json.RawMessage, forkID int64) string {
 	}
 	rec["resumes"] = json.RawMessage(`[]`)
 	rec["id"] = json.RawMessage(itoa64(forkID))
-	b, err := json.Marshal(rec)
-	if err != nil {
-		panic(err)
-	}
-	return string(b)
-}
-
-// t58ReplaceContent applies the sent item's fields onto an existing pool
-// record, keeping the record's id and resumes usage list (the in-place
-// edit branch: no new id, no membership change).
-func t58ReplaceContent(poolRaw string, item map[string]json.RawMessage) string {
-	rec := make(map[string]json.RawMessage)
-	if err := json.Unmarshal([]byte(poolRaw), &rec); err != nil {
-		panic(err)
-	}
-	for k, v := range item {
-		rec[k] = v
-	}
 	b, err := json.Marshal(rec)
 	if err != nil {
 		panic(err)
