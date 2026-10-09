@@ -196,7 +196,7 @@ func serveDuplicateCreateSurface(env *testEnv, shellHash string) *[]string {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = w.Write(body)
 	})
-	env.serve(env.mux1, "1", "POST", "/profile/shards/resume/create", func(w http.ResponseWriter, r *http.Request) {
+	env.serve(env.mux1, "1", "POST", "/profile/shards/resume/create", func(w http.ResponseWriter, _ *http.Request) {
 		*bodies = append(*bodies, env.lastBody("1:POST /profile/shards/resume/create"))
 		posts++
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
