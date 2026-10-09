@@ -588,7 +588,9 @@ func newResumeCreateCmd() *cobra.Command {
 			// No extra announce line: the pipeline's console start event is
 			// the single banner (T52). The fresh shell is not a tracked
 			// clone, so the improve stage runs with the base-resume confirm
-			// it would require of the owner's real resume.
+			// it would require of the owner's real resume. T97: the
+			// requested --title rides along as the family positioning
+			// anchor — a fresh shell has no lineage and no own positioning.
 			unlock, err := acquireTaskLock(rt.Cfg.General.DataDir, "resume_improve")
 			if err != nil {
 				return exitErr("%v", err)
@@ -596,6 +598,7 @@ func newResumeCreateCmd() *cobra.Command {
 			defer unlock()
 			return runResumeImprove(ctx, rt, o, improveRequest{
 				Hash: hash, Account: target, Confirm: true, FillEmpty: true,
+				Positioning: title, // T97: the requested --title is the shell's only positioning anchor
 			})
 		},
 	}

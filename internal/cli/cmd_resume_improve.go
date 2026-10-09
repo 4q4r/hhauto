@@ -37,6 +37,7 @@ func newResumeImproveCmd() *cobra.Command {
 		fields  string
 		dryRun  bool
 		confirm bool
+		title   string
 	)
 	cmd := &cobra.Command{
 		Use:   "improve",
@@ -66,7 +67,7 @@ func newResumeImproveCmd() *cobra.Command {
 
 			o := outFor(cmd)
 			return runResumeImprove(ctx, rt, o, improveRequest{
-				Hash: hash, Account: account, Fields: fields, DryRun: dryRun, Confirm: confirm,
+				Hash: hash, Account: account, Fields: fields, DryRun: dryRun, Confirm: confirm, Positioning: title,
 			})
 		},
 	}
@@ -75,6 +76,7 @@ func newResumeImproveCmd() *cobra.Command {
 	cmd.Flags().StringVar(&fields, "fields", "", "comma-separated field subset to improve (default: all improve.fields from config)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show the было/стало diff without applying")
 	cmd.Flags().BoolVar(&confirm, "confirm", false, "allow improving a BASE (non-clone) resume — the owner's real resume")
+	cmd.Flags().StringVar(&title, "title", "", "requested positioning title — the family anchor (T97) for a resume without one (a fresh create shell); rides into the improve context as «Позиционирование семьи»")
 	return cmd
 }
 
@@ -89,6 +91,11 @@ type improveRequest struct {
 	// empty-field values grounded on profile.md (a fresh shell is empty
 	// everywhere); the standalone command keeps the conservative skip.
 	FillEmpty bool
+	// Positioning (T97): the requested --title rides into the improve
+	// context as the «Позиционирование семьи» anchor for a resume with no
+	// lineage — the create chain forwards its --title; the standalone
+	// command takes it through the --title flag. Empty = no anchor.
+	Positioning string
 }
 
 // runResumeImprove resolves the target, enforces the base-resume confirm
@@ -123,7 +130,7 @@ func runResumeImprove(ctx context.Context, rt *Runtime, o out, req improveReques
 		"hash", req.Hash, "account", accountID, "clone", isClone,
 		"fields", improve.Fields, "dry_run", req.DryRun)
 
-	improver, err := buildImproveForCommand(rt, improve, accountID, req.DryRun, req.FillEmpty)
+	improver, err := buildImproveForCommand(rt, improve, accountID, req.DryRun, req.FillEmpty, req.Positioning)
 	if err != nil {
 		return exitErr("%v", err)
 	}

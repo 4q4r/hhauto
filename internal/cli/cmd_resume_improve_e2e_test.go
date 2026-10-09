@@ -6,6 +6,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -101,6 +102,25 @@ func newFakeHHImprove(t *testing.T, settingsLostSession bool, st *improveHHState
 		_, _ = w.Write([]byte(st.builderStateBody()))
 	})
 	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// newFakeAICapture serves the same OpenAI-chat endpoint as newFakeAI and
+// hands every request body to capture (the improve context rides there).
+func newFakeAICapture(t *testing.T, verdict string, capture func(body string)) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		capture(string(b))
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		content, _ := json.Marshal(verdict)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":` + string(content) + `}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
+	}))
 	t.Cleanup(srv.Close)
 	return srv.URL
 }

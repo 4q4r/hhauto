@@ -174,6 +174,33 @@ func TestResumeCreateImproveChainE2E(t *testing.T) {
 	}
 }
 
+// The requested --title rides into the improve context as the
+// «Позиционирование семьи» anchor (T97): a fresh shell has no positioning
+// of its own, so without the anchor the AI repositions on profile.md's
+// dominant facts (the live defect this fixes). The capture is the AI
+// request body — the trusted facts ride the messages (TrustedSource).
+func TestResumeCreateChainPassesTitleAnchorE2E(t *testing.T) {
+	st := &createHHState{}
+	testSite = newFakeHHCreate(t, st)
+	var bodies []string
+	aiURL := newFakeAICapture(t, t35Verdict, func(body string) { bodies = append(bodies, body) })
+	t.Setenv("T96_AI_KEY", "test-key")
+	cfgPath := writeTestConfig(t, t96CreateExtra(aiURL))
+	profileMD := filepath.Join(filepath.Dir(cfgPath), "profile.md")
+	if werr := os.WriteFile(profileMD, []byte("# Профиль\n\n- Целевые роли: DevOps-инженер, Backend-разработчик\n- Стек: Linux, Docker, Go, Python\n"), 0o600); werr != nil {
+		t.Fatalf("write profile.md: %v", werr)
+	}
+
+	out, err := runRoot(t, "resume", "create", "--title", "Специалист по информационной безопасности", "--config", cfgPath)
+	if err != nil {
+		t.Fatalf("create chain: %v\n%s", err, out)
+	}
+	joined := strings.Join(bodies, "\n")
+	if !strings.Contains(joined, "Позиционирование семьи: Специалист по информационной безопасности") {
+		t.Fatalf("the requested --title never reached the improve context (AI bodies=%d):\n%s\n--- out ---\n%s", len(bodies), joined, out)
+	}
+}
+
 // --no-improve: the bare shell only — the editor route is never touched.
 func TestResumeCreateNoImproveE2E(t *testing.T) {
 	st := &createHHState{}

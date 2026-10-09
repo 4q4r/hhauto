@@ -117,6 +117,14 @@ type Options struct {
 	// and the clone engine keep the conservative skip. Without a profile
 	// context the skip applies regardless — nothing to ground on.
 	FillEmptyFromProfile bool
+
+	// Positioning is the requested family anchor for a resume with no
+	// lineage (T97 create→improve chain: the requested --title names the
+	// ONE role family a fresh shell must position for). It rides every
+	// task as the «Позиционирование семьи» fact — the same mechanics as
+	// the T93 lineage fact — and anchors the T93 (б) title post-check.
+	// Empty = no anchor; a readable lineage parent (T93) always wins.
+	Positioning string
 }
 
 // pending is one planned mutation awaiting the apply step.
@@ -299,7 +307,15 @@ func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 	case parentHash != "":
 		families = nil // T93 (б): no readable anchor this run — the check stays off, no false guard
 	default:
-		families = titleFamilies(familyAnchorText(contentTitle(live), contentKeySkills(live)))
+		if p := im.opt.Positioning; p != "" {
+			// T97: a fresh shell has no own positioning — the requested
+			// --title names the family. Title-vs-itself post-check is
+			// trivially safe; the conservative registry still gates any
+			// registered family it does name.
+			families = titleFamilies(p)
+		} else {
+			families = titleFamilies(familyAnchorText(contentTitle(live), contentKeySkills(live)))
+		}
 	}
 	called := false // the previous target made its AI call
 	var pendings []pending
@@ -517,6 +533,10 @@ func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, sp
 		if pv, ok := parentFieldValue(spec, parentCtx.content, tg); ok && !rawEqualT(pv, tg.current) {
 			facts = append(facts, "Значение родителя (то же поле базового резюме): "+string(pv))
 		}
+	} else if p := im.opt.Positioning; p != "" {
+		// T97: created-from-scratch — the requested --title rides as the
+		// family positioning fact (same mechanics as the T93 lineage fact).
+		facts = append([]string{"Позиционирование семьи: " + p}, facts...)
 	}
 	verdict, _, err := im.opt.Runner.RunWithSystem(ctx, accountID, "resume", cloneHash, "",
 		ai.TaskResumeImprove, im.fieldPrompt(spec.ID, candidateCtx), ai.ImproveInput{
