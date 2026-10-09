@@ -446,9 +446,12 @@ func newApplyEnv(t *testing.T) *applyEnv {
 			Override: map[string]string{
 				// T29/T51: the clone POST defaults to the external
 				// resume-profile-front host; the edit POST rides the site
-				// host — both pinned to the fake.
+				// host — both pinned to the fake. create/delete (T47) pin
+				// likewise: their defaults live on the external BFF host.
 				"resume_clone_resumes": e.srv.URL + "/profile/shards/resume/clone_resumes",
 				"resume_edit":          e.srv.URL + "/applicant/resume/edit",
+				"resume_create":        e.srv.URL + "/profile/shards/resume/create",
+				"resume_delete":        e.srv.URL + "/profile/shards/resume/delete",
 			},
 		},
 		nil, nil,

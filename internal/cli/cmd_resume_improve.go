@@ -85,6 +85,10 @@ type improveRequest struct {
 	Fields  string
 	DryRun  bool
 	Confirm bool
+	// FillEmpty (T96): the create→improve chain lets the planner propose
+	// empty-field values grounded on profile.md (a fresh shell is empty
+	// everywhere); the standalone command keeps the conservative skip.
+	FillEmpty bool
 }
 
 // runResumeImprove resolves the target, enforces the base-resume confirm
@@ -119,7 +123,7 @@ func runResumeImprove(ctx context.Context, rt *Runtime, o out, req improveReques
 		"hash", req.Hash, "account", accountID, "clone", isClone,
 		"fields", improve.Fields, "dry_run", req.DryRun)
 
-	improver, err := buildImproveForCommand(rt, improve, accountID, req.DryRun)
+	improver, err := buildImproveForCommand(rt, improve, accountID, req.DryRun, req.FillEmpty)
 	if err != nil {
 		return exitErr("%v", err)
 	}

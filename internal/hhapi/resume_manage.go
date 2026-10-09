@@ -7,21 +7,24 @@ package hhapi
 //	hide:   POST /profile/shards/resume/visibility/hide  {"hash":…,"userPrint":{}}
 //	show:   POST /profile/shards/resume/visibility/show  {"hash":…,"userPrint":{}}
 //	delete: POST /profile/shards/resume/delete           {"hash":…,"from":"resume-delete","hhtmSource":…}
-//	        → 200 {"url": "/applicant/resumes"} (the JS navigates there)
+//	        → 200 {"url": …} (the JS navigates there)
 //
-// Unlike the resume-profile-front editor POSTs these ride the hh.ru site
-// host (the applicant_profile SPA has no BFF baseURL override) with the
-// ordinary XHR + xsrf discipline. hhtmSource is the analytics context of
-// the calling page; hh's own modal uses the resume-list context.
+// T47 LIVE VERDICT (2026-09-28, owner session, tls-client): delete rides
+// the resume-profile-front BFF host, NOT the site host — the site-host
+// route is edge-faked for off-browser TLS clients (405 Allow:GET, the T29
+// observation reproduced), while the BFF answers
 //
-// LIVE STATUS (2026-09-25 probe, -tags live29): the same edge gate as the
-// builder update covers these routes — hide/show answered 2xx (a real
-// accept or a DDoS-Guard silent drop; the visibility flip is not
-// observable on a not_finished shell), delete answered 405 Allow:GET
-// (edge fake) or a 2xx-empty body with the shell still present. Because a
-// 2xx-empty delete is indistinguishable from a drop, DeleteResume REFUSES
-// to claim success without the {url} envelope — the caller sees an error
-// and the origin action degrades to keep (fail-safe).
+//	200 {"url":"/applicant/profile/me"}
+//
+// and the shell verifiably leaves the resumes shard. DeleteResume
+// therefore defaults to the BFF host (resolveExternal, never regional
+// pinned) and keeps the {url} envelope gate: an accepted-looking answer
+// without the envelope is still refused (fail-safe).
+//
+// The hide/show twins stay on the site host (their live status was
+// inconclusive-but-2xx in T29; re-verify before moving them). Both carry
+// the ordinary XHR + xsrf discipline; hhtmSource is the analytics context
+// of the calling page.
 
 import (
 	"context"
@@ -32,6 +35,12 @@ import (
 
 // resumeDeleteFrom is the literal `from` value hh's own delete modal sends.
 const resumeDeleteFrom = "resume-delete"
+
+// resumeDeleteURL is the resume-profile-front BFF delete endpoint (T47
+// live-verified 2026-09-28: the BFF answers 200 {"url": …} and the shell
+// leaves the shard; the site-host twin is a 405 edge fake). Default used
+// verbatim (never regional-host pinned), overridable via resume_delete.
+const resumeDeleteURL = "https://resume-profile-front.hh.ru/profile/shards/resume/delete"
 
 // resumeManageHhtmSource is the analytics context the JS caller carries on
 // the resume-list page (overridable through endpoint config is NOT needed:
@@ -53,22 +62,42 @@ func (c *Client) ShowResume(ctx context.Context, hash string) error {
 
 // DeleteResume permanently deletes the resume. The response {url} is the
 // redirect target hh's UI navigates to; it is parsed to prove the server
-// accepted the mutation (an empty body is an upstream anomaly).
+// accepted the mutation (an empty body is an upstream anomaly). T47: the
+// route lives on the resume-profile-front BFF host and is resolved
+// externally (never regional-host pinned — see resumeDeleteURL).
 func (c *Client) DeleteResume(ctx context.Context, hash string) error {
 	body := map[string]json.RawMessage{
 		"hash":       mustJSONRaw(hash),
 		"from":       mustJSONRaw(resumeDeleteFrom),
 		"hhtmSource": mustJSONRaw(resumeManageHhtmSource),
 	}
-	respBody, err := c.postResumeManageBody(ctx, epResumeDelete, c.eps.siteDefault("/profile/shards/resume/delete"), body, "resume_delete")
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("hhapi: resume_delete: encode: %w", err)
+	}
+	resp, err := c.doMutation(ctx, func() requestSpec {
+		h := c.xhrHeaders(c.withPinnedHost(c.eps.site + "/applicant/resumes"))
+		h.Set("Content-Type", "application/json")
+		return requestSpec{
+			kind:      kindMutation,
+			operation: "resume_delete",
+			method:    http.MethodPost,
+			url:       c.eps.resolveExternal(epResumeDelete, resumeDeleteURL),
+			header:    h,
+			body:      raw,
+		}
+	})
 	if err != nil {
 		return err
+	}
+	if bodyHasAny(string(resp.body), captchaMarkers) {
+		return &StatusError{Kind: ErrCaptcha, StatusCode: resp.status, URL: resp.finalURL, BodySnippet: snippet(resp.body), Chain: resp.chain}
 	}
 	var out struct {
 		URL string `json:"url"`
 	}
-	if err := json.Unmarshal(respBody, &out); err != nil || out.URL == "" {
-		return fmt.Errorf("hhapi: resume_delete: envelope has no redirect url: %v (%s)", err, snippet(respBody))
+	if err := json.Unmarshal(resp.body, &out); err != nil || out.URL == "" {
+		return fmt.Errorf("hhapi: resume_delete: envelope has no redirect url: %v (%s)", err, snippet(resp.body))
 	}
 	return nil
 }

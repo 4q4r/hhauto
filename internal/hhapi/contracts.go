@@ -282,6 +282,14 @@ type HHAPI interface {
 	// search filters (e.g. `text=golang&area=1`); empty means the global
 	// counter. RULING R15: sanctioned contract extension (preview counts).
 	Counts(ctx context.Context, query string) (int, error)
+	// CreateResume creates a fresh resume (T47) and returns its hash only
+	// after the resumes shard verifies the new entry. An empty title
+	// creates the bare not_finished shell hh's wizard starts from; hh
+	// IGNORES title/roleIDs at create time (live-verified 2026-09-28 —
+	// content belongs to the wizard / resume improve), so callers must
+	// fill content separately. A 2xx create absent from the shard is a
+	// typed error: no invented hashes.
+	CreateResume(ctx context.Context, title string, roleIDs []string) (newHash string, err error)
 }
 
 // Implementation notes for the hhapi implementer:

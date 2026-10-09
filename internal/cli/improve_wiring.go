@@ -279,8 +279,11 @@ func buildNeedApplier(rt *Runtime, accountID string) (*autoclone.NeedApply, erro
 // client (not the clone-lineage editor — base resumes have no lineage
 // row), the editor runner pins the account, and the config copy carries
 // the command's field/dry-run choices. cfg.Enabled is already forced by
-// the caller (the command is the enable signal).
-func buildImproveForCommand(rt *Runtime, improve config.AutoCloneImprove, accountID string, dryRun bool) (*autoclone.Improver, error) {
+// the caller (the command is the enable signal). fillEmpty (T96) lets the
+// planner propose empty-field values from the profile context — the
+// create→improve chain sets it; the standalone command keeps the
+// conservative skip.
+func buildImproveForCommand(rt *Runtime, improve config.AutoCloneImprove, accountID string, dryRun, fillEmpty bool) (*autoclone.Improver, error) {
 	fpr, ok := rt.AI.(ai.FieldPromptRunner)
 	if !ok {
 		return nil, fmt.Errorf("autoclone: the AI runner does not support per-field prompts (FieldPromptRunner)")
@@ -302,17 +305,18 @@ func buildImproveForCommand(rt *Runtime, improve config.AutoCloneImprove, accoun
 		return nil, err
 	}
 	return autoclone.New(autoclone.Options{
-		API:        editor,
-		Editor:     browser,
-		Runner:     fpr,
-		DB:         rt.DB,
-		Registry:   registry,
-		Cfg:        improve,
-		DryRun:     dryRun || rt.Cfg.General.DryRun,
-		Log:        rt.Log,
-		ProfileFor: rt.profileFor,
-		BasePrompt: base,
-		Review:     rt.review.For(rt.DB), // T66: needs_human/always_ask park for review like the run path
+		API:                  editor,
+		Editor:               browser,
+		Runner:               fpr,
+		DB:                   rt.DB,
+		Registry:             registry,
+		Cfg:                  improve,
+		DryRun:               dryRun || rt.Cfg.General.DryRun,
+		Log:                  rt.Log,
+		ProfileFor:           rt.profileFor,
+		BasePrompt:           base,
+		FillEmptyFromProfile: fillEmpty,            // T96 create→improve chain scoping
+		Review:               rt.review.For(rt.DB), // T66: needs_human/always_ask park for review like the run path
 		ResumeContentFor: func(ctx context.Context, accountID, hash string) (*hhapi.ResumeContent, error) {
 			api, err := rt.contentEditorFor(accountID) // T93: parent content (a base resume) through the account client
 			if err != nil {

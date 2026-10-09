@@ -64,8 +64,8 @@ const (
 	maxReplyHistory = 20
 	// leave delay window (humanized): rejected chats are left after a
 	// randomized 30m..2h wait so the departure does not look mechanical.
-	leaveDelayMin = 30 * time.Minute
-	leaveDelayMax = 2 * time.Hour
+	minLeaveDelay = 30 * time.Minute
+	maxLeaveDelay = 2 * time.Hour
 	// maxLeaveTries bounds leave attempts (reconcile-confirmed retries).
 	maxLeaveTries = 5
 	// sendRetries: bounded same-idempotency-key retries inside one handler
@@ -1067,7 +1067,7 @@ func (f *Feature) leaveDelay() time.Duration {
 	if f.LeaveDelay != nil {
 		return f.LeaveDelay()
 	}
-	return kit11.HumanizedDelay(leaveDelayMin, leaveDelayMax, f.Rnd)
+	return kit11.HumanizedDelay(minLeaveDelay, maxLeaveDelay, f.Rnd)
 }
 
 // review records a review item (best-effort: review failures are logged, not
