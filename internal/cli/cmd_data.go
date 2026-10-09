@@ -580,6 +580,10 @@ func newResumeCreateCmd() *cobra.Command {
 			if err := printCreateVerdict(ctx, o, api, target, title, hash); err != nil {
 				return err
 			}
+			// T100 owner default: the fresh shell carries no photo (hh
+			// renders the avatar from the per-resume photo field; native
+			// clones inherit it, created shells do not).
+			applyCreatePhoto(ctx, o, rt, api, hash)
 			if noImprove {
 				return nil
 			}
@@ -606,6 +610,35 @@ func newResumeCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&account, "account", "", "account id (required when several are configured)")
 	cmd.Flags().BoolVar(&noImprove, "no-improve", false, "create the bare shell only — skip the automatic improve pass")
 	return cmd
+}
+
+// applyCreatePhoto performs the T100 owner default (apply_profile_photo,
+// nil = on): a created shell gets the account's album photo through the
+// per-resume photo contract. A failure never fails the create — the shell
+// exists and improve owns the content — the warning goes to stderr
+// instead (the T57 precedent: a post-step degrades loudly, not fatally).
+func applyCreatePhoto(ctx context.Context, o out, rt *Runtime, api hhapi.HHAPI, hash string) {
+	if !rt.Cfg.Features.PhotoApplyEnabled() {
+		return
+	}
+	photo, ok := api.(interface {
+		AlbumPhotoID(ctx context.Context) (int64, error)
+		SetResumePhoto(ctx context.Context, resumeHash string, photoID int64) error
+	})
+	if !ok {
+		o.errf("фото профиля: API-поверхность не поддерживает контракт (подмена в тестах?)\n")
+		return
+	}
+	id, err := photo.AlbumPhotoID(ctx)
+	if err != nil {
+		o.errf("фото профиля: %v\n", err)
+		return
+	}
+	if err := photo.SetResumePhoto(ctx, hash, id); err != nil {
+		o.errf("фото профиля: %v\n", err)
+		return
+	}
+	o.printf("Фото профиля применено к резюме %s\n", hash)
 }
 
 // resolveCreateAccount picks the target account: the flag wins; with one
