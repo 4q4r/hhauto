@@ -109,6 +109,14 @@ type Options struct {
 	// (rate-limit spacing); zero = defaultFieldCallPause (2s). Tests
 	// shrink it to keep the suite fast.
 	InterCallPause time.Duration
+	// FillEmptyFromProfile lets the planner propose values for fields
+	// whose CURRENT value is empty, grounding on the candidate context
+	// (profile.md) instead of skipping (T96 create→improve chain: the
+	// fresh shell is empty everywhere — profile.md is the sanctioned fact
+	// source). Scoped to the chain wiring; the standalone improve command
+	// and the clone engine keep the conservative skip. Without a profile
+	// context the skip applies regardless — nothing to ground on.
+	FillEmptyFromProfile bool
 }
 
 // pending is one planned mutation awaiting the apply step.
@@ -305,7 +313,13 @@ func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 		}
 		for _, tg := range expandTargets(spec, live) {
 			diff := FieldDiff{Field: id, Locator: tg.locator, Before: tg.current}
-			if isEmptyValue(tg.current) {
+			// An empty current value normally has nothing to ground the
+			// improvement on (anti-hallucination skip). T96: the create
+			// chain sets FillEmptyFromProfile — a fresh shell is empty
+			// everywhere, and profile.md is the sanctioned fact source —
+			// so the proposal runs grounded on the candidate context; with
+			// no profile context the skip still applies.
+			if isEmptyValue(tg.current) && (!im.opt.FillEmptyFromProfile || candidateCtx == "") {
 				diff.Status = StatusSkipped
 				diff.Reason = "empty current value: nothing to ground the improvement on"
 				artifact.Fields = append(artifact.Fields, diff)

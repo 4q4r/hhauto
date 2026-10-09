@@ -530,22 +530,27 @@ func syncLineageEdges(ctx context.Context, db *store.DB, accountID string,
 	return registered, tracked, conflicts, nil
 }
 
-// newResumeCreateCmd builds `hhauto resume create` (T47): creates a fresh
-// resume through the live create endpoint and verifies it in the shard.
-// hh accepts content only through the wizard, so a --title request is
-// forwarded but the verified shell starts untitled — the command says so
-// instead of pretending the title landed.
+// newResumeCreateCmd builds `hhauto resume create` (T47/T96): creates a
+// fresh resume through the live create endpoint and verifies it in the
+// shard. Owner decision (T96, variant «а»): after the shell verifies, the
+// improve pipeline runs over it in the same process and fills the content
+// from profile.md; --no-improve keeps the bare shell. hh accepts content
+// only through the wizard, so a --title request is forwarded but the
+// verified shell starts untitled — the command says so instead of
+// pretending the title landed.
 func newResumeCreateCmd() *cobra.Command {
 	var (
-		title   string
-		account string
+		title     string
+		account   string
+		noImprove bool
 	)
 	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a new resume (empty shell; title/roles are filled later through the wizard)",
+		Short: "Create a new resume and improve it (the AI fills the shell from profile.md); --no-improve keeps the bare shell",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			opts := buildOpts()
 			opts.Account = account
+			opts.ResumeImprove = !noImprove // the improve stage needs the resume_improve AI task
 			ctx := cmd.Context()
 			rt, err := Build(ctx, opts)
 			if err != nil {
@@ -572,11 +577,31 @@ func newResumeCreateCmd() *cobra.Command {
 			if err != nil {
 				return exitErr("create: %v", err)
 			}
-			return printCreateVerdict(ctx, o, api, target, title, hash)
+			if err := printCreateVerdict(ctx, o, api, target, title, hash); err != nil {
+				return err
+			}
+			if noImprove {
+				return nil
+			}
+			// T96 owner decision: the chain continues in this process —
+			// the improve pipeline fills the fresh shell from profile.md.
+			// No extra announce line: the pipeline's console start event is
+			// the single banner (T52). The fresh shell is not a tracked
+			// clone, so the improve stage runs with the base-resume confirm
+			// it would require of the owner's real resume.
+			unlock, err := acquireTaskLock(rt.Cfg.General.DataDir, "resume_improve")
+			if err != nil {
+				return exitErr("%v", err)
+			}
+			defer unlock()
+			return runResumeImprove(ctx, rt, o, improveRequest{
+				Hash: hash, Account: target, Confirm: true, FillEmpty: true,
+			})
 		},
 	}
 	cmd.Flags().StringVar(&title, "title", "", "requested resume title (hh applies content only through the wizard — the shell starts untitled)")
 	cmd.Flags().StringVar(&account, "account", "", "account id (required when several are configured)")
+	cmd.Flags().BoolVar(&noImprove, "no-improve", false, "create the bare shell only — skip the automatic improve pass")
 	return cmd
 }
 

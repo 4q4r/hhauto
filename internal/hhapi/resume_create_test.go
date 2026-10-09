@@ -15,6 +15,7 @@ package hhapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -175,5 +176,79 @@ func TestCreateResumeCarriesXSRFToken(t *testing.T) {
 	}
 	if len(*tokens) != 1 || (*tokens)[0] != "tok_abc123" {
 		t.Fatalf("create xsrf tokens = %v", *tokens)
+	}
+}
+
+// serveDuplicateCreateSurface answers the first create POST with the T28
+// BUSINESS DUPLICATE envelope (200 + errors[{code:"DUPLICATE"}]) and the
+// rest with success. Returns every captured create body.
+func serveDuplicateCreateSurface(env *testEnv, shellHash string) *[]string {
+	bodies := &[]string{}
+	posts := 0
+	reads := 0
+	env.serve(env.mux1, "1", "GET", "/shards/applicant/resumes", func(w http.ResponseWriter, _ *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: "tok_abc123", Path: "/"})
+		reads++
+		body := readLive(env.t, "resumes.json")
+		if posts >= 1 && reads >= 2 {
+			body = appendShellEntry(env.t, body, shellHash)
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write(body)
+	})
+	env.serve(env.mux1, "1", "POST", "/profile/shards/resume/create", func(w http.ResponseWriter, r *http.Request) {
+		*bodies = append(*bodies, env.lastBody("1:POST /profile/shards/resume/create"))
+		posts++
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if posts == 1 {
+			_, _ = w.Write([]byte(`{"errors":[{"field":"title","type":"business","code":"DUPLICATE"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"nextIncompleteScreenId":"professional_role","screens":[]}`))
+	})
+	return bodies
+}
+
+// T96: the BUSINESS DUPLICATE title verdict rides a 200 + errors envelope
+// (the T28 contract) — a fresh "(копия)" title is retried within the same
+// call against the shard baseline read once before the loop.
+func TestCreateResumeDuplicateTitleRetriesWithFreshTitle(t *testing.T) {
+	env := newTestEnv(t)
+	const shell = "d0d0feedff112c34820039ed1f60001112223344"
+	bodies := serveDuplicateCreateSurface(env, shell)
+	c := createClient(env)
+
+	hash, err := c.CreateResume(context.Background(), "Инженер автоматизации", nil)
+	if err != nil {
+		t.Fatalf("CreateResume with a duplicate title: %v", err)
+	}
+	if hash != shell {
+		t.Fatalf("hash = %q, want %q", hash, shell)
+	}
+	if len(*bodies) != 2 {
+		t.Fatalf("create POST count = %d, want the DUPLICATE retry", len(*bodies))
+	}
+	if !strings.Contains((*bodies)[1], `"title":"Инженер автоматизации (копия)"`) {
+		t.Fatalf("retry body %s misses the fresh (копия) title", (*bodies)[1])
+	}
+}
+
+// All attempts exhausted: the duplicate verdict surfaces as a typed error
+// (callers must be able to classify it), never as a silent drop.
+func TestCreateResumeDuplicateExhausted(t *testing.T) {
+	env := newTestEnv(t)
+	env.serveBootstrap()
+	env.serve(env.mux1, "1", "POST", "/profile/shards/resume/create", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(`{"errors":[{"field":"title","type":"business","code":"DUPLICATE"}]}`))
+	})
+	c := createClient(env)
+
+	hash, err := c.CreateResume(context.Background(), "Инженер", nil)
+	if err == nil {
+		t.Fatalf("exhausted duplicates must error, got hash %q", hash)
+	}
+	if !errors.Is(err, errCreateTitleDuplicate) {
+		t.Fatalf("error %v must wrap errCreateTitleDuplicate", err)
 	}
 }

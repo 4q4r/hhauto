@@ -25,8 +25,10 @@ package hhapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // resumeCreateURL is the resume-profile-front BFF create endpoint. Same
@@ -40,6 +42,8 @@ const resumeCreateURL = "https://resume-profile-front.hh.ru/profile/shards/resum
 // shell (hh's own "Создать резюме" first step); title/roleIDs ride the
 // creationProperties shape but are IGNORED by hh at create time (see the
 // file doc) — content belongs to the wizard or the improve pipeline.
+// A title BUSINESS DUPLICATE (T28 contract: 200 + errors envelope) retries
+// with a fresh "(копия)" title, at most maxCreateAttempts POSTs per call.
 //
 // Errors: typed transport/mutation errors from the pipeline; a 2xx create
 // that never appears in the shard is a silent drop and returns a
@@ -56,12 +60,82 @@ func (c *Client) CreateResume(ctx context.Context, title string, roleIDs []strin
 		seen[r.HHID] = true
 	}
 
+	// T96: hh enforces unique resume titles at create too — the BUSINESS
+	// DUPLICATE verdict rides a 200 + errors[{code:"DUPLICATE"}] envelope
+	// (the T28 contract). Retry with a fresh "(копия)" title; the shard
+	// baseline stays valid because a rejected duplicate creates nothing.
+	for attempt := 1; attempt <= maxCreateAttempts; attempt++ {
+		attemptTitle := title
+		if attempt > 1 && attemptTitle != "" {
+			// First retry carries " (копия)" — the cloneTitleCandidate
+			// scheme numbers the suffix candidates from 1.
+			attemptTitle = cloneTitleCandidate(attemptTitle, attempt-1)
+		}
+		resp, cerr := c.postResumeCreate(ctx, attemptTitle, roleIDs)
+		if cerr != nil {
+			return "", cerr
+		}
+		if duplicate, perr := parseCreateVerdict(resp.body); perr != nil {
+			if duplicate && attempt < maxCreateAttempts && title != "" {
+				continue
+			}
+			return "", perr
+		}
+
+		// Verify through the shard: pick the newest entry the account did
+		// not have before the create (the envelope carries no hash).
+		after, err := c.ListResumes(ctx)
+		if err != nil {
+			return "", fmt.Errorf("hhapi: resume_create: verify read: %w", err)
+		}
+		newest := ""
+		var newestTS int64
+		for _, r := range after {
+			if seen[r.HHID] {
+				continue
+			}
+			ts := r.CreatedAt.UnixMilli()
+			if ts == 0 {
+				ts = r.UpdatedAt.UnixMilli()
+			}
+			if newest == "" || ts >= newestTS {
+				newest, newestTS = r.HHID, ts
+			}
+		}
+		if newest == "" {
+			return "", &StatusError{
+				Kind:        ErrUpstream,
+				StatusCode:  resp.status,
+				URL:         resp.finalURL,
+				BodySnippet: snippet(resp.body),
+				Chain:       resp.chain,
+			}
+		}
+		return newest, nil
+	}
+	// Unreachable: every iteration either returns or continues while
+	// attempts remain (the last one always returns).
+	return "", fmt.Errorf("hhapi: resume_create: attempts exhausted")
+}
+
+// maxCreateAttempts bounds the BUSINESS DUPLICATE title retries (the T28
+// "(копия)" discipline; an independent budget — the clone flow's own
+// constant must not shift create semantics).
+const maxCreateAttempts = 3
+
+// errCreateTitleDuplicate marks the BUSINESS DUPLICATE title verdict on
+// create (T28 contract: hh enforces unique resume titles).
+var errCreateTitleDuplicate = errors.New("hhapi: resume_create: title duplicate")
+
+// postResumeCreate fires one create POST and applies the captcha gate.
+// Split out so the DUPLICATE retry loop stays readable.
+func (c *Client) postResumeCreate(ctx context.Context, title string, roleIDs []string) (*response, error) {
 	body, err := json.Marshal(resumeCreateRequest{
 		CreationProps: creationPropsFor(title, roleIDs),
 		UserPrint:     json.RawMessage(`{}`),
 	})
 	if err != nil {
-		return "", fmt.Errorf("hhapi: resume_create: encode: %w", err)
+		return nil, fmt.Errorf("hhapi: resume_create: encode: %w", err)
 	}
 	resp, err := c.doMutation(ctx, func() requestSpec {
 		h := c.cloneResumesHeaders()
@@ -76,42 +150,12 @@ func (c *Client) CreateResume(ctx context.Context, title string, roleIDs []strin
 		}
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if bodyHasAny(string(resp.body), captchaMarkers) {
-		return "", &StatusError{Kind: ErrCaptcha, StatusCode: resp.status, URL: resp.finalURL, BodySnippet: snippet(resp.body), Chain: resp.chain}
+		return nil, &StatusError{Kind: ErrCaptcha, StatusCode: resp.status, URL: resp.finalURL, BodySnippet: snippet(resp.body), Chain: resp.chain}
 	}
-
-	// Verify through the shard: pick the newest entry the account did not
-	// have before the create (the envelope carries no hash).
-	after, err := c.ListResumes(ctx)
-	if err != nil {
-		return "", fmt.Errorf("hhapi: resume_create: verify read: %w", err)
-	}
-	newest := ""
-	var newestTS int64
-	for _, r := range after {
-		if seen[r.HHID] {
-			continue
-		}
-		ts := r.CreatedAt.UnixMilli()
-		if ts == 0 {
-			ts = r.UpdatedAt.UnixMilli()
-		}
-		if newest == "" || ts >= newestTS {
-			newest, newestTS = r.HHID, ts
-		}
-	}
-	if newest == "" {
-		return "", &StatusError{
-			Kind:        ErrUpstream,
-			StatusCode:  resp.status,
-			URL:         resp.finalURL,
-			BodySnippet: snippet(resp.body),
-			Chain:       resp.chain,
-		}
-	}
-	return newest, nil
+	return resp, nil
 }
 
 // resumeCreateRequest is the create body. CreationProps stays absent for
@@ -119,6 +163,43 @@ func (c *Client) CreateResume(ctx context.Context, title string, roleIDs []strin
 type resumeCreateRequest struct {
 	CreationProps []cloneResumePropertySpec `json:"resumesCreationProperties,omitempty"`
 	UserPrint     json.RawMessage           `json:"userPrint"`
+}
+
+// resumeCreateResponse covers the error envelope: success carries
+// nextIncompleteScreenId (and no errors), the title BUSINESS DUPLICATE
+// rides 200 + errors[{code:"DUPLICATE"}] (T28 contract).
+type resumeCreateResponse struct {
+	Errors []struct {
+		Field string `json:"field"`
+		Type  string `json:"type"`
+		Code  string `json:"code"`
+	} `json:"errors"`
+}
+
+// parseCreateVerdict classifies the live create envelopes. duplicate=true
+// marks the title BUSINESS DUPLICATE (a fresh "(копия)" title may be
+// retried); any other error set fails the call.
+func parseCreateVerdict(body []byte) (duplicate bool, err error) {
+	var out resumeCreateResponse
+	if uerr := json.Unmarshal(body, &out); uerr != nil {
+		return false, fmt.Errorf("hhapi: resume_create: decode response: %w", uerr)
+	}
+	if len(out.Errors) == 0 {
+		return false, nil
+	}
+	codes := make([]string, 0, len(out.Errors))
+	dup := false
+	for _, e := range out.Errors {
+		codes = append(codes, e.Field+":"+e.Code)
+		if e.Code == "DUPLICATE" {
+			dup = true
+		}
+	}
+	joined := strings.Join(codes, ",")
+	if dup {
+		return true, fmt.Errorf("%w: %s", errCreateTitleDuplicate, joined)
+	}
+	return false, fmt.Errorf("hhapi: resume_create: validation: %s", joined)
 }
 
 // creationPropsFor builds the creation-properties entry only when there is
