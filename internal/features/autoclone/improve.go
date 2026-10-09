@@ -279,7 +279,7 @@ func (im *Improver) requireCloneLineage(ctx context.Context, accountID, parentHa
 // the parent's same-field value rides it when it differs.
 func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 	live, mutated *hhapi.ResumeContent, artifact *DiffArtifact, parentCtx *parentContext) []pending {
-	candidateCtx := im.candidateContext(ctx, accountID)
+	candidateCtx, targetRoles := im.candidateContext(ctx, accountID)
 	called := false // the previous target made its AI call
 	var pendings []pending
 	im.opt.Log.Info("autoclone: improve plan start",
@@ -309,7 +309,7 @@ func (im *Improver) planFields(ctx context.Context, accountID, cloneHash string,
 			started := time.Now()
 			im.opt.Log.Info("autoclone: improve field asking AI",
 				"field", id, "locator", tg.locator, "label", spec.Label)
-			proposed, status, reason, reviewID, verdictLevels := im.propose(ctx, accountID, cloneHash, spec, tg, live, candidateCtx, parentCtx)
+			proposed, status, reason, reviewID, verdictLevels := im.propose(ctx, accountID, cloneHash, spec, tg, live, candidateCtx, targetRoles, parentCtx)
 			diff.Status, diff.Reason, diff.ReviewID = status, reason, reviewID
 			if proposed != nil {
 				diff.After = displayValue(spec, proposed)
@@ -442,18 +442,20 @@ func (im *Improver) settleRetryOutcome(artifact *DiffArtifact, retry []pending, 
 // candidateContext loads the trusted candidate context once per run and
 // renders the profile sections (profile text plus stored owner Q&A; the
 // resume digest stays out — the live resume facts already ride per
-// field). Absence degrades to "" — never a failed run.
-func (im *Improver) candidateContext(ctx context.Context, accountID string) string {
+// field). It also extracts the target-roles vocabulary from the profile
+// text (T93 (а): the improve input's target_roles parameter). Absence
+// degrades to ""/nil — never a failed run.
+func (im *Improver) candidateContext(ctx context.Context, accountID string) (string, []string) {
 	if im.opt.ProfileFor == nil {
-		return ""
+		return "", nil
 	}
 	p, err := im.opt.ProfileFor(ctx, accountID)
 	if err != nil {
 		im.opt.Log.Warn("autoclone: profile load failed; improving without candidate context",
 			"account", accountID, "err", err)
-		return ""
+		return "", nil
 	}
-	return profile.RenderForPrompt(p, profile.SectionProfile, profile.SectionFacts)
+	return profile.RenderForPrompt(p, profile.SectionProfile, profile.SectionFacts), profile.TargetRoles(p.ProfileText)
 }
 
 // fieldPrompt resolves the field's system prompt with the candidate
@@ -480,7 +482,7 @@ func (im *Improver) fieldPrompt(fieldID, candidateCtx string) string {
 // the parent's same-field value rides only when it differs from the
 // clone's current value.
 func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, spec FieldSpec,
-	tg target, live *hhapi.ResumeContent, candidateCtx string, parentCtx *parentContext) (value json.RawMessage, status, reason string, reviewID int64, skillLevels map[string]string) {
+	tg target, live *hhapi.ResumeContent, candidateCtx string, targetRoles []string, parentCtx *parentContext) (value json.RawMessage, status, reason string, reviewID int64, skillLevels map[string]string) {
 	facts := factsFor(spec, live, tg.item)
 	if parentCtx != nil {
 		facts = append([]string{"Позиционирование семьи: " + parentCtx.title}, facts...)
@@ -495,6 +497,7 @@ func (im *Improver) propose(ctx context.Context, accountID, cloneHash string, sp
 			CurrentValue:     tg.current,
 			TrustedFacts:     facts,
 			CandidateContext: candidateCtx,
+			TargetRoles:      targetRoles,
 		})
 	if err != nil {
 		return nil, StatusError, err.Error(), 0, nil
