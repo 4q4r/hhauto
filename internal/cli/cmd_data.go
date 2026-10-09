@@ -600,10 +600,24 @@ func newResumeCreateCmd() *cobra.Command {
 				return exitErr("%v", err)
 			}
 			defer unlock()
-			return runResumeImprove(ctx, rt, o, improveRequest{
+			if ierr := runResumeImprove(ctx, rt, o, improveRequest{
 				Hash: hash, Account: target, Confirm: true, FillEmpty: true,
 				Positioning: title, // T97: the requested --title is the shell's only positioning anchor
-			})
+			}); ierr != nil {
+				return ierr
+			}
+			// T99: when the shell is later published, the wizard binds it
+			// to every pool record and duplicates render. The dedup is
+			// idempotent and no-ops while nothing foreign renders (fresh
+			// shell, already-deduped resume).
+			dedup, derr := api.DetachDuplicateExperience(ctx, hash)
+			if derr != nil {
+				return exitErr("дедуп опыта: %v", derr)
+			}
+			if len(dedup.Detached) > 0 {
+				o.printf("Опыт: отвязано дубликатов %d (оставлено генераций %d)\n", len(dedup.Detached), len(dedup.Kept))
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&title, "title", "", "requested resume title (hh applies content only through the wizard — the shell starts untitled)")

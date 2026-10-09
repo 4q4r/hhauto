@@ -66,7 +66,7 @@ func (s *createHHState) builderStateBody() string {
 	    ` + photo + `
 	    "title": [{"string":` + mustJSONT(s.Title) + `}]
 	  },
-	  "profile": {"fields": {}},
+	  "profile": {"fields": {"experience": []}},
 	  "additionalProperties": {}
 	}`
 }

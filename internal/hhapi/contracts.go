@@ -290,6 +290,13 @@ type HHAPI interface {
 	// fill content separately. A 2xx create absent from the shard is a
 	// typed error: no invented hashes.
 	CreateResume(ctx context.Context, title string, roleIDs []string) (newHash string, err error)
+	// DetachDuplicateExperience prunes the duplicate experience
+	// generations a created resume inherited from the account pool
+	// (T99): among the records rendering on the resume it keeps the
+	// newest per employer and detaches the rest (edit-route fork +
+	// fork delete — the pool keeps every record, other resumes never
+	// change). Idempotent; a fresh unpublished shell no-ops.
+	DetachDuplicateExperience(ctx context.Context, hash string) (DetachExperienceResult, error)
 }
 
 // Implementation notes for the hhapi implementer:
