@@ -1,4 +1,4 @@
-//go:build live96
+//go:build live96 || live97
 
 package hhapi
 
