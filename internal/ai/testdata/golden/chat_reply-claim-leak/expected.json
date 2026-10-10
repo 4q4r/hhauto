@@ -1,0 +1,9 @@
+{
+  "confidence": 0.9,
+  "needs_human": true,
+  "needs_human_reason": "claim_not_in_profile",
+  "injection_suspected": false,
+  "reply": "Да, имею опыт с Kafka и RabbitMQ.",
+  "intent": "ack",
+  "used_facts": []
+}

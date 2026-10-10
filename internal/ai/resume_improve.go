@@ -138,6 +138,25 @@ func normalizedConfidence(s string) float64 {
 // TaskResumeImprove: any number in the improved value that is absent from
 // the trusted sources forces needs_human. Empty values and unchanged
 // verdicts pass.
+// checkClaimGrounding applies the T119 claim/tenure checks to one validated
+// text (letter, chat reply or improved value), filling forceReason when no
+// earlier post-check reason exists.
+func checkClaimGrounding(m map[string]any, text, forceReason, trustedText string) string {
+	if claimLeak(text, trustedText) {
+		m["needs_human"] = true
+		if forceReason == "" {
+			forceReason = reasonClaimNotInProf
+		}
+	}
+	if tenureLeak(text, trustedText) {
+		m["needs_human"] = true
+		if forceReason == "" {
+			forceReason = reasonTenureNotInSrc
+		}
+	}
+	return forceReason
+}
+
 func checkImproveGrounding(m map[string]any, forceReason, trustedText string, trustedNums map[string]bool) string {
 	if unchanged, _ := m["unchanged"].(bool); unchanged {
 		return forceReason
@@ -149,6 +168,7 @@ func checkImproveGrounding(m map[string]any, forceReason, trustedText string, tr
 				return reasonNumberNotInSrc
 			}
 		}
+		forceReason = checkClaimGrounding(m, s, forceReason, trustedText)
 	}
 	if items, ok := m["value_strings"].([]any); ok && len(items) > 0 {
 		joined := make([]string, 0, len(items))
@@ -157,12 +177,15 @@ func checkImproveGrounding(m map[string]any, forceReason, trustedText string, tr
 				joined = append(joined, s)
 			}
 		}
-		if numberLeak(strings.Join(joined, " "), trustedNums) {
+		joinedText := strings.Join(joined, " ")
+		if numberLeak(joinedText, trustedNums) {
 			m["needs_human"] = true
 			if forceReason == "" {
 				return reasonNumberNotInSrc
 			}
 		}
+		// T119: a fabricated key skill is an attributed technology.
+		forceReason = checkClaimGrounding(m, joinedText, forceReason, trustedText)
 	}
 	if amt, ok := m["value_amount"].(json.Number); ok {
 		if !trustedNums[amt.String()] {

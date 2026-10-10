@@ -36,7 +36,9 @@ const (
 	reasonGrayBand        = "gray_band"
 	reasonNumberNotInSrc  = "number_not_in_sources"
 	reasonForbiddenTopic  = "forbidden_topic_no_fact"
-	reasonJevUndecided    = "jev_undecided" // T60: exclusive jev classifier could not decide
+	reasonJevUndecided    = "jev_undecided"         // T60: exclusive jev classifier could not decide
+	reasonClaimNotInProf  = "claim_not_in_profile"  // T119: attributed technology absent from sources
+	reasonTenureNotInSrc  = "tenure_not_in_sources" // T119: (tech, years) pair absent from sources
 )
 
 // LedgerStore is the minimal audit-trail contract; Wave 3 adapts it to the
@@ -741,7 +743,9 @@ func checkFreeText(task TaskName, m map[string]any, forceReason, trustedText str
 			return reasonNumberNotInSrc
 		}
 	}
-	return forceReason
+	// T119: attributed technologies and tenure pairs must be grounded too
+	// (letters and chat replies are both outgoing surfaces).
+	return checkClaimGrounding(m, text, forceReason, trustedText)
 }
 
 // applyForceReason fills needs_human_reason only when the verdict does not
@@ -819,7 +823,7 @@ func trustedSources(trustedBlock string, inputJSON []byte) (string, map[string]b
 	}
 	var m map[string]any
 	if err := json.Unmarshal(inputJSON, &m); err == nil {
-		for _, key := range []string{"resume_digest", "profile_text"} {
+		for _, key := range []string{"resume_digest", "profile_text", "profile"} {
 			if s, ok := m[key].(string); ok && s != "" {
 				parts = append(parts, s)
 			}

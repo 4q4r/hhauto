@@ -1,0 +1,10 @@
+{
+  "confidence": 0.9,
+  "needs_human": true,
+  "needs_human_reason": "claim_not_in_profile",
+  "injection_suspected": false,
+  "letter": "Добрый день! Владею Kubernetes и Terraform, применял их в нескольких проектах. Готов обсудить детали.",
+  "mode": "ai_company",
+  "used_facts": [],
+  "missing_data": []
+}

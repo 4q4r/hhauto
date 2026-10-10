@@ -1,0 +1,12 @@
+{
+  "confidence": 0.9,
+  "needs_human": false,
+  "needs_human_reason": null,
+  "injection_suspected": false,
+  "unchanged": false,
+  "value_string": "DevOps-инженер. Владею Kubernetes и Terraform.",
+  "value_strings": null,
+  "value_amount": null,
+  "used_facts": [],
+  "missing_data": []
+}
