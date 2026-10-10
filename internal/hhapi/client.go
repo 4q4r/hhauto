@@ -804,6 +804,30 @@ func (c *Client) Negotiations(ctx context.Context, page int) ([]Negotiation, err
 		q.Set("page", strconv.Itoa(page))
 		u.RawQuery = q.Encode()
 	}
+	return c.negotiationsPage(ctx, u)
+}
+
+// NegotiationsDiscard implements hhapi.HHAPI (T123): the SSR negotiations
+// page with filter=discard. Live probe: hh ignores the filter server-side
+// (filterInUse="active") — the feature post-filters by State; the parameter
+// stays on the wire per the donor contract.
+func (c *Client) NegotiationsDiscard(ctx context.Context, page int) ([]Negotiation, error) {
+	u, err := url.Parse(c.withPinnedHost(c.endpointURL(epNegotiations, c.eps.siteDefault("/applicant/negotiations"))))
+	if err != nil {
+		return nil, fmt.Errorf("hhapi: negotiations: %w", err)
+	}
+	q := u.Query()
+	q.Set("filter", "discard")
+	if page > 0 {
+		q.Set("page", strconv.Itoa(page))
+	}
+	u.RawQuery = q.Encode()
+	return c.negotiationsPage(ctx, u)
+}
+
+// negotiationsPage fetches the SSR negotiations document and parses the
+// applicantNegotiations topicList (shared by the plain and discard pages).
+func (c *Client) negotiationsPage(ctx context.Context, u *url.URL) ([]Negotiation, error) {
 	resp, err := c.getDoc(ctx, "negotiations", u.String(), c.withPinnedHost(c.eps.site+"/"))
 	if err != nil {
 		return nil, err
@@ -826,13 +850,18 @@ func (c *Client) Negotiations(ctx context.Context, page int) ([]Negotiation, err
 			employerID = int64(num(employer, "id"))
 		}
 		out = append(out, Negotiation{
-			ID:           str(m, "id", "topicId"),
+			// Live item ids and chatIds are ints on this surface —
+			// scalarString mirrors parseChatsList.
+			ID:           firstNonEmpty(scalarString(m["id"]), str(m, "topicId")),
 			VacancyID:    int64(num(m, "vacancyId", "vacancy_id")),
 			VacancyName:  firstNonEmpty(str(m, "vacancyName", "vacancy_name"), str(obj(m["vacancy"]), "name")),
 			EmployerID:   employerID,
 			EmployerName: firstNonEmpty(str(m, "employerName"), str(employer, "name")),
 			State:        firstNonEmpty(str(m, "lastState", "state"), str(obj(m["state"]), "id")),
-			UpdatedAt:    timeFrom(m, "updatedAt", "updated_at", "lastEventDate"),
+			// Live field order (T123 probe): lastModified carries the last
+			// event time; updatedAt/lastEventDate are absent on this surface.
+			UpdatedAt: timeFrom(m, "lastModified", "updatedAt", "lastEventDate", "creationTime"),
+			ChatID:    firstNonEmpty(scalarString(m["chatId"]), str(obj(obj(m["communicationContext"])["chatData"]), "id")),
 		})
 	}
 	return out, nil

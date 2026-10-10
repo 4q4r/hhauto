@@ -96,6 +96,7 @@ func newRootCmd() *cobra.Command {
 		newTestsCmd(),
 		newReviewCmd(),
 		newProfileCmd(),
+		newRejectionsCmd(),
 		newAICmd(),
 		newConfigCmd(),
 		newDoctorCmd(),

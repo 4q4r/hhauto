@@ -162,6 +162,9 @@ type Negotiation struct {
 	EmployerName string    `json:"employer_name"`
 	State        string    `json:"state"` // e.g. "refused" => WF7 trigger
 	UpdatedAt    time.Time `json:"updated_at"`
+	// ChatID is the topic's chatik chat id (live item "chatId"; T123) —
+	// the direct key for ChatHistory, no chat listing needed.
+	ChatID string `json:"chat_id,omitempty"`
 }
 
 // Chat is one chatik conversation header.
@@ -272,6 +275,11 @@ type HHAPI interface {
 	VacancyTests(ctx context.Context, vacancyID int64) (*VacancyTest, error)
 	Apply(ctx context.Context, req ApplyRequest) (NegotiationRef, error)
 	Negotiations(ctx context.Context, page int) ([]Negotiation, error)
+	// NegotiationsDiscard (T123) reads the SSR negotiations page with the
+	// filter=discard parameter. LIVE FACT (probe 2026-10-10): hh serves the
+	// mixed list anyway (filterInUse="active") — callers MUST post-filter by
+	// IsStructuralRefusal(State); the parameter stays per the donor contract.
+	NegotiationsDiscard(ctx context.Context, page int) ([]Negotiation, error)
 	ListChats(ctx context.Context, page int) ([]Chat, error)
 	ChatHistory(ctx context.Context, chatID string) ([]ChatMessage, error)
 	SendMessage(ctx context.Context, chatID, idempotencyKey, text string) error

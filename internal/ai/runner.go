@@ -676,7 +676,7 @@ func (r *runner) postChecks(task TaskName, verdict json.RawMessage, flagged bool
 		forceReason = checkOfferInvite(m, forceReason)
 	case TaskVacancyScoring:
 		forceReason = checkScoringBands(m, forceReason)
-	case TaskCoverLetter, TaskChatReply:
+	case TaskCoverLetter, TaskChatReply, TaskRejectionAnalysis:
 		forceReason = checkFreeText(task, m, forceReason, trustedText, trustedNums)
 	case TaskResumeImprove:
 		normalizeImproveTypes(m)
@@ -726,6 +726,9 @@ func checkFreeText(task TaskName, m map[string]any, forceReason, trustedText str
 		text, _ = m["reply"].(string)
 	}
 	if text == "" {
+		text, _ = m["improved_letter"].(string)
+	}
+	if text == "" {
 		return forceReason
 	}
 	if forbiddenTopic(text, trustedText, trustedNums) {
@@ -735,10 +738,15 @@ func checkFreeText(task TaskName, m map[string]any, forceReason, trustedText str
 		}
 		return forceReason
 	}
-	if task == TaskCoverLetter && numberLeak(text, trustedNums) {
-		m["needs_human"] = true
-		if forceReason == "" {
-			return reasonNumberNotInSrc
+	// Number grounding applies to texts that would be SENT or kept as the
+	// owner's words: the cover letter and the rejection loop's improved
+	// letter (T123). Chat replies legitimately quote counterpart figures.
+	if task == TaskCoverLetter || task == TaskRejectionAnalysis {
+		if numberLeak(text, trustedNums) {
+			m["needs_human"] = true
+			if forceReason == "" {
+				return reasonNumberNotInSrc
+			}
 		}
 	}
 	return forceReason

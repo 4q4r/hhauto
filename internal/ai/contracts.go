@@ -39,6 +39,12 @@ const (
 	// the full vacancy dump, the person's Setka profile and the apply
 	// context. Links in the message are forbidden (shadow-ban trigger).
 	TaskSetkaPersonalize TaskName = "setka_personalize"
+	// TaskRejectionAnalysis (T123): analyze one application rejection — the
+	// vacancy card plus the chat transcript as data, the owner's profile as
+	// the only fact source. Root cause, letter critique, a grounded improved
+	// letter, missing skills and a takeaway; the Go host computes the
+	// evidence_based flag from the transcript itself.
+	TaskRejectionAnalysis TaskName = "reject_analysis"
 )
 
 // Common fields present in EVERY task schema output.

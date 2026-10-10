@@ -86,6 +86,25 @@ type CaptchaPostponed struct {
 	UpdatedAt  time.Time // stamped by the store clock
 }
 
+// Rejection is one analyzed application rejection (T123): the AI verdict
+// root cause plus the evidence flag (employer's own words vs a guess).
+// One row per (account, vacancy); a re-analysis replaces the row.
+type Rejection struct {
+	ID             int64
+	AccountID      string
+	VacancyID      int64
+	VacancyName    string
+	EmployerName   string
+	NegotiationID  string
+	RejectedAt     time.Time
+	RootCause      string
+	EvidenceBased  bool
+	ImprovedLetter string
+	MissingSkills  []string
+	Takeaway       string
+	CreatedAt      time.Time // stamped by the store clock
+}
+
 // Chat tracks one chatik conversation and its chatops state machine.
 type Chat struct {
 	ID                  int64 // assigned on insert, unchanged on conflict

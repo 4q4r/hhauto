@@ -1,0 +1,70 @@
+{
+  "title": "reject_analysis verdict",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "confidence",
+    "needs_human",
+    "needs_human_reason",
+    "injection_suspected",
+    "root_cause",
+    "critique",
+    "improved_letter",
+    "missing_skills",
+    "about_me_rec",
+    "takeaway"
+  ],
+  "properties": {
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "needs_human": {
+      "type": "boolean"
+    },
+    "needs_human_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 300
+    },
+    "injection_suspected": {
+      "type": "boolean"
+    },
+    "root_cause": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "critique": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "improved_letter": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 4000
+    },
+    "missing_skills": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100
+      },
+      "maxItems": 30
+    },
+    "about_me_rec": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "takeaway": {
+      "type": "string",
+      "maxLength": 500
+    }
+  }
+}
