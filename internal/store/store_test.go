@@ -92,15 +92,15 @@ func TestMigration0002CostUSDOnLegacyDB(t *testing.T) {
 	if err := db.conn.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if userVersion != 6 {
-		t.Fatalf("user_version = %d, want 6 after 0006", userVersion)
+	if userVersion != 7 {
+		t.Fatalf("user_version = %d, want 7 after 0007", userVersion)
 	}
 	var count int
 	if err := db.conn.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("count schema_migrations: %v", err)
 	}
-	if count != 6 {
-		t.Fatalf("schema_migrations rows = %d, want 6", count)
+	if count != 7 {
+		t.Fatalf("schema_migrations rows = %d, want 7", count)
 	}
 
 	// Pre-existing rows are backfilled with the NOT NULL DEFAULT 0.
@@ -124,8 +124,8 @@ func TestMigration0002CostUSDOnLegacyDB(t *testing.T) {
 	if err := db2.conn.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
 		t.Fatalf("read user_version after reopen: %v", err)
 	}
-	if userVersion != 6 {
-		t.Fatalf("user_version after reopen = %d, want 6", userVersion)
+	if userVersion != 7 {
+		t.Fatalf("user_version after reopen = %d, want 7", userVersion)
 	}
 	var legacyTokensIn int
 	if err := db2.conn.QueryRow("SELECT tokens_in FROM ai_decisions WHERE id = 'legacy1'").Scan(&legacyTokensIn); err != nil {
@@ -143,16 +143,16 @@ func TestOpenAppliesMigrations(t *testing.T) {
 	if err := db.conn.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if userVersion != 6 {
-		t.Fatalf("user_version = %d, want 6 (0001..0006)", userVersion)
+	if userVersion != 7 {
+		t.Fatalf("user_version = %d, want 7 (0001..0007)", userVersion)
 	}
 
 	var count int
 	if err := db.conn.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("count schema_migrations: %v", err)
 	}
-	if count != 6 {
-		t.Fatalf("schema_migrations rows = %d, want 6", count)
+	if count != 7 {
+		t.Fatalf("schema_migrations rows = %d, want 7", count)
 	}
 
 	var name, appliedAt string
@@ -251,8 +251,8 @@ func TestOpenIsIdempotent(t *testing.T) {
 	if err := db2.conn.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
 		t.Fatalf("read user_version after reopen: %v", err)
 	}
-	if userVersion != 6 {
-		t.Fatalf("user_version after reopen = %d, want 6", userVersion)
+	if userVersion != 7 {
+		t.Fatalf("user_version after reopen = %d, want 7", userVersion)
 	}
 }
 

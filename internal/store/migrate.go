@@ -45,6 +45,7 @@ var migrations = []migration{
 	{version: 4, name: "resume_improve_diff", script: readMigration("migrations/0004_resume_improve_diff.sql")},
 	{version: 5, name: "setka_dms", script: readMigration("migrations/0005_setka_dms.sql")},
 	{version: 6, name: "captcha_postpone", script: readMigration("migrations/0006_captcha_postpone.sql")},
+	{version: 7, name: "rejections", script: readMigration("migrations/0007_rejections.sql")},
 }
 
 func readMigration(name string) string {

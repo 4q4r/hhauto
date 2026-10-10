@@ -5,17 +5,18 @@ import "strings"
 // taskNames maps every valid TaskName to itself; taskByName validates
 // configuration strings against the known tasks.
 var taskNames = map[TaskName]struct{}{
-	TaskVacancyScoring:   {},
-	TaskCoverLetter:      {},
-	TaskChatReply:        {},
-	TaskTestAnswer:       {},
-	TaskWarmupPing:       {},
-	TaskClassification:   {},
-	TaskContactExtract:   {},
-	TaskLinkDetection:    {},
-	TaskResumeImprove:    {},
-	TaskSetkaClassify:    {},
-	TaskSetkaPersonalize: {},
+	TaskVacancyScoring:    {},
+	TaskCoverLetter:       {},
+	TaskChatReply:         {},
+	TaskTestAnswer:        {},
+	TaskWarmupPing:        {},
+	TaskClassification:    {},
+	TaskContactExtract:    {},
+	TaskLinkDetection:     {},
+	TaskResumeImprove:     {},
+	TaskSetkaClassify:     {},
+	TaskSetkaPersonalize:  {},
+	TaskRejectionAnalysis: {},
 }
 
 func taskByName(name string) (TaskName, bool) {

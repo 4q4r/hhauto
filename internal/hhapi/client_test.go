@@ -953,6 +953,49 @@ func TestNegotiationsFromSSR(t *testing.T) {
 	}
 }
 
+// TestNegotiationsDiscardFromSSR (T123): the discard-filter page parses with
+// the same contract and the request MUST carry filter=discard.
+func TestNegotiationsDiscardFromSSR(t *testing.T) {
+	env := newTestEnv(t)
+	env.serve(env.mux1, "1", "GET", "/applicant/negotiations", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("filter") != "discard" {
+			t.Errorf("filter = %q, want discard", r.URL.Query().Get("filter"))
+		}
+		_, _ = w.Write(readFixture(t, "negotiations_discard.html"))
+	})
+	c := env.client()
+	ctx, cancel := ctxb(t)
+	defer cancel()
+	negs, err := c.NegotiationsDiscard(ctx, 0)
+	if err != nil {
+		t.Fatalf("NegotiationsDiscard: %v", err)
+	}
+	if len(negs) != 3 {
+		t.Fatalf("negs = %+v", negs)
+	}
+	// Live shape: no vacancyName on this surface; the analysis fills names
+	// from the vacancy card.
+	n := negs[0]
+	if n.ID != "9001" || n.VacancyID != 1001 || n.VacancyName != "" || n.EmployerName != "" {
+		t.Fatalf("negotiation = %+v", n)
+	}
+	if !IsStructuralRefusal(n.State) {
+		t.Fatalf("state = %q, want a structural refusal", n.State)
+	}
+	if n.ChatID != "5699859935" {
+		t.Fatalf("chat_id = %q, want 5699859935", n.ChatID)
+	}
+	if n.UpdatedAt.IsZero() {
+		t.Fatal("UpdatedAt zero (lastModified not parsed)")
+	}
+	// hh serves the mixed list despite filter=discard (live fact) — the
+	// plain RESPONSE item must parse with its state intact for the caller's
+	// post-filter.
+	if negs[1].State != "RESPONSE" || IsStructuralRefusal(negs[1].State) {
+		t.Fatalf("mixed list item = %+v", negs[1])
+	}
+}
+
 // --- Chatik ---
 
 func TestListChatsAndHistory(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 var allNames = []string{
 	"vacancy_scoring", "cover_letter", "chat_reply", "test_answer",
 	"warmup_ping", "message_classification", "contact_extraction", "link_detection",
-	"setka_classify", "setka_personalize",
+	"setka_classify", "setka_personalize", "reject_analysis",
 }
 
 // commonFields must be required by every task schema.
