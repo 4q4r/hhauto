@@ -602,6 +602,8 @@ func vacancyFromItem(raw json.RawMessage) Vacancy {
 		AlternateURL:          firstNonEmpty(str(m, "alternate_url", "alternateURL"), str(obj(obj(m["links"])["desktop"]), "alternate_url")),
 		AcceptTemp:            boolv(m, "acceptTemporary", "accept_temp"),
 		HasTests:              boolv(m, "hasTest", "hasTests", "has_test"),
+		UserLabels:            strList(m, "userLabels"),
+		TotalResponsesCount:   int(num(m, "totalResponsesCount")),
 		Archived:              boolv(m, "archived"),
 		Badges:                Badges(raw),
 		Raw:                   raw,

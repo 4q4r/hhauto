@@ -870,6 +870,25 @@ func strPtr(s string) *string {
 	return &s
 }
 
+// searchItemSkip is the T115 search-item pre-filter: the values ride the
+// search item for free, so a fired skip costs no request and is logged
+// with them. Both knobs default off (the userLabels semantics are
+// undocumented; a non-positive cap disables the response-counter check).
+func (f *Feature) searchItemSkip(v hhapi.Vacancy) string {
+	ma := f.opt.Config.Features.MultiApply
+	if ma.SkipWhenLabeled && len(v.UserLabels) > 0 {
+		f.log.Info("multiapply: vacancy carries user labels",
+			"vacancy", v.ID, "user_labels", v.UserLabels, "total_responses", v.TotalResponsesCount)
+		return "user_labeled"
+	}
+	if ma.MaxTotalResponses > 0 && v.TotalResponsesCount > ma.MaxTotalResponses {
+		f.log.Info("multiapply: vacancy response counter over the cap",
+			"vacancy", v.ID, "total_responses", v.TotalResponsesCount, "cap", ma.MaxTotalResponses)
+		return "responses_over"
+	}
+	return ""
+}
+
 // prefilter runs the seen write-through and gates F2-F5 (exclude words,
 // employer lists, rating, recorded applications). Returns the first skip
 // reason plus the whitelisted flag for the F6 threshold bypass.
@@ -881,6 +900,11 @@ func (f *Feature) prefilter(ctx context.Context, runID string, run config.Run, a
 		AccountID: accountID, VacancyID: v.ID, Source: "multiapply",
 		FirstSeenAt: f.opt.Now(), Meta: runID,
 	})
+
+	// T115: the search-item pre-filters (before any card/popup request).
+	if skip := f.searchItemSkip(v); skip != "" {
+		return skip, false
+	}
 
 	// F2: exclude words (name always; description when enabled).
 	if excluded(v, run.Filters) {

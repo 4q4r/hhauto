@@ -668,6 +668,15 @@ type MultiApply struct {
 	// first after the cooldown). skip keeps the pre-T89 behavior: the
 	// day-scoped circuit breaker and the captcha_exhausted skips.
 	Captcha MultiApplyCaptcha `toml:"captcha"`
+	// T115 search-item pre-filters, both default-off (zero value): the
+	// userLabels semantics are undocumented at hh, so skipping on them is
+	// opt-in. skip_when_labeled=true skips vacancies carrying any of the
+	// applicant's own labels (donor semantics: an "already responded"
+	// marker); max_total_responses > 0 skips vacancies whose response
+	// counter in the search item exceeds it. The values are logged on
+	// every fired skip.
+	SkipWhenLabeled   bool `toml:"skip_when_labeled"`
+	MaxTotalResponses int  `toml:"max_total_responses"`
 }
 
 // MultiApplyCaptcha is the [features.multiapply.captcha] section (T89).

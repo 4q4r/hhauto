@@ -184,6 +184,12 @@
 # exclude_agencies_default = true
 # prioritize_online_hr = true
 # dedup_native_autoresponse = true
+# skip_when_labeled = false             # T115: скип вакансий с непустым userLabels
+                                        # (свои метки hh на вакансии, донорская семантика
+                                        # «уже откликался»; НЕ документирована hh — по умолчанию
+                                        # off). Срабатывания логируются со значениями.
+# max_total_responses = 0               # T115: скип, если счётчик откликов в выдаче
+                                        # (totalResponsesCount) строго больше N; 0 (по умолчанию) = off.
 # classifier = ""                       # T60: ступень классификации ЭКСКЛЮЗИВНО: "jev" | "llm"
                                         # "" (по умолчанию) = "llm". Владелец запретил «один за другим»:
                                         # classifier="jev" требует [ai.jev] enabled=true (классификация
@@ -459,6 +465,12 @@ UA и заголовки, `rps` и `concurrency` — локальные лими
   между подъёмами не перечитывается);
 - `multiapply`: `ai_filter`, порог `min_match_percent`, исключение агентств,
   приоритизация онлайн-HR, дедуп с нативным автоответчиком hh;
+  пре-фильтры выдачи (T115, оба по умолчанию off — семантика userLabels
+  у hh не документирована): `skip_when_labeled` — скип вакансий с
+  непустым `userLabels` (скип `user_labeled`), `max_total_responses` —
+  скип при счётчике откликов в выдаче строго больше N (скип
+  `responses_over`); оба срабатывания ДО карточки/попапа и логируются со
+  значениями;
   `gray_band` (T75, дефолт `"apply"`) — политика серой зоны скорера
   (вердикт `needs_human` при `band=gray`): `apply` — откликаемся (в
   консоли «✓ Откликнулся (gray N)», в ledger-строке applications флаг

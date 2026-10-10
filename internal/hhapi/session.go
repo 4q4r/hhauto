@@ -465,6 +465,25 @@ func str(m map[string]json.RawMessage, keys ...string) string {
 	return ""
 }
 
+// strList reads the first present key as a string array (T115); nil when
+// the key is absent, empty, or not a string array.
+func strList(m map[string]json.RawMessage, keys ...string) []string {
+	if m == nil {
+		return nil
+	}
+	for _, k := range keys {
+		raw, ok := m[k]
+		if !ok || len(raw) == 0 {
+			continue
+		}
+		var out []string
+		if err := json.Unmarshal(raw, &out); err == nil && len(out) > 0 {
+			return out
+		}
+	}
+	return nil
+}
+
 func num(m map[string]json.RawMessage, keys ...string) float64 {
 	if m == nil {
 		return 0
