@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // ResumesUpsert inserts or updates a resume keyed by
@@ -28,6 +29,43 @@ func (db *DB) ResumesUpsert(ctx context.Context, r *Resume) error {
 		return fmt.Errorf("store: ResumesUpsert: %w", err)
 	}
 	return nil
+}
+
+// ResumesPruneAbsent deletes the account's stored resume rows whose hash
+// is absent from keep (the live shard's hash set from a successful full
+// fetch): the store mirrors the shard, so an absent row is a
+// deleted-on-hh zombie. Returns the number of rows removed.
+func (db *DB) ResumesPruneAbsent(ctx context.Context, accountID string, keep []string) (int64, error) {
+	db.writeMu.Lock()
+	defer db.writeMu.Unlock()
+
+	var (
+		res sql.Result
+		err error
+	)
+	if len(keep) == 0 {
+		// An empty live shard mirrors to an empty store for this account.
+		res, err = db.conn.ExecContext(ctx,
+			`DELETE FROM resumes WHERE account_id = ?`, accountID)
+	} else {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(keep)), ",")
+		args := make([]any, 0, len(keep)+1)
+		args = append(args, accountID)
+		for _, h := range keep {
+			args = append(args, h)
+		}
+		res, err = db.conn.ExecContext(ctx,
+			`DELETE FROM resumes WHERE account_id = ? AND hh_resume_id NOT IN (`+placeholders+`)`,
+			args...)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("store: ResumesPruneAbsent: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: ResumesPruneAbsent rows: %w", err)
+	}
+	return n, nil
 }
 
 // ResumesListByAccount returns the account's resumes ordered by ID.

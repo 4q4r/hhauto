@@ -223,8 +223,15 @@ func TestLoadUserContextMultipleResumesNewestFirst(t *testing.T) {
 	seedResume(t, db, accID, "hash-old", "Старое резюме", `{"title":"Старое резюме"}`, baseTime.Add(-3*time.Hour))
 	seedResume(t, db, accID, "hash-new", "Новое резюме", `{"title":"Новое резюме"}`, baseTime.Add(-time.Hour))
 	cfg := testCfg(t)
+	// T106: the refresh is a mirror sync — the fake serves the complete
+	// shard so both rows survive the prune and the digest ordering stays
+	// the thing under test.
+	api := &fakeAPI{resumes: []hhapi.Resume{
+		{HHID: "hash-old", Title: "Старое резюме", Raw: json.RawMessage(`{"title":"Старое резюме"}`), UpdatedAt: baseTime.Add(-3 * time.Hour)},
+		{HHID: "hash-new", Title: "Новое резюме", Raw: json.RawMessage(`{"title":"Новое резюме"}`), UpdatedAt: baseTime.Add(-time.Hour)},
+	}}
 
-	p, err := loadUserContext(context.Background(), cfg, accID, db, &fakeAPI{}, time.Hour, func() time.Time { return baseTime }, testLogger(&bytes.Buffer{}))
+	p, err := loadUserContext(context.Background(), cfg, accID, db, api, time.Hour, func() time.Time { return baseTime }, testLogger(&bytes.Buffer{}))
 	if err != nil {
 		t.Fatalf("loadUserContext: %v", err)
 	}
@@ -420,5 +427,61 @@ func TestLoadUserContextExportedWrapper(t *testing.T) {
 	}
 	if api.calls != 1 {
 		t.Fatalf("api calls = %d, want 1", api.calls)
+	}
+}
+
+// T106: the write-through refresh is a full-shard sync — a stored row whose
+// hash is absent from the fetched list is a deleted-on-hh zombie and must
+// leave the store.
+func TestRefreshResumesPrunesDeletedOnHH(t *testing.T) {
+	db := newTestDB(t)
+	mustSeedAccount(t, db, accID)
+	raw := fixtureRaw(t)
+	stale := baseTime.Add(-2 * time.Hour) // older than the ttl → refresh runs
+	seedResume(t, db, accID, "hash-live", "Живое", string(raw), stale)
+	seedResume(t, db, accID, "hash-zombie", "Зомби", `{"hash":"hash-zombie"}`, stale)
+	api := &fakeAPI{resumes: []hhapi.Resume{{
+		HHID: "hash-live", Title: "Живое", Status: "published",
+		UpdatedAt: baseTime.Add(-time.Hour), Raw: raw,
+	}}}
+
+	_, err := loadUserContext(context.Background(), testCfg(t), accID, db, api,
+		time.Hour, func() time.Time { return baseTime }, testLogger(&bytes.Buffer{}))
+	if err != nil {
+		t.Fatalf("loadUserContext: %v", err)
+	}
+
+	rows, err := db.ResumesListByAccount(context.Background(), accID)
+	if err != nil {
+		t.Fatalf("ResumesListByAccount: %v", err)
+	}
+	if len(rows) != 1 || rows[0].HhResumeID != "hash-live" {
+		t.Fatalf("store rows = %v, want only the live resume (zombie pruned)", rows)
+	}
+}
+
+// T106 safety: the prune runs only after a successful full fetch. A failed
+// refresh falls back to the stale snapshot and must not delete anything —
+// absent-from-partial ≠ deleted.
+func TestRefreshResumesKeepsStoreOnFetchFailure(t *testing.T) {
+	db := newTestDB(t)
+	mustSeedAccount(t, db, accID)
+	raw := fixtureRaw(t)
+	stale := baseTime.Add(-2 * time.Hour)
+	seedResume(t, db, accID, "hash-live", "Живое", string(raw), stale)
+	seedResume(t, db, accID, "hash-zombie", "Зомби", `{}`, stale)
+	api := &fakeAPI{err: errors.New("boom")}
+
+	if _, err := loadUserContext(context.Background(), testCfg(t), accID, db, api,
+		time.Hour, func() time.Time { return baseTime }, testLogger(&bytes.Buffer{})); err != nil {
+		t.Fatalf("loadUserContext (stale fallback): %v", err)
+	}
+
+	rows, err := db.ResumesListByAccount(context.Background(), accID)
+	if err != nil {
+		t.Fatalf("ResumesListByAccount: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("store rows = %d, want 2 (failed fetch must not prune)", len(rows))
 	}
 }
