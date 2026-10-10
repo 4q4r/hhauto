@@ -484,7 +484,7 @@ func (f *Feature) buildLetter(ctx context.Context, runID string, mode, tmpl, ext
 		if strings.TrimSpace(tmpl) == "" {
 			return "", errors.New("multiapply: letter_mode=template requires letter_template")
 		}
-		return renderLetterTemplate(tmpl, letterTemplateDataOf(*v, details))
+		return f.spinLetter(renderLetterTemplate(tmpl, letterTemplateDataOf(*v, details)))
 	case config.LetterModeTemplateAI:
 		if strings.TrimSpace(tmpl) == "" {
 			return "", errors.New("multiapply: letter_mode=template_ai requires letter_template")
@@ -496,7 +496,7 @@ func (f *Feature) buildLetter(ctx context.Context, runID string, mode, tmpl, ext
 			}
 			f.log.Warn("multiapply: cover letter polish failed; using the raw template", "vacancy", v.ID, "err", aerr)
 		}
-		return renderLetterTemplate(tmpl, letterTemplateDataOf(*v, details))
+		return f.spinLetter(renderLetterTemplate(tmpl, letterTemplateDataOf(*v, details)))
 	default: // config.LetterModeAICompany
 		if f.opt.Runner != nil {
 			letter, aerr := f.aiLetter(ctx, runID, mode, tmpl, extraInstructions, accountID, prof, v, details, stats)
@@ -506,7 +506,7 @@ func (f *Feature) buildLetter(ctx context.Context, runID string, mode, tmpl, ext
 			f.log.Warn("multiapply: cover letter task failed", "vacancy", v.ID, "err", aerr)
 		}
 		if tmpl != "" {
-			return renderLetterTemplate(tmpl, letterTemplateDataOf(*v, details))
+			return f.spinLetter(renderLetterTemplate(tmpl, letterTemplateDataOf(*v, details)))
 		}
 		return "", errors.New("multiapply: no cover letter available")
 	}

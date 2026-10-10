@@ -705,6 +705,11 @@ type MultiApplyCoverLetter struct {
 	// ModelProfile overrides [ai.tasks.cover_letter].model_profile; empty =
 	// the letter task's own profile.
 	ModelProfile string `toml:"model_profile"`
+	// Spin (T116) resolves {variant1|variant2} groups in rendered template
+	// letters (nesting ≤ 2). Off by default — the variants live in the
+	// owner's template and the choice is the owner's to enable. AI letters
+	// are never rewritten.
+	Spin bool `toml:"spin"`
 }
 
 // Browser release-channel and humanize-preset vocabularies for [browser].
