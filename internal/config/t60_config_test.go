@@ -100,6 +100,10 @@ func TestCoverLetterSectionDefaultsInert(t *testing.T) {
 	if c.Features.MultiApply.CoverLetter.Mode != "" {
 		t.Errorf("cover_letter.mode default = %q, want unset (\"\" behaves as ai)", c.Features.MultiApply.CoverLetter.Mode)
 	}
+
+	if c.Features.MultiApply.CoverLetter.Spin {
+		t.Error("cover_letter.spin must default to false (off — owner decision, T116)")
+	}
 }
 
 func TestValidateCoverLetter(t *testing.T) {
