@@ -848,6 +848,9 @@ func (c *Client) TouchResume(ctx context.Context, resumeHash string) error {
 		if resumeHash != "" {
 			form.Set("resume", resumeHash)
 		}
+		// T114 donor contract: hh must not redirect the resume to another
+		// position when lifting.
+		form.Set("undirectable", "true")
 		h := c.xhrHeaders(c.withPinnedHost(c.eps.site + "/applicant/resumes"))
 		h.Set("Content-Type", "application/x-www-form-urlencoded")
 		return requestSpec{
@@ -860,6 +863,12 @@ func (c *Client) TouchResume(ctx context.Context, resumeHash string) error {
 	})
 	if err != nil {
 		return err
+	}
+	// 409 = the hh 4h server timer has not elapsed yet (T114): a distinct,
+	// expected outcome the caller plans a cooldown around. Checked before
+	// the captcha markers per T113 §№1.
+	if resp.status == http.StatusConflict {
+		return &StatusError{Kind: ErrTouchTooEarly, StatusCode: resp.status, URL: resp.finalURL, BodySnippet: snippet(resp.body), Chain: resp.chain}
 	}
 	// JSON captcha verdicts ride a 200 (donor-verified hhcaptcha.isBot).
 	if bodyHasAny(string(resp.body), captchaMarkers) {

@@ -573,6 +573,47 @@ func TestTouchSuccess(t *testing.T) {
 	}
 }
 
+// T114 golden form: the touch body carries undirectable=true next to the
+// resume hash (donor contract: hh must not redirect the resume to another
+// position when lifting). url.Values.Encode() sorts keys, so the body is
+// deterministic.
+func TestTouchGoldenForm(t *testing.T) {
+	env := newTestEnv(t)
+	env.serve(env.mux1, "1", "POST", "/applicant/resumes/touch", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"success":true}`))
+	})
+	c := env.client()
+	ctx, cancel := ctxb(t)
+	defer cancel()
+	if err := c.TouchResume(ctx, "resume_hash_1"); err != nil {
+		t.Fatalf("TouchResume: %v", err)
+	}
+	if got, want := env.lastBody("1:POST /applicant/resumes/touch"), "resume=resume_hash_1&undirectable=true"; got != want {
+		t.Fatalf("touch body = %q, want %q", got, want)
+	}
+}
+
+// T114: 409 means the hh 4h server timer has not elapsed — a distinct
+// sentinel, checked before the captcha markers (which ride a 200 today).
+func TestTouchTooEarly409(t *testing.T) {
+	env := newTestEnv(t)
+	env.serve(env.mux1, "1", "POST", "/applicant/resumes/touch", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"too_early"}`))
+	})
+	c := env.client()
+	ctx, cancel := ctxb(t)
+	defer cancel()
+	err := c.TouchResume(ctx, "resume_hash_1")
+	if !errors.Is(err, ErrTouchTooEarly) {
+		t.Fatalf("err = %v, want ErrTouchTooEarly", err)
+	}
+	var se *StatusError
+	if !errors.As(err, &se) || se.StatusCode != http.StatusConflict {
+		t.Fatalf("errors.As(*StatusError): %#v, want StatusCode 409", se)
+	}
+}
+
 // --- Logged out ---
 
 func TestLoggedOutViaLoginRedirect(t *testing.T) {
