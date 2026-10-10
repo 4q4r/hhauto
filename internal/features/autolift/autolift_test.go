@@ -78,9 +78,16 @@ func newHHFake(t *testing.T, _ *store.DB, resumes ...fakeResume) *hhFake {
 		f.mu.Unlock()
 		if fn != nil {
 			if err := fn(calls); err != nil {
-				if se, ok := err.(*touchError); ok && se.redirect != "" {
-					http.Redirect(w, r, se.redirect, http.StatusFound)
-					return
+				if se, ok := err.(*touchError); ok {
+					if se.status != 0 {
+						w.WriteHeader(se.status)
+						_, _ = io.WriteString(w, se.msg)
+						return
+					}
+					if se.redirect != "" {
+						http.Redirect(w, r, se.redirect, http.StatusFound)
+						return
+					}
 				}
 				http.Error(w, err.Error(), http.StatusForbidden)
 				return
@@ -113,6 +120,7 @@ func newHHFake(t *testing.T, _ *store.DB, resumes ...fakeResume) *hhFake {
 
 type touchError struct {
 	redirect string
+	status   int // when set, served as the response status (T114: 409 too-early)
 	msg      string
 }
 

@@ -37,6 +37,10 @@ const registryName = "features.autolift"
 // timer4h is the hh.ru server-side limit between resume lifts.
 const timer4h = 4 * time.Hour
 
+// defaultTooEarlyCooldown backs tooEarlyCooldown for hand-built configs;
+// loaded configs are guarded by config.Validate (T114).
+const defaultTooEarlyCooldown = 30 * time.Minute
+
 // ErrDisabled is returned by RunAccount when the feature is off.
 var ErrDisabled = errors.New("autolift: feature disabled")
 
@@ -235,6 +239,7 @@ func (f *Feature) runDiscover(ctx context.Context, accountID string) error {
 	lifted := map[string]bool{}
 	var liftedHashes []string
 	liftedTitles := map[string]string{}
+	tooEarly := map[string]bool{}
 
 	for _, r := range got {
 		if !isLiftable(r) {
@@ -259,6 +264,12 @@ func (f *Feature) runDiscover(ctx context.Context, accountID string) error {
 				f.dropPlan(accountID) // relogin → recompute from the server
 				return nil            // account stopped: do not process further resumes
 			}
+			if errors.Is(err, hhapi.ErrTouchTooEarly) {
+				// T114: the hh 4h server timer refused the touch — plan a
+				// short cooldown instead of treating the resume as lifted.
+				tooEarly[r.HHID] = true
+				f.incr(ctx, day, "lift.too_early")
+			}
 			f.log.Warn("autolift: lift failed", "account", accountID, "resume", r.HHID, "err", err)
 			continue
 		}
@@ -268,7 +279,7 @@ func (f *Feature) runDiscover(ctx context.Context, accountID string) error {
 	}
 
 	if !dryRun {
-		f.setPlan(accountID, f.buildPlan(got, exclude, lifted))
+		f.setPlan(accountID, f.buildPlan(got, exclude, lifted, tooEarly))
 		f.arm(accountID)
 		// T69: the per-lift success line, NextAt straight from the plan
 		// the pass just installed.
@@ -349,6 +360,7 @@ func (f *Feature) runPlanned(ctx context.Context, accountID string, plan map[str
 	window := featurekit.LiftWindow(nowT)
 
 	var liftedHashes []string
+	tooEarly := map[string]bool{}
 	for hash, at := range plan {
 		if dryRun {
 			f.log.Info("autolift: dry-run planned lift", "account", accountID, "resume", hash, "at", at.UTC().Format(time.RFC3339))
@@ -363,6 +375,12 @@ func (f *Feature) runPlanned(ctx context.Context, accountID string, plan map[str
 				f.dropPlan(accountID) // relogin → recompute from the server
 				return nil
 			}
+			if errors.Is(err, hhapi.ErrTouchTooEarly) {
+				// T114: the hh 4h server timer refused the touch — plan a
+				// short cooldown instead of another 4h count.
+				tooEarly[hash] = true
+				f.incr(ctx, day, "lift.too_early")
+			}
 			f.log.Warn("autolift: lift failed", "account", accountID, "resume", hash, "err", err)
 			continue
 		}
@@ -373,6 +391,10 @@ func (f *Feature) runPlanned(ctx context.Context, accountID string, plan map[str
 	}
 	for hash, at := range plan {
 		if !at.After(nowT) {
+			if tooEarly[hash] {
+				plan[hash] = nowT.Add(f.tooEarlyCooldown())
+				continue
+			}
 			plan[hash] = nowT.Add(timer4h).Add(f.sampleJitter())
 		}
 	}
@@ -387,8 +409,10 @@ func (f *Feature) runPlanned(ctx context.Context, accountID string, plan map[str
 
 // buildPlan computes the local lift plan from the shard snapshot: the
 // server nextTouchAt when present, updated_at + 4h when empty (both + one
-// jitter sample); resumes lifted in this pass are re-counted from now.
-func (f *Feature) buildPlan(got []hhapi.Resume, exclude, lifted map[string]bool) map[string]time.Time {
+// jitter sample); resumes lifted in this pass are re-counted from now;
+// resumes hh refused with 409 (too early, T114) are re-planned after the
+// short too-early cooldown.
+func (f *Feature) buildPlan(got []hhapi.Resume, exclude, lifted, tooEarly map[string]bool) map[string]time.Time {
 	nowT := f.opt.Now()
 	plan := make(map[string]time.Time, len(got))
 	for _, r := range got {
@@ -398,6 +422,8 @@ func (f *Feature) buildPlan(got []hhapi.Resume, exclude, lifted map[string]bool)
 		switch {
 		case lifted[r.HHID]:
 			plan[r.HHID] = nowT.Add(timer4h).Add(f.sampleJitter())
+		case tooEarly[r.HHID]:
+			plan[r.HHID] = nowT.Add(f.tooEarlyCooldown())
 		case r.NextTouchAt.IsZero():
 			plan[r.HHID] = r.UpdatedAt.Add(timer4h)
 		default:
@@ -405,6 +431,17 @@ func (f *Feature) buildPlan(got []hhapi.Resume, exclude, lifted map[string]bool)
 		}
 	}
 	return plan
+}
+
+// tooEarlyCooldown resolves the T114 too-early retry cooldown from
+// [features.auto_lift] too_early_cooldown ("" = the 30m default, the shape
+// hand-built Options carry; malformed values fall back too — config.Validate
+// rejects them at load).
+func (f *Feature) tooEarlyCooldown() time.Duration {
+	if d, err := time.ParseDuration(f.opt.Config.Features.AutoLift.TooEarlyCooldown); err == nil && d > 0 {
+		return d
+	}
+	return defaultTooEarlyCooldown
 }
 
 // sampleJitter draws one jitter sample from the configured range (0 when

@@ -78,6 +78,7 @@ func applyDefaults(c *Config) {
 		{&c.Features.AutoClone.Improve.Editor.CookieDomain, ".hh.ru"},
 		{&c.Features.MultiApply.GrayBand, GrayBandApply}, // T75: gray zone responds by default
 		{&c.Console.Skips, "interesting,aggregate"},      // T69: interesting skip lines + digest breakdown
+		{&c.Features.AutoLift.TooEarlyCooldown, "30m"},   // T114: retry plan after a 409 touch
 	} {
 		if *d.dst == "" {
 			*d.dst = d.val
