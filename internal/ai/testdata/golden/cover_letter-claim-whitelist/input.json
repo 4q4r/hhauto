@@ -1,0 +1,8 @@
+{
+  "task": "cover_letter",
+  "input": {
+    "resume_digest": "опыт с Docker и Nginx",
+    "profile_text": "ищу удалённую работу",
+    "facts": []
+  }
+}

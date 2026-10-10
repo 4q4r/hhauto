@@ -1,16 +1,8 @@
 {
   "task": "cover_letter",
   "input": {
-    "vacancy": {
-      "title": "Backend-разработчик (Go)",
-      "description": "Разработка платёжного бэкенда, Go, PostgreSQL, очереди."
-    },
-    "resume": {
-      "title": "Backend-разработчик",
-      "experience": "4 года Go, платёжные системы, PostgreSQL, RabbitMQ"
-    },
-    "profile": {
-      "summary": "Специализация на финансовых сервисах"
-    }
+    "resume_digest": "4 года Go, платёжные системы, PostgreSQL, RabbitMQ",
+    "profile_text": "Специализация на финансовых сервисах",
+    "facts": []
   }
 }

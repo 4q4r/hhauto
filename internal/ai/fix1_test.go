@@ -315,8 +315,8 @@ func TestRunCoverLetterNumbersFromSourcesPass(t *testing.T) {
 		map[string]config.AIModel{"profile": {Provider: "p", Model: "m1"}},
 		tasks, nil, nil, testLogger())
 	input := map[string]any{
-		"resume_digest": "опыт 4 года коммерческой разработки",
-		"profile_text":  "стек: PostgreSQL, gRPC",
+		"resume_digest": "опыт 4 года Go коммерческой разработки",
+		"profile_text":  "стек: Go, PostgreSQL, gRPC",
 		"facts":         []string{},
 	}
 	verdict, dec, err := r.Run(context.Background(), "a", "letter", "1", "r", TaskCoverLetter, input)

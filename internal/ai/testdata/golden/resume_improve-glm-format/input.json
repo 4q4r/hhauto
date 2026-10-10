@@ -3,6 +3,6 @@
   "input": {
     "field": "about",
     "current_value": "Автоматизация найма",
-    "trusted_facts": ["Автоматизация найма, 3 года", "Python, Go"]
+    "facts": ["Автоматизация найма, 3 года", "Python, Go"]
   }
 }

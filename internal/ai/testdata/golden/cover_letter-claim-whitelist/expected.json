@@ -1,0 +1,10 @@
+{
+  "confidence": 0.9,
+  "needs_human": false,
+  "needs_human_reason": null,
+  "injection_suspected": false,
+  "letter": "Здравствуйте! В вакансии требуется Kubernetes и Terraform. Работал с Docker и Nginx в продакшене, готов быстро освоить ваш стек.",
+  "mode": "ai_company",
+  "used_facts": [],
+  "missing_data": []
+}

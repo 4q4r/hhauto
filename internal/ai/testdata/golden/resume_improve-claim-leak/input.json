@@ -1,0 +1,8 @@
+{
+  "task": "resume_improve",
+  "input": {
+    "field": "about",
+    "current_value": "DevOps-инженер",
+    "facts": ["Docker, Nginx"]
+  }
+}
