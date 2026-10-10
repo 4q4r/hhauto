@@ -19,6 +19,7 @@ import (
 	"hhauto/internal/audit"
 	"hhauto/internal/engine"
 	"hhauto/internal/features/autolift"
+	"hhauto/internal/features/jobsearch"
 	"hhauto/internal/features/multiapply"
 	"hhauto/internal/hhapi"
 	"hhauto/internal/queue"
@@ -176,6 +177,19 @@ func runDaemonMode(ctx context.Context, rt *Runtime, taskType string, o out) err
 			handled, parked := drainDueTasks(ctx, daemonMaintenanceDeps(rt), accounts)
 			if handled > 0 || parked > 0 {
 				rt.Log.Info("daemon: плановое обслуживание", "handled", handled, "parked", parked)
+			}
+			// T118: the daily «Ищу работу» status point (own 24h gate in
+			// feature_state; no-op while [features.jobsearch] is off —
+			// the wire is donor-derived and needs a live probe first).
+			if err := jobsearch.Tick(ctx, jobsearch.Options{
+				Enabled:  rt.Cfg.Features.JobSearch.Enabled,
+				Now:      time.Now,
+				DB:       rt.DB,
+				APIFor:   rt.APIFor,
+				Accounts: accounts,
+				Log:      rt.Log,
+			}); err != nil {
+				rt.Log.Warn("daemon: статус «Ищу работу»", "err", err)
 			}
 			return nil
 		},

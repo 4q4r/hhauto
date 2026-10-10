@@ -145,6 +145,9 @@ func (env *testEnv) endpoints() config.APIEndpoints {
 			"profile_experience_update": env.srv1.URL + "/profile/shards/profile/update",
 			"resume_create":             env.srv1.URL + "/profile/shards/resume/create",
 			"resume_delete":             env.srv1.URL + "/profile/shards/resume/delete",
+			// T118: the job-search-status POST defaults to the external
+			// resume-profile-front host.
+			"job_search_status": env.srv1.URL + "/profile/shards/user_statuses/job_search_status",
 		},
 	}
 }
