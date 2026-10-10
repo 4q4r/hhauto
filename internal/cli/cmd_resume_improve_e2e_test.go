@@ -73,7 +73,15 @@ func newFakeHHImprove(t *testing.T, settingsLostSession bool, st *improveHHState
 			_, _ = w.Write([]byte(`{"errors":[{"value":"not_authorized"}]}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"resumes":[{"hash":"res-h1","title":"Go разработчик",` +
+		// T106 fixture consistency: the builder get_by_hash serves b4se1,
+		// so the mine-shard must list it too — the store-sync prune keeps
+		// only hashes the shard actually carries.
+		_, _ = w.Write([]byte(`{"resumes":[` +
+			`{"hash":"b4se1","title":"Базовое резюме",` +
+			`"updatedAt":"2026-09-24T10:00:00Z",` +
+			`"status":{"id":"modified","name":"Изменено"},` +
+			`"_attributes":{"hash":"b4se1","status":"modified","isSearchable":true}},` +
+			`{"hash":"res-h1","title":"Go разработчик",` +
 			`"updatedAt":"2026-09-24T10:00:00Z",` +
 			`"status":{"id":"published","name":"Опубликовано"},` +
 			`"_attributes":{"isSearchable":true,"percent":95,"status":{"id":"published","name":"Опубликовано"}}}]}`))

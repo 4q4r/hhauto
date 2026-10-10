@@ -175,6 +175,17 @@ func refreshResumes(ctx context.Context, accountID string, db *store.DB, api hha
 			return nil, err
 		}
 	}
+	// T106: mirror semantics — rows absent from the successful full fetch
+	// are deleted-on-hh zombies and leave the store.
+	keep := make([]string, 0, len(got))
+	for _, r := range got {
+		if r.HHID != "" {
+			keep = append(keep, r.HHID)
+		}
+	}
+	if _, err := db.ResumesPruneAbsent(ctx, accountID, keep); err != nil {
+		return nil, err
+	}
 	rows, err := db.ResumesListByAccount(ctx, accountID)
 	if err != nil {
 		return nil, err

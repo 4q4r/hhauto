@@ -367,6 +367,17 @@ func checkAccountSession(ctx context.Context, cfg *config.Config, db *store.DB, 
 		}
 		stored++
 	}
+	// T106: the store mirrors the live shard — rows absent from the full
+	// fetch are deleted-on-hh zombies and leave the store.
+	keep := make([]string, 0, len(resumes))
+	for _, r := range resumes {
+		if r.HHID != "" {
+			keep = append(keep, r.HHID)
+		}
+	}
+	if _, err := db.ResumesPruneAbsent(ctx, id, keep); err != nil {
+		return fmt.Errorf("resume prune: %w", err)
+	}
 	o.printf("Резюме в store: %d\n", stored)
 	for _, r := range resumes {
 		o.printf("  - %s  %s  (%s)\n", r.HHID, r.Title, o.st.status(r.Status))
