@@ -303,6 +303,11 @@ type HHAPI interface {
 	// fork delete — the pool keeps every record, other resumes never
 	// change). Idempotent; a fresh unpublished shell no-ops.
 	DetachDuplicateExperience(ctx context.Context, hash string) (DetachExperienceResult, error)
+	// SetJobSearchStatus flips the account's «Ищу работу» status to
+	// looking_for_offers (T118, DONOR-DERIVED — the endpoint has never
+	// been captured live; keep behind [features.jobsearch] until the
+	// owner's live probe succeeds).
+	SetJobSearchStatus(ctx context.Context) error
 }
 
 // Implementation notes for the hhapi implementer:

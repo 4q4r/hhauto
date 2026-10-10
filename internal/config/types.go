@@ -315,6 +315,18 @@ type Features struct {
 	// per-resume photo field (native clones inherit it, created shells do
 	// not). Nil = the owner default, enabled.
 	ApplyProfilePhoto *bool `toml:"apply_profile_photo"`
+	// JobSearch (T118): the daily «Ищу работу» status keep-alive.
+	// DONOR-DERIVED wire (never captured live) — ships disabled; enabling
+	// it is the owner's decision after a live probe succeeds.
+	JobSearch JobSearch `toml:"jobsearch"`
+}
+
+// JobSearch configures the daily «Ищу работу» status flip (T118). The
+// endpoint contract is donor-derived and unverified: server-side
+// idempotence and the status lifetime are unproven — the flag stays off
+// until the owner's live probe.
+type JobSearch struct {
+	Enabled bool `toml:"enabled"`
 }
 
 // PhotoApplyEnabled reports the effective apply_profile_photo value

@@ -67,6 +67,10 @@ const (
 	// renders its avatar from the per-resume photo field pointing at an
 	// album artifact id. Overridable via config like every endpoint.
 	epAccountArtifacts = "account_artifacts" // GET /shards/applicant/artifacts/all
+	// T118 «Ищу работу» status flip (DONOR-DERIVED — not live-verified;
+	// the donor's only wire evidence posts to the resume-profile-front
+	// BFF host). Overridable via config like every endpoint.
+	epJobSearchStatus = "job_search_status" // POST /profile/shards/user_statuses/job_search_status?status=looking_for_offers
 )
 
 // endpointSet resolves endpoint URLs from config with defaults and
