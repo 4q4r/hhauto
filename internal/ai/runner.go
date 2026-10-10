@@ -751,9 +751,13 @@ func checkFreeText(task TaskName, m map[string]any, forceReason, trustedText str
 			}
 		}
 	}
-	// T119: attributed technologies and tenure pairs must be grounded too
-	// (letters and chat replies are both outgoing surfaces).
-	return checkClaimGrounding(m, text, forceReason, trustedText)
+	// T119 claim/tenure grounding is scoped to outgoing surfaces: letters
+	// and chat replies (T124). reject_analysis is an internal owner report
+	// — its improved_letter is never sent to the employer.
+	if task == TaskCoverLetter || task == TaskChatReply {
+		return checkClaimGrounding(m, text, forceReason, trustedText)
+	}
+	return forceReason
 }
 
 // applyForceReason fills needs_human_reason only when the verdict does not

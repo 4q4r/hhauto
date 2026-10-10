@@ -97,6 +97,12 @@ max_per_day = 5
 [[runs.testrun.windows]]
 time = ["09:00", "14:00"]
 days = ["mon", "tue", "wed", "thu", "fri"]
+
+[pacing]
+# Night pause uses the real wall clock; without this the pacer sleeps
+# until 08:00 whenever the suite runs outside 08:00-22:00 (T72-class
+# time-of-day bomb, caught hanging the create-E2E at 00:49).
+night_pause = false
 ` + extra + "\n"
 	path := filepath.Join(dir, "hhauto.toml")
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
