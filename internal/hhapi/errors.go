@@ -20,6 +20,13 @@ import (
 // a subcase of ErrForbidden.
 var ErrXSRF = errors.New("hhapi: xsrf token rejected")
 
+// ErrTouchTooEarly extends the contract sentinels (T114): hh answered the
+// resume touch with 409 because the 4h server timer has not elapsed yet
+// (donor-verified semantics: ds8088/hh-resume-auto-boost — status-based
+// marker, body not captured live). Autolift plans a short retry cooldown
+// instead of counting the touch as done.
+var ErrTouchTooEarly = errors.New("hhapi: touch too early")
+
 // StatusError is a typed HTTP failure. errors.Is(err, ErrCaptcha) and the
 // other contract sentinels match through Kind.
 //

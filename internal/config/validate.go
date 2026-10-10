@@ -42,6 +42,9 @@ func Validate(c *Config) error {
 	if err := validateSetka(c); err != nil {
 		return err
 	}
+	if err := validateAutoLift(c.Features.AutoLift); err != nil {
+		return err
+	}
 	if err := validateAutoClone(c); err != nil {
 		return err
 	}
@@ -191,6 +194,18 @@ func validateBrowser(c *Config) error {
 	case "", BrowserChannelAuto, BrowserChannelFree, BrowserChannelPro:
 	default:
 		return fmt.Errorf("browser.channel %q: must be one of auto | free | pro", b.Channel)
+	}
+	return nil
+}
+
+// validateAutoLift checks [features.auto_lift] (T114): the too-early
+// retry cooldown must parse as a positive duration.
+func validateAutoLift(a AutoLift) error {
+	if a.TooEarlyCooldown == "" {
+		return nil
+	}
+	if v, err := time.ParseDuration(a.TooEarlyCooldown); err != nil || v <= 0 {
+		return fmt.Errorf("features.auto_lift.too_early_cooldown %q: must be a positive duration (e.g. 30m)", a.TooEarlyCooldown)
 	}
 	return nil
 }

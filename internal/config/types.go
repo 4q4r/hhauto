@@ -587,6 +587,10 @@ type AutoLift struct {
 	Enabled bool   `toml:"enabled"`
 	PerDay  int    `toml:"per_day"` // default 6
 	Jitter  string `toml:"jitter"`  // e.g. "20-40m"
+
+	// TooEarlyCooldown plans the retry after a 409 touch (T114: hh's 4h
+	// server timer refused the lift). Duration, default "30m".
+	TooEarlyCooldown string `toml:"too_early_cooldown"`
 }
 
 // Classifier vocabulary for [features.multiapply].classifier (T60 owner
