@@ -74,15 +74,21 @@ type Vacancy struct {
 	Description  string    `json:"description,omitempty"`
 	// Search-snippet substance (T81): filled by vacancyFromItem from the
 	// SSR search item's snippet node; the scorer decides on these.
-	SnippetResponsibility string          `json:"snippet_responsibility,omitempty"`
-	SnippetRequirement    string          `json:"snippet_requirement,omitempty"`
-	SnippetSkill          string          `json:"snippet_skill,omitempty"`
-	AlternateURL          string          `json:"alternate_url,omitempty"`
-	EmployerOnline        bool            `json:"employer_online,omitempty"` // manager activity (SSR)
-	AcceptTemp            bool            `json:"accept_temp,omitempty"`
-	HasTests              bool            `json:"has_tests,omitempty"`
-	Archived              bool            `json:"archived,omitempty"` // card payload only (T89 re-exam)
-	Raw                   json.RawMessage `json:"raw,omitempty"`
+	SnippetResponsibility string `json:"snippet_responsibility,omitempty"`
+	SnippetRequirement    string `json:"snippet_requirement,omitempty"`
+	SnippetSkill          string `json:"snippet_skill,omitempty"`
+	AlternateURL          string `json:"alternate_url,omitempty"`
+	EmployerOnline        bool   `json:"employer_online,omitempty"` // manager activity (SSR)
+	AcceptTemp            bool   `json:"accept_temp,omitempty"`
+	HasTests              bool   `json:"has_tests,omitempty"`
+	// T115 search-item pre-filter inputs (free in the SSR item; donor R
+	// item fields): userLabels marks the applicant's own labels on the
+	// vacancy (semantics undocumented — consumers stay off by default),
+	// totalResponsesCount is the response counter from the выдача.
+	UserLabels          []string        `json:"user_labels,omitempty"`
+	TotalResponsesCount int             `json:"total_responses_count,omitempty"`
+	Archived            bool            `json:"archived,omitempty"` // card payload only (T89 re-exam)
+	Raw                 json.RawMessage `json:"raw,omitempty"`
 }
 
 // VacancyPage is one search result page.
